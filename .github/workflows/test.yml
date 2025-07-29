@@ -152,12 +152,23 @@ jobs:
         fi
         
         # Test macOS build
+        # Test macOS ARM build
         GOOS=darwin GOARCH=arm64 go build -o test_darwin ./cmd/duckchat/main.go
         if [ -f "test_darwin" ]; then
           echo "✅ Darwin ARM64 build successful"
           rm test_darwin
         else
           echo "❌ Darwin ARM64 build failed"
+          exit 1
+        fi
+        
+        # Test macOS Intel build
+        GOOS=darwin GOARCH=amd64 go build -o test_darwin_amd64 ./cmd/duckchat/main.go
+        if [ -f "test_darwin_amd64" ]; then
+          echo "✅ Darwin AMD64 build successful"
+          rm test_darwin_amd64
+        else
+          echo "❌ Darwin AMD64 build failed"
           exit 1
         fi
         

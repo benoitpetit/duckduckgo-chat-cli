@@ -144,22 +144,29 @@ jobs:
         echo "📦 Building Darwin ARM64..."
         GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
         
+        # Build for Intel Mac
+        echo "📦 Building Darwin AMD64..."
+        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
+        
         # Generate SHA256 hashes
         echo "🔐 Generating SHA256 hashes..."
         cd $BUILD_DIR
         sha256sum duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe > duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256
         sha256sum duckduckgo-chat-cli_v${VERSION}_linux_amd64 > duckduckgo-chat-cli_v${VERSION}_linux_amd64.sha256
         sha256sum duckduckgo-chat-cli_v${VERSION}_darwin_arm64 > duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256
+        sha256sum duckduckgo-chat-cli_v${VERSION}_darwin_amd64 > duckduckgo-chat-cli_v${VERSION}_darwin_amd64.sha256
         
         # Create release archive
         echo "📚 Creating release archive..."
         zip duckduckgo-chat-cli_v${VERSION}_release.zip \
             duckduckgo-chat-cli_v${VERSION}_linux_amd64 \
             duckduckgo-chat-cli_v${VERSION}_darwin_arm64 \
+            duckduckgo-chat-cli_v${VERSION}_darwin_amd64 \
             duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe \
             duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256 \
             duckduckgo-chat-cli_v${VERSION}_linux_amd64.sha256 \
-            duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256
+            duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256 \
+            duckduckgo-chat-cli_v${VERSION}_darwin_amd64.sha256
         
         echo "✅ Build v$VERSION complete!"
         ls -lah

@@ -167,8 +167,17 @@ curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/
 <details>
 <summary><strong>🍎 MacOS (curl)</strong></summary>
 
+<br/>
+<strong>Apple Silicon (ARM64):</strong>
+
 ```bash
 curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest | grep -oP 'https.*darwin_arm64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_arm64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_arm64 && ./duckduckgo-chat-cli_v*_darwin_arm64
+```
+
+<strong>Intel (AMD64):</strong>
+
+```bash
+curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest | grep -oP 'https.*darwin_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_amd64 && ./duckduckgo-chat-cli_v*_darwin_amd64
 ```
 
 </details>

@@ -65,6 +65,7 @@ log_info "Checking cross-platform builds..."
 check "GOOS=linux GOARCH=amd64 go build -o /tmp/test_linux ./cmd/duckchat/main.go && rm -f /tmp/test_linux" "Linux AMD64 build"
 check "GOOS=windows GOARCH=amd64 go build -o /tmp/test_windows.exe ./cmd/duckchat/main.go && rm -f /tmp/test_windows.exe" "Windows AMD64 build"
 check "GOOS=darwin GOARCH=arm64 go build -o /tmp/test_darwin ./cmd/duckchat/main.go && rm -f /tmp/test_darwin" "Darwin ARM64 build"
+check "GOOS=darwin GOARCH=amd64 go build -o /tmp/test_darwin_amd64 ./cmd/duckchat/main.go && rm -f /tmp/test_darwin_amd64" "Darwin AMD64 build"
 
 # Git verification
 log_info "Checking Git..."

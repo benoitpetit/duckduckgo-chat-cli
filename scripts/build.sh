@@ -49,12 +49,17 @@ cd ..
 echo "📦 Building Darwin ARM64..."
 GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
 
+# Build pour Intel Mac
+echo "📦 Building Darwin AMD64..."
+GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
+
 # Création du zip de release
 echo "📚 Creating release archive..."
 cd $BUILD_DIR
 zip duckduckgo-chat-cli_v${VERSION}_release.zip \
     duckduckgo-chat-cli_v${VERSION}_linux_amd64 \
     duckduckgo-chat-cli_v${VERSION}_darwin_arm64 \
+    duckduckgo-chat-cli_v${VERSION}_darwin_amd64 \
     duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe \
     duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256
 cd ..

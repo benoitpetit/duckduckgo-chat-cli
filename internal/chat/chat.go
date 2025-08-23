@@ -382,6 +382,7 @@ func ProcessInputAndReturn(c *Chat, input string, cfg *config.Config) (string, e
 func shortenModelName(model string) string {
 	displayNames := map[string]models.ModelAlias{
 		"gpt-4o-mini":                               "gpt-4o-mini",
+		"gpt-5-mini":                                "gpt-5-mini",
 		"claude-3-haiku-20240307":                   "claude-3-haiku",
 		"meta-llama/Llama-3.3-70B-Instruct-Turbo":   "llama",
 		"mistralai/Mistral-Small-24B-Instruct-2501": "mixtral",

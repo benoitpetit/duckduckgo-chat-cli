@@ -248,6 +248,7 @@ func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {
 	prompt := &survey.Select{
 		Message: "Choose Default Model:",
 		Options: []string{
+			"gpt-5-mini",
 			"gpt-4o-mini",
 			"claude-3-haiku",
 			"llama",

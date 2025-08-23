@@ -38,7 +38,7 @@
 
 ### 💬 Chat Experience
 - **🔄 Real-time streaming** - Live response display with smooth markdown formatting
-- **🤖 Multiple AI models** - GPT-4o mini, Claude 3 Haiku, Llama 3.3, Mistral Small, o4-mini & more
+- **🤖 Multiple AI models** - GPT-4o mini, GPT-5 mini, Claude 3 Haiku, Llama 3.3, Mistral Small, o4-mini & more
 - **💻 Terminal-native** - Optimized for command-line workflows with interactive menus
 - **⌨️ Smart autocompletion** - Interactive command menus and context-aware suggestions
 - **🔑 Auto-authentication** - Seamless session management with dynamic header refresh
@@ -132,13 +132,14 @@ Never lose important conversations:
 
 ## 🤖 Available Models
 
-| Model Name         | Integration ID                            | Alias          | Strength         | Best For             | Characteristics              |
-| :----------------- | :---------------------------------------- | :------------- | :------------------- | :----------------------- | :---------------------------------- |
-| **GPT-4o mini**    | gpt-4o-mini                               | gpt-4o-mini    | General purpose      | Everyday questions       | • Fast<br>• Well-balanced           |
-| **Claude 3 Haiku** | claude-3-haiku-20240307                   | claude-3-haiku | Creative writing     | Explanations & summaries | • Clear responses<br>• Concise      |
-| **Llama 3.3 70B**  | meta-llama/Llama-3.3-70B-Instruct-Turbo   | llama          | Programming          | Code-related tasks       | • Technical precision<br>• Detailed |
-| **Mistral Small**  | mistralai/Mistral-Small-24B-Instruct-2501 | mixtral        | Knowledge & analysis | Complex topics           | • Reasoning<br>• Logic-focused      |
-| **o4-mini**        | o4-mini                                   | o4mini         | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
+| Model Name         | Integration ID                            | Alias          | Strength                 | Best For                 | Characteristics                            |
+| :----------------- | :---------------------------------------- | :------------- | :----------------------- | :----------------------- | :----------------------------------------- |
+| **GPT-5-Mini**     | gpt-5-mini                                | gpt-5-mini     | Adaptive problem-solving | Multimodal reasoning     | • Context-aware<br>• Efficient with nuance |
+| **GPT-4o mini**    | gpt-4o-mini                               | gpt-4o-mini    | General purpose          | Everyday questions       | • Fast<br>• Well-balanced                  |
+| **Claude 3 Haiku** | claude-3-haiku-20240307                   | claude-3-haiku | Creative writing         | Explanations & summaries | • Clear responses<br>• Concise             |
+| **Llama 3.3 70B**  | meta-llama/Llama-3.3-70B-Instruct-Turbo   | llama          | Programming              | Code-related tasks       | • Technical precision<br>• Detailed        |
+| **Mistral Small**  | mistralai/Mistral-Small-24B-Instruct-2501 | mixtral        | Knowledge & analysis     | Complex topics           | • Reasoning<br>• Logic-focused             |
+| **o4-mini**        | o4-mini                                   | o4mini         | Speed                    | Quick answers            | • Very fast<br>• Compact responses         |
 
 ## 📦 Installation
 

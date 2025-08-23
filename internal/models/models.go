@@ -27,12 +27,14 @@ type ModelAlias string
 
 const (
 	GPT4Mini Model = "gpt-4o-mini"
+	GPT5Mini Model = "gpt-5-mini"
 	Claude3  Model = "claude-3-haiku-20240307"
 	Llama    Model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 	Mixtral  Model = "mistralai/Mistral-Small-24B-Instruct-2501"
 	o4mini   Model = "o4-mini"
 
 	GPT4MiniAlias ModelAlias = "gpt-4o-mini"
+	GPT5MiniAlias ModelAlias = "gpt-5-mini"
 	Claude3Alias  ModelAlias = "claude-3-haiku"
 	LlamaAlias    ModelAlias = "llama"
 	MixtralAlias  ModelAlias = "mixtral"
@@ -41,6 +43,7 @@ const (
 
 var modelMap = map[ModelAlias]Model{
 	GPT4MiniAlias: GPT4Mini,
+	GPT5MiniAlias: GPT5Mini,
 	Claude3Alias:  Claude3,
 	LlamaAlias:    Llama,
 	MixtralAlias:  Mixtral,
@@ -49,6 +52,7 @@ var modelMap = map[ModelAlias]Model{
 
 var modelDisplayMap = map[Model]string{
 	GPT4Mini: "GPT-4o-mini",
+	GPT5Mini: "GPT-5-mini",
 	Claude3:  "Claude-3-haiku",
 	Llama:    "Llama 3.3",
 	Mixtral:  "Mistral Small 3",
@@ -213,6 +217,7 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 	// Show an interactive menu if no argument is provided
 	modelOptions := []string{
 		"GPT-4o-mini",
+		"GPT-5-mini",
 		"Claude-3-haiku",
 		"Llama 3.3",
 		"Mistral Small 3",
@@ -241,6 +246,8 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 	switch strings.ToLower(choice) {
 	case "gpt-4o-mini":
 		return GPT4MiniAlias
+	case "gpt-5-mini":
+		return GPT5MiniAlias
 	case "claude-3-haiku":
 		return Claude3Alias
 	case "llama 3.3":

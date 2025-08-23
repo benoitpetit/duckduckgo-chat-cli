@@ -186,6 +186,7 @@ func sanitizeFilename(name string) string {
 func formatModelName(modelName string) string {
 	displayNames := map[string]string{
 		"gpt-4o-mini":                             "GPT-4o mini",
+		"gpt-5-mini":                              "GPT-5 mini",
 		"claude-3-haiku-20240307":                 "Claude 3 Haiku",
 		"meta-llama/Llama-3.3-70B-Instruct-Turbo": "Llama 3.3 70B",
 		"mistralai/Mixtral-8x7B-Instruct-v0.1":    "Mistral 8x7B",

@@ -194,8 +194,8 @@ func GetAvailableModels() []ModelInfo {
 			IsDefault:   false,
 		},
 		{
-			ID:          "o4mini",
-			Name:        "o4-mini",
+			ID:          "gpt-5",
+			Name:        "gpt-5-mini",
 			Description: "Compact and efficient model for basic interactions",
 			IsDefault:   false,
 		},

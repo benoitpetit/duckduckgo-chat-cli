@@ -382,11 +382,11 @@ func ProcessInputAndReturn(c *Chat, input string, cfg *config.Config) (string, e
 func shortenModelName(model string) string {
 	displayNames := map[string]models.ModelAlias{
 		"gpt-4o-mini":                               "gpt-4o-mini",
-		"claude-3-haiku-20240307":                   "claude-3-haiku",
-		"meta-llama/Llama-3.3-70B-Instruct-Turbo":   "llama",
+		"claude-3-5-haiku-latest":                   "claude-3-haiku",
+		"meta-llama/Llama-4-Scout-17B-16E-Instruct":   "llama",
 		"mistralai/Mistral-Small-24B-Instruct-2501": "mixtral",
-		"o4-mini": "o4mini",
-		"o3-mini": "o3mini",
+		"gpt-5-mini": "gpt-5",
+		"openai/gpt-oss-120b": "gpt-oss",
 	}
 
 	if shortName, exists := displayNames[model]; exists {

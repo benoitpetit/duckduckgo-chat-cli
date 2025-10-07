@@ -186,10 +186,11 @@ func sanitizeFilename(name string) string {
 func formatModelName(modelName string) string {
 	displayNames := map[string]string{
 		"gpt-4o-mini":                             "GPT-4o mini",
-		"claude-3-haiku-20240307":                 "Claude 3 Haiku",
-		"meta-llama/Llama-3.3-70B-Instruct-Turbo": "Llama 3.3 70B",
+		"claude-3-5-haiku-latest":                 "Claude 3 Haiku",
+		"meta-llama/Llama-4-Scout-17B-16E-Instruct": "Llama 3.3 70B",
 		"mistralai/Mixtral-8x7B-Instruct-v0.1":    "Mistral 8x7B",
-		"o3-mini":                                 "o3-mini",
+		"gpt-5-mini":                                 "gpt-5",	
+		"openai/gpt-oss-120b": 						"gpt-oss",
 	}
 
 	if shortName, exists := displayNames[modelName]; exists {

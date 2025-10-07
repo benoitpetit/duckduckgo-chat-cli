@@ -38,7 +38,7 @@
 
 ### 💬 Chat Experience
 - **🔄 Real-time streaming** - Live response display with smooth markdown formatting
-- **🤖 Multiple AI models** - GPT-4o mini, Claude 3 Haiku, Llama 3.3, Mistral Small, o4-mini & more
+- **🤖 Multiple AI models** - GPT-4o mini, Claude 3 Haiku, Llama 3.3, Mistral Small, gpt-5-mini & more
 - **💻 Terminal-native** - Optimized for command-line workflows with interactive menus
 - **⌨️ Smart autocompletion** - Interactive command menus and context-aware suggestions
 - **🔑 Auto-authentication** - Seamless session management with dynamic header refresh
@@ -135,10 +135,10 @@ Never lose important conversations:
 | Model Name         | Integration ID                            | Alias          | Strength         | Best For             | Characteristics              |
 | :----------------- | :---------------------------------------- | :------------- | :------------------- | :----------------------- | :---------------------------------- |
 | **GPT-4o mini**    | gpt-4o-mini                               | gpt-4o-mini    | General purpose      | Everyday questions       | • Fast<br>• Well-balanced           |
-| **Claude 3 Haiku** | claude-3-haiku-20240307                   | claude-3-haiku | Creative writing     | Explanations & summaries | • Clear responses<br>• Concise      |
-| **Llama 3.3 70B**  | meta-llama/Llama-3.3-70B-Instruct-Turbo   | llama          | Programming          | Code-related tasks       | • Technical precision<br>• Detailed |
+| **Claude 3 Haiku** | claude-3-5-haiku-latest                   | claude-3-haiku | Creative writing     | Explanations & summaries | • Clear responses<br>• Concise      |
+| **Llama 3.3 70B**  | meta-llama/Llama-4-Scout-17B-16E-Instruct   | llama          | Programming          | Code-related tasks       | • Technical precision<br>• Detailed |
 | **Mistral Small**  | mistralai/Mistral-Small-24B-Instruct-2501 | mixtral        | Knowledge & analysis | Complex topics           | • Reasoning<br>• Logic-focused      |
-| **o4-mini**        | o4-mini                                   | o4mini         | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
+| **gpt-5-mini**        | gpt-5-mini                                   | o4mini         | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
 
 ## 📦 Installation
 

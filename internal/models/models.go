@@ -27,10 +27,10 @@ type ModelAlias string
 
 const (
 	GPT4Mini Model = "gpt-4o-mini"
-	Claude3  Model = "claude-3-haiku-20240307"
-	Llama    Model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+	Claude3  Model = "claude-3-5-haiku-latest"
+	Llama    Model = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
 	Mixtral  Model = "mistralai/Mistral-Small-24B-Instruct-2501"
-	o4mini   Model = "o4-mini"
+	o4mini   Model = "gpt-5-mini"
 
 	GPT4MiniAlias ModelAlias = "gpt-4o-mini"
 	Claude3Alias  ModelAlias = "claude-3-haiku"
@@ -52,7 +52,7 @@ var modelDisplayMap = map[Model]string{
 	Claude3:  "Claude-3-haiku",
 	Llama:    "Llama 3.3",
 	Mixtral:  "Mistral Small 3",
-	o4mini:   "o4-mini",
+	o4mini:   "gpt-5-mini",
 }
 
 func GetModel(alias string) Model {
@@ -216,7 +216,7 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 		"Claude-3-haiku",
 		"Llama 3.3",
 		"Mistral Small 3",
-		"o4-mini",
+		"gpt-5-mini",
 		"Cancel",
 	}
 

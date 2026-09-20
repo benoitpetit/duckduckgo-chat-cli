@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go Version">
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go Version">
   <a href="https://github.com/benoitpetit/duckduckgo-chat-cli/releases" target="_blank">
     <img src="https://img.shields.io/github/v/release/benoitpetit/duckduckgo-chat-cli?style=flat-square" alt="Latest Release">
   </a>
@@ -186,7 +186,7 @@ curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/
 ### 2. Build from source
 
 **Prerequisites:**
-- Go 1.21+ (`go version`)
+- Go 1.24+ (`go version`)
 - Chrome/Chromium 115+ (`chromium-browser --version`)
 
 The chat backend is Duck.ai. Chrome or Chromium is used headlessly to obtain the rotating browser proof required by Duck.ai; no account credentials are stored by the CLI. See the [protocol notes](reverse/README.md) for the current request flow.

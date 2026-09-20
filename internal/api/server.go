@@ -94,8 +94,8 @@ func setupRouter(chatSession *chat.Chat, cfg *config.Config) *gin.Engine {
 	// API root with basic info
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"message": "DuckDuckGo Chat CLI API",
-			"version": "1.0.0",
+			"message": "Duck.ai Chat CLI API",
+			"version": "1.3.0",
 			"docs":    "/doc/index.html",
 			"api":     "/api/v1",
 		})

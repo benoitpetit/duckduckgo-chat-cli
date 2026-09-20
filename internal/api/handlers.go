@@ -266,7 +266,7 @@ func HealthHandler() gin.HandlerFunc {
 
 		healthResponse := HealthResponse{
 			Status:    "healthy",
-			Version:   "1.0.0",
+			Version:   "1.3.0",
 			Uptime:    int64(uptime.Seconds()),
 			Services:  services,
 			Timestamp: time.Now(),

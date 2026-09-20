@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	StatusURL        = "https://duckduckgo.com/duckchat/v1/status"
-	ChatURL          = "https://duckduckgo.com/duckchat/v1/chat"
+	StatusURL        = "https://duck.ai/duckchat/v1/status"
+	ChatURL          = "https://duck.ai/duckchat/v1/chat"
 	StatusHeaders    = "1"
 	MinChromeVersion = "115.0.5790.110"
 )
@@ -26,40 +26,49 @@ type Model string
 type ModelAlias string
 
 const (
-	GPT4Mini Model = "gpt-4o-mini"
-	Claude3  Model = "claude-3-haiku-20240307"
-	Llama    Model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-	Mixtral  Model = "mistralai/Mistral-Small-24B-Instruct-2501"
-	o4mini   Model = "o4-mini"
+	GPT5Luna     Model = "gpt-5.6-luna"
+	GPT54Mini    Model = "gpt-5.4-mini"
+	ClaudeHaiku  Model = "claude-haiku-4-5"
+	MistralSmall Model = "mistral-small-4"
+	GPTOSS120B   Model = "gpt-oss-120B"
+	Gemma431B    Model = "gemma-4-31B"
 
-	GPT4MiniAlias ModelAlias = "gpt-4o-mini"
-	Claude3Alias  ModelAlias = "claude-3-haiku"
-	LlamaAlias    ModelAlias = "llama"
-	MixtralAlias  ModelAlias = "mixtral"
-	o4miniAlias   ModelAlias = "o4mini"
+	GPT5LunaAlias     ModelAlias = "gpt-5.6-luna"
+	GPT54MiniAlias    ModelAlias = "gpt-5.4-mini"
+	ClaudeHaikuAlias  ModelAlias = "claude-haiku-4-5"
+	MistralSmallAlias ModelAlias = "mistral-small-4"
+	GPTOSS120BAlias   ModelAlias = "gpt-oss-120b"
+	Gemma431BAlias    ModelAlias = "gemma-4-31b"
 )
 
 var modelMap = map[ModelAlias]Model{
-	GPT4MiniAlias: GPT4Mini,
-	Claude3Alias:  Claude3,
-	LlamaAlias:    Llama,
-	MixtralAlias:  Mixtral,
-	o4miniAlias:   o4mini,
+	GPT5LunaAlias:     GPT5Luna,
+	GPT54MiniAlias:    GPT54Mini,
+	ClaudeHaikuAlias:  ClaudeHaiku,
+	MistralSmallAlias: MistralSmall,
+	GPTOSS120BAlias:   GPTOSS120B,
+	Gemma431BAlias:    Gemma431B,
+	"gpt-4o-mini":     GPT5Luna,
+	"claude-3-haiku":  ClaudeHaiku,
+	"llama":           GPTOSS120B,
+	"mixtral":         MistralSmall,
+	"o4mini":          GPT54Mini,
 }
 
 var modelDisplayMap = map[Model]string{
-	GPT4Mini: "GPT-4o-mini",
-	Claude3:  "Claude-3-haiku",
-	Llama:    "Llama 3.3",
-	Mixtral:  "Mistral Small 3",
-	o4mini:   "o4-mini",
+	GPT5Luna:     "GPT-5.6 Luna",
+	GPT54Mini:    "GPT-5.4 Mini",
+	ClaudeHaiku:  "Claude Haiku 4.5",
+	MistralSmall: "Mistral Small 4",
+	GPTOSS120B:   "GPT OSS 120B",
+	Gemma431B:    "Gemma 4 31B",
 }
 
 func GetModel(alias string) Model {
-	if model, ok := modelMap[ModelAlias(alias)]; ok {
+	if model, ok := modelMap[ModelAlias(strings.ToLower(alias))]; ok {
 		return model
 	}
-	return GPT4Mini // default model
+	return GPT5Luna // default model
 }
 
 func CheckChromeVersion() {
@@ -212,18 +221,19 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 
 	// Show an interactive menu if no argument is provided
 	modelOptions := []string{
-		"GPT-4o-mini",
-		"Claude-3-haiku",
-		"Llama 3.3",
-		"Mistral Small 3",
-		"o4-mini",
+		"GPT-5.6 Luna",
+		"GPT-5.4 Mini",
+		"Claude Haiku 4.5",
+		"Mistral Small 4",
+		"GPT OSS 120B",
+		"Gemma 4 31B",
 		"Cancel",
 	}
 
 	currentModel := GetCurrentModel(chat)
 	defaultModel, ok := modelDisplayMap[currentModel]
 	if !ok {
-		defaultModel = "GPT-4o-mini" // Fallback
+		defaultModel = "GPT-5.6 Luna" // Fallback
 	}
 
 	var choice string
@@ -239,16 +249,18 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 	}
 
 	switch strings.ToLower(choice) {
-	case "gpt-4o-mini":
-		return GPT4MiniAlias
-	case "claude-3-haiku":
-		return Claude3Alias
-	case "llama 3.3":
-		return LlamaAlias
-	case "mistral small 3":
-		return MixtralAlias
-	case "o4mini":
-		return o4miniAlias
+	case "gpt-5.6 luna":
+		return GPT5LunaAlias
+	case "gpt-5.4 mini":
+		return GPT54MiniAlias
+	case "claude haiku 4.5":
+		return ClaudeHaikuAlias
+	case "mistral small 4":
+		return MistralSmallAlias
+	case "gpt oss 120b":
+		return GPTOSS120BAlias
+	case "gemma 4 31b":
+		return Gemma431BAlias
 	case "cancel":
 		ui.Warningln("Model change canceled")
 		return ""

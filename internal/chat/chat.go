@@ -3,6 +3,10 @@ package chat
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -67,18 +71,36 @@ type Metadata struct {
 	ToolChoice ToolChoice `json:"toolChoice"`
 }
 
+type DurableStream struct {
+	MessageID      string        `json:"messageId"`
+	ConversationID string        `json:"conversationId"`
+	PublicKey      *JWKPublicKey `json:"publicKey"`
+}
+
+type JWKPublicKey struct {
+	Alg    string   `json:"alg"`
+	E      string   `json:"e"`
+	Ext    bool     `json:"ext"`
+	KeyOps []string `json:"key_ops"`
+	Kty    string   `json:"kty"`
+	N      string   `json:"n"`
+	Use    string   `json:"use"`
+}
+
 type ChatPayload struct {
-	Model                models.Model `json:"model"`
-	Metadata             Metadata     `json:"metadata"`
-	Messages             []Message    `json:"messages"`
-	CanUseTools          bool         `json:"canUseTools"`
-	CanUseApproxLocation bool         `json:"canUseApproxLocation"`
+	Model                      models.Model   `json:"model"`
+	Metadata                   *Metadata      `json:"metadata,omitempty"`
+	Messages                   []Message      `json:"messages"`
+	CanUseTools                bool           `json:"canUseTools"`
+	CanUseApproxLocation       bool           `json:"canUseApproxLocation"`
+	CanDelegateImageGeneration *bool          `json:"canDelegateImageGeneration,omitempty"`
+	ReasoningEffort            string         `json:"reasoningEffort"`
+	DurableStream              *DurableStream `json:"durableStream"`
 }
 
 func InitializeSession(cfg *config.Config) *Chat {
 	model := models.GetModel(cfg.DefaultModel)
-	vqd, vqdHash1, feSignals, feVersion := GetVQD()
-	chat := NewChat(vqd, vqdHash1, feSignals, feVersion, model, cfg)
+	chat := NewChat("", "", "", "", model, cfg)
 	ui.AIln("Chat initialized with model: %s", model)
 	setTerminalTitle(fmt.Sprintf("DuckDuckGo Chat - %s", model))
 	return chat
@@ -97,11 +119,11 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	jar, _ := cookiejar.New(nil)
 
 	// Set required cookies avec les cookies minimum nécessaires
-	u, _ := url.Parse("https://duckduckgo.com")
+	u, _ := url.Parse("https://duck.ai")
 	cookies := []*http.Cookie{
-		{Name: "5", Value: "1", Domain: ".duckduckgo.com"},
-		{Name: "dcm", Value: "3", Domain: ".duckduckgo.com"},
-		{Name: "dcs", Value: "1", Domain: ".duckduckgo.com"},
+		{Name: "5", Value: "1", Domain: ".duck.ai"},
+		{Name: "dcm", Value: "3", Domain: ".duck.ai"},
+		{Name: "dcs", Value: "1", Domain: ".duck.ai"},
 	}
 	jar.SetCookies(u, cookies)
 
@@ -143,69 +165,48 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	return chat
 }
 
-func GetVQD() (string, string, string, string) {
-	// Simple approach like the working PowerShell script
-	// Use static headers that work, no complex challenges
-	ui.Warningln("⌛ Getting VQD from status API (simple approach like working PS1 script)...")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	// Set up cookies avec les cookies minimum nécessaires (comme dans le script PS1)
-	jar, _ := cookiejar.New(nil)
-	u, _ := url.Parse("https://duckduckgo.com")
-	cookies := []*http.Cookie{
-		{Name: "5", Value: "1", Domain: ".duckduckgo.com"},
-		{Name: "dcm", Value: "3", Domain: ".duckduckgo.com"},
-		{Name: "dcs", Value: "1", Domain: ".duckduckgo.com"},
-	}
-	jar.SetCookies(u, cookies)
-	client.Jar = jar
-
-	// Direct GET to /status with exact headers from working PS1 script
-	req, _ := http.NewRequest("GET", models.StatusURL, nil)
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
-	req.Header.Set("Accept-Language", "fr-FR,fr;q=0.6")
-	req.Header.Set("Authority", "duckduckgo.com")
-	req.Header.Set("Cache-Control", "no-store")
-	req.Header.Set("DNT", "1")
-	req.Header.Set("Method", "GET")
-	req.Header.Set("Path", "/duckchat/v1/status")
-	req.Header.Set("Priority", "u=1, i")
-	req.Header.Set("Referer", "https://duckduckgo.com/")
-	req.Header.Set("Scheme", "https")
-	req.Header.Set("Sec-CH-UA", `"Not)A;Brand";v="8", "Chromium";v="138", "Brave";v="138"`)
-	req.Header.Set("Sec-CH-UA-Mobile", "?0")
-	req.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("Sec-GPC", "1")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
-	req.Header.Set("x-vqd-accept", "1")
-
-	resp, err := client.Do(req)
+func newDurableStream() (*DurableStream, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		ui.Errorln("Error fetching VQD: %v", err)
-		return "", "", "", ""
-	}
-	defer resp.Body.Close()
-
-	// Le VQD header de la status API pour x-vqd-4
-	vqdHeader := resp.Header.Get("x-vqd-hash-1")
-	if vqdHeader == "" {
-		ui.Errorln("No VQD header found in response")
-		return "", "", "", ""
+		return nil, err
 	}
 
-	// Return the VQD and static headers that work in PowerShell script
-	vqd := vqdHeader
-	vqdHash1 := "eyJzZXJ2ZXJfaGFzaGVzIjpbImRQSlJJTWczZnFYQXIvaStaa3c2cEpFVzEwckdTdmxJVlVkNlFsOVRGWXc9IiwiMUN3Qzg3N0Q3WXE1dzlEeTc4UjhBVi9qZVZWaUlYbmV0Q0xvckx3c01QZz0iLCJQSzc3TGc2L25weDdWQ2J2UWxsTEhBR3cyenJIVmEvQUFBRFBhQTl1ekVRPSJdLCJjbGllbnRfaGFzaGVzIjpbImxWblI0MStCMVFWZ0o4d0hhMUdBNmdxR0JoSjlWdjN5K0dISkdGekJmTGM9IiwiVS9RRUc2RE1qdEU4V2hHU1FxOUU1Z0VGNmw1SWJrNk9NVlBuY01DU1licz0iLCJ6SURsYUNvZG9JUjNwbTNSVTlWOUJXaUJkZDJqenRMODAyN0VYTHhkWll3PSJdLCJzaWduYWxzIjp7fSwibWV0YSI6eyJ2IjoiNCIsImNoYWxsZW5nZV9pZCI6ImM4M2Q0ZTc5NTU2MjJmZjU3Mzc0ZDUzOTk2ZjliMmJhZGE2ZDQxZTMzNDM1ZjVlNzMyYjFmNmZjNmQ0ZTE1NzVoOGpidCIsInRpbWVzdGFtcCI6IjE3NTIxNTU3Nzc4NjYiLCJvcmlnaW4iOiJodHRwczovL2R1Y2tkdWNrZ28uY29tIiwic3RhY2siOiJFcnJvclxuYXQgRSAoaHR0cHM6Ly9kdWNrZHVja2dvLmNvbS9kaXN0L3dwbS5jaGF0LjcwZWFjYTZhZWEyOTQ4YjBiYjYwLmpzOjE6MTQ4MjUpXG5hdCBhc3luYyBodHRwczovL2R1Y2tkdWNrZ28uY29tL2Rpc3Qvd3BtLmNoYXQuNzBlYWNhNmFlYTI5NDhiMGJiNjAuanM6MToxNjk4NSIsImR1cmF0aW9uIjoiNTgifX0="
-	feSignals := "eyJzdGFydCI6MTc1MjE1NTc3NzQ4MCwiZXZlbnRzIjpbeyJuYW1lIjoic3RhcnROZXdDaGF0IiwiZGVsdGEiOjc1fSx7Im5hbWUiOiJyZWNlbnRDaGF0c0xpc3RJbXByZXNzaW9uIiwiZGVsdGEiOjEyNH1dLCJlbmQiOjQzNDN9"
-	feVersion := "serp_20250710_090702_ET-70eaca6aea2948b0bb60"
+	messageID := randomRequestID()
+	conversationID := randomRequestID()
+	publicKey := &privateKey.PublicKey
+	return &DurableStream{
+		MessageID:      messageID,
+		ConversationID: conversationID,
+		PublicKey: &JWKPublicKey{
+			Alg:    "RSA-OAEP-256",
+			E:      base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
+			Ext:    true,
+			KeyOps: []string{"encrypt"},
+			Kty:    "RSA",
+			N:      base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
+			Use:    "enc",
+		},
+	}, nil
+}
 
-	ui.AIln("✅ Successfully got VQD and all required headers")
-	return vqd, vqdHash1, feSignals, feVersion
+func randomRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+func GetVQD() (string, string, string, string) {
+	// Kept for compatibility with older callers; current Duck.ai proof is
+	// captured from the live frontend rather than read from /status directly.
+	headers, err := getCurrentDuckAIHeaders()
+	if err != nil {
+		ui.Errorln("Error getting Duck.ai chat headers: %v", err)
+		return "", "", "", ""
+	}
+	return "", headers.VqdHash1, headers.FeSignals, headers.FeVersion
+
 }
 
 func (c *Chat) Clear(cfg *config.Config) {
@@ -218,12 +219,16 @@ func (c *Chat) Clear(cfg *config.Config) {
 
 	if len(c.Messages) > 0 {
 		c.Messages = []Message{}
-		newVqd, newVqdHash1, newFeSignals, newFeVersion := GetVQD()
-		c.NewVqd = newVqd
-		c.OldVqd = c.NewVqd
-		c.VqdHash1 = newVqdHash1
-		c.FeSignals = newFeSignals
-		c.FeVersion = newFeVersion
+		newHeaders, err := getCurrentDuckAIHeaders()
+		if err != nil {
+			ui.Errorln("Error refreshing Duck.ai chat proof: %v", err)
+			return
+		}
+		c.NewVqd = ""
+		c.OldVqd = ""
+		c.VqdHash1 = newHeaders.VqdHash1
+		c.FeSignals = newHeaders.FeSignals
+		c.FeVersion = newHeaders.FeVersion
 		// Hash will be refreshed on next request if needed
 		c.RetryCount = 0
 
@@ -381,12 +386,12 @@ func ProcessInputAndReturn(c *Chat, input string, cfg *config.Config) (string, e
 
 func shortenModelName(model string) string {
 	displayNames := map[string]models.ModelAlias{
-		"gpt-4o-mini":                               "gpt-4o-mini",
-		"claude-3-haiku-20240307":                   "claude-3-haiku",
-		"meta-llama/Llama-3.3-70B-Instruct-Turbo":   "llama",
-		"mistralai/Mistral-Small-24B-Instruct-2501": "mixtral",
-		"o4-mini": "o4mini",
-		"o3-mini": "o3mini",
+		"gpt-5.6-luna":     "gpt-5.6-luna",
+		"gpt-5.4-mini":     "gpt-5.4-mini",
+		"claude-haiku-4-5": "claude-haiku-4-5",
+		"mistral-small-4":  "mistral-small-4",
+		"gpt-oss-120B":     "gpt-oss-120b",
+		"gemma-4-31B":      "gemma-4-31b",
 	}
 
 	if shortName, exists := displayNames[model]; exists {
@@ -454,32 +459,33 @@ func (c *Chat) FetchStream(content string) (<-chan string, error) {
 
 func (c *Chat) Fetch(content string) (*http.Response, error) {
 	startTime := time.Now()
-	if c.NewVqd == "" {
-		newVqd, newVqdHash1, newFeSignals, newFeVersion := GetVQD()
-		c.NewVqd = newVqd
-		c.VqdHash1 = newVqdHash1
-		c.FeSignals = newFeSignals
-		c.FeVersion = newFeVersion
-		if c.NewVqd == "" {
-			return nil, fmt.Errorf("failed to get VQD")
-		}
+	// Duck.ai's proof is generated by its frontend and must be captured from
+	// a real browser request. It is rotated frequently, so refresh it for
+	// every chat request instead of reusing the old DuckDuckGo token.
+	headers, err := getCurrentDuckAIHeaders()
+	if err != nil {
+		return nil, err
+	}
+	c.NewVqd = ""
+	c.VqdHash1 = headers.VqdHash1
+	c.FeSignals = headers.FeSignals
+	c.FeVersion = headers.FeVersion
+	if c.VqdHash1 == "" {
+		return nil, fmt.Errorf("Duck.ai returned an empty X-Vqd-Hash-1 proof")
 	}
 
-	// VQD hash is now initialized during chat creation
+	durableStream, err := newDurableStream()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Duck.ai durable stream: %w", err)
+	}
 
 	payload := ChatPayload{
-		Model: c.Model,
-		Metadata: Metadata{
-			ToolChoice: ToolChoice{
-				NewsSearch:      false,
-				VideosSearch:    false,
-				LocalSearch:     false,
-				WeatherForecast: false,
-			},
-		},
+		Model:                c.Model,
 		Messages:             c.Messages,
-		CanUseTools:          true,
+		CanUseTools:          false,
 		CanUseApproxLocation: true,
+		ReasoningEffort:      "none",
+		DurableStream:        durableStream,
 	}
 
 	jsonPayload, err := json.Marshal(payload)
@@ -499,27 +505,13 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 	// Set ALL required headers EXACTLY like the real web browser request
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
-	req.Header.Set("Accept-Language", "fr-FR,fr;q=0.6")
-	req.Header.Set("Authority", "duckduckgo.com")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("DNT", "1")
-	req.Header.Set("Method", "POST")
-	req.Header.Set("Origin", "https://duckduckgo.com")
-	req.Header.Set("Path", "/duckchat/v1/chat")
-	req.Header.Set("Priority", "u=1, i")
-	req.Header.Set("Referer", "https://duckduckgo.com/")
-	req.Header.Set("Scheme", "https")
-	req.Header.Set("Sec-CH-UA", `"Not)A;Brand";v="8", "Chromium";v="138", "Brave";v="138"`)
-	req.Header.Set("Sec-CH-UA-Mobile", "?0")
-	req.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("Sec-GPC", "1")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
+	req.Header.Set("Origin", "https://duck.ai")
+	req.Header.Set("Referer", "https://duck.ai/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
 
-	// ALL VQD-related headers from the real web browser request
-	req.Header.Set("x-vqd-4", c.NewVqd)
+	// Current Duck.ai request headers.
 	if c.FeSignals != "" {
 		req.Header.Set("x-fe-signals", c.FeSignals)
 	}
@@ -527,8 +519,9 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 		req.Header.Set("x-fe-version", c.FeVersion)
 	}
 	if c.VqdHash1 != "" {
-		req.Header.Set("x-vqd-hash-1", c.VqdHash1)
+		req.Header.Set("X-Vqd-Hash-1", c.VqdHash1)
 	}
+	req.Header.Set("x-ddg-journey-id", durableStream.ConversationID)
 
 	resp, err := c.Client.Do(req)
 	if err != nil {
@@ -547,7 +540,8 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 		}
 
 		// Handle various error conditions including 418 (I'm a teapot)
-		if resp.StatusCode == 418 || resp.StatusCode == 429 || strings.Contains(string(body), "ERR_INVALID_VQD") {
+		bodyText := string(body)
+		if resp.StatusCode == 400 || resp.StatusCode == 418 || resp.StatusCode == 429 || strings.Contains(bodyText, "ERR_INVALID_VQD") || strings.Contains(bodyText, "ERR_CHALLENGE") {
 			// Track specific error types
 			errorType := "unknown"
 			switch resp.StatusCode {
@@ -562,17 +556,17 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 
 			// Refresh ONLY VQD on errors, like the PowerShell script
 			ui.Warningln("🔄 Error %d detected, refreshing VQD...", resp.StatusCode)
-			newVqd, newVqdHash1, newFeSignals, newFeVersion := GetVQD()
-			if newVqd != "" {
-				c.NewVqd = newVqd
-				c.VqdHash1 = newVqdHash1
-				c.FeSignals = newFeSignals
-				c.FeVersion = newFeVersion
-				ui.AIln("✅ Refreshed VQD: %s...", c.NewVqd[:50])
+			newHeaders, refreshErr := getCurrentDuckAIHeaders()
+			if refreshErr == nil && newHeaders.VqdHash1 != "" {
+				c.NewVqd = ""
+				c.VqdHash1 = newHeaders.VqdHash1
+				c.FeSignals = newHeaders.FeSignals
+				c.FeVersion = newHeaders.FeVersion
+				ui.AIln("✅ Refreshed Duck.ai chat proof")
 			}
 			c.Analytics.RecordVQDRefresh()
 
-			if c.NewVqd != "" && c.RetryCount < 3 {
+			if c.RetryCount < 2 {
 				c.RetryCount++
 				ui.Warningln("Retrying request (attempt %d/3)...", c.RetryCount)
 				return c.Fetch(content)

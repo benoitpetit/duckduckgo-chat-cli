@@ -9,7 +9,7 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
-        "termsOfService": "https://duckduckgo.com/terms",
+        "termsOfService": "https://duck.ai/",
         "contact": {
             "name": "devbyben",
             "url": "https://github.com/benoitpetit/duckduckGO-chat-cli",
@@ -411,7 +411,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "gpt-4o-mini"
+                    "example": "gpt-5.6-luna"
                 }
             }
         },
@@ -428,7 +428,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "gpt-4o-mini"
+                    "example": "gpt-5.6-luna"
                 },
                 "response": {
                     "type": "string",
@@ -460,7 +460,7 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string",
-                    "example": "1.0.0"
+                    "example": "1.3.0"
                 }
             }
         },
@@ -476,7 +476,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "gpt-4o-mini"
+                    "example": "gpt-5.6-luna"
                 },
                 "session_id": {
                     "type": "string",
@@ -519,7 +519,7 @@ const docTemplate = `{
             "properties": {
                 "model": {
                     "type": "string",
-                    "example": "gpt-4o-mini"
+                    "example": "gpt-5.6-luna"
                 }
             }
         },
@@ -533,7 +533,7 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string",
-                    "example": "gpt-4o-mini"
+                    "example": "gpt-5.6-luna"
                 },
                 "is_default": {
                     "type": "boolean",
@@ -541,7 +541,7 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string",
-                    "example": "GPT-4o-mini"
+                    "example": "GPT-5.6 Luna"
                 }
             }
         },
@@ -551,7 +551,7 @@ const docTemplate = `{
             "properties": {
                 "current_model": {
                     "type": "string",
-                    "example": "gpt-4o-mini"
+                    "example": "gpt-5.6-luna"
                 },
                 "models": {
                     "type": "array",
@@ -561,7 +561,7 @@ const docTemplate = `{
                 },
                 "total_models": {
                     "type": "integer",
-                    "example": 5
+                    "example": 6
                 }
             }
         }
@@ -578,12 +578,12 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "1.0.0",
+	Version:          "1.3.0",
 	Host:             "localhost:8080",
 	BasePath:         "/api/v1",
 	Schemes:          []string{"http", "https"},
 	Title:            "duckduckGO-chat-cli API",
-	Description:      "REST API for DuckDuckGo Chat CLI - programmatic access to AI chat functionality",
+	Description:      "REST API for Duck.ai Chat CLI - programmatic access to AI chat functionality",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

@@ -14,13 +14,13 @@ import (
 // @Description Chat message request payload
 type ChatRequest struct {
 	Message string `json:"message" binding:"required" example:"Hello, how are you?" minLength:"1" maxLength:"10000"`
-	Model   string `json:"model,omitempty" example:"gpt-4o-mini"`
+	Model   string `json:"model,omitempty" example:"gpt-5.6-luna"`
 } // @name ChatRequest
 
 // ModelChangeRequest represents a model change request
 // @Description Model change request payload
 type ModelChangeRequest struct {
-	Model string `json:"model" binding:"required" example:"gpt-4o-mini" enum:"gpt-4o-mini,claude-3-haiku,llama,mixtral,o4mini"`
+	Model string `json:"model" binding:"required" example:"gpt-5.6-luna" enum:"gpt-5.6-luna,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,gpt-oss-120b,gemma-4-31b"`
 } // @name ModelChangeRequest
 
 // API Response Types
@@ -39,7 +39,7 @@ type APIResponse struct {
 // @Description Chat response payload
 type ChatResponse struct {
 	Response  string       `json:"response" example:"Hello! I'm doing well, thank you for asking."`
-	Model     string       `json:"model" example:"gpt-4o-mini"`
+	Model     string       `json:"model" example:"gpt-5.6-luna"`
 	MessageID string       `json:"message_id" example:"msg_123456"`
 	Metadata  ChatMetadata `json:"metadata"`
 } // @name ChatResponse
@@ -58,7 +58,7 @@ type HistoryResponse struct {
 	Messages      []MessageResponse `json:"messages"`
 	TotalMessages int               `json:"total_messages" example:"10"`
 	SessionID     string            `json:"session_id" example:"session_123456"`
-	Model         string            `json:"model" example:"gpt-4o-mini"`
+	Model         string            `json:"model" example:"gpt-5.6-luna"`
 } // @name HistoryResponse
 
 // MessageResponse represents a single message in the history
@@ -73,8 +73,8 @@ type MessageResponse struct {
 // ModelInfo represents available model information
 // @Description Information about an available model
 type ModelInfo struct {
-	ID          string `json:"id" example:"gpt-4o-mini"`
-	Name        string `json:"name" example:"GPT-4o-mini"`
+	ID          string `json:"id" example:"gpt-5.6-luna"`
+	Name        string `json:"name" example:"GPT-5.6 Luna"`
 	Description string `json:"description" example:"Fast and efficient model for general conversations"`
 	IsDefault   bool   `json:"is_default" example:"true"`
 } // @name ModelInfo
@@ -83,8 +83,8 @@ type ModelInfo struct {
 // @Description Available models response payload
 type ModelsResponse struct {
 	Models       []ModelInfo `json:"models"`
-	CurrentModel string      `json:"current_model" example:"gpt-4o-mini"`
-	TotalModels  int         `json:"total_models" example:"5"`
+	CurrentModel string      `json:"current_model" example:"gpt-5.6-luna"`
+	TotalModels  int         `json:"total_models" example:"6"`
 } // @name ModelsResponse
 
 // APIError represents API error details
@@ -99,7 +99,7 @@ type APIError struct {
 // @Description Health check response payload
 type HealthResponse struct {
 	Status    string            `json:"status" example:"healthy"`
-	Version   string            `json:"version" example:"1.0.0"`
+	Version   string            `json:"version" example:"1.3.0"`
 	Uptime    int64             `json:"uptime_seconds" example:"3600"`
 	Services  map[string]string `json:"services"`
 	Timestamp time.Time         `json:"timestamp" example:"2023-01-01T12:00:00Z"`
@@ -169,35 +169,11 @@ func generateMessageID(index int) string {
 // GetAvailableModels returns information about all available models
 func GetAvailableModels() []ModelInfo {
 	return []ModelInfo{
-		{
-			ID:          "gpt-4o-mini",
-			Name:        "GPT-4o-mini",
-			Description: "Fast and efficient model for general conversations",
-			IsDefault:   true,
-		},
-		{
-			ID:          "claude-3-haiku",
-			Name:        "Claude-3-haiku",
-			Description: "Anthropic's Claude 3 Haiku model for thoughtful responses",
-			IsDefault:   false,
-		},
-		{
-			ID:          "llama",
-			Name:        "Llama 3.3",
-			Description: "Meta's Llama 3.3 70B model for advanced reasoning",
-			IsDefault:   false,
-		},
-		{
-			ID:          "mixtral",
-			Name:        "Mistral Small 3",
-			Description: "Mistral's efficient small model for quick responses",
-			IsDefault:   false,
-		},
-		{
-			ID:          "o4mini",
-			Name:        "o4-mini",
-			Description: "Compact and efficient model for basic interactions",
-			IsDefault:   false,
-		},
+		{ID: "gpt-5.6-luna", Name: "GPT-5.6 Luna", Description: "Duck.ai's default general-purpose model", IsDefault: true},
+		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Description: "Fast general-purpose model", IsDefault: false},
+		{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5", Description: "Anthropic's fast conversational model", IsDefault: false},
+		{ID: "mistral-small-4", Name: "Mistral Small 4", Description: "Mistral's efficient general-purpose model", IsDefault: false},
+		{ID: "gpt-oss-120b", Name: "GPT OSS 120B", Description: "Open-weight reasoning model", IsDefault: false},
+		{ID: "gemma-4-31b", Name: "Gemma 4 31B", Description: "Open model for general conversations", IsDefault: false},
 	}
 }

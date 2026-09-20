@@ -54,7 +54,7 @@ type Config struct {
 func Initialize() *Config {
 	cfg := loadConfig()
 	if cfg.DefaultModel == "" {
-		cfg.DefaultModel = "gpt-4o-mini"
+		cfg.DefaultModel = "gpt-5.6-luna"
 	}
 	if cfg.Search.MaxResults == 0 {
 		cfg.Search.MaxResults = 10
@@ -101,7 +101,7 @@ func Initialize() *Config {
 func loadConfig() *Config {
 	cfg := &Config{
 		TOSAccepted:      false,
-		DefaultModel:     "gpt-4o-mini",
+		DefaultModel:     "gpt-5.6-luna",
 		ExportDir:        defaultExportPath(),
 		LastUpdateTime:   time.Now(),
 		ConfirmLongInput: true, // default to enabled for safety
@@ -248,11 +248,12 @@ func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {
 	prompt := &survey.Select{
 		Message: "Choose Default Model:",
 		Options: []string{
-			"gpt-4o-mini",
-			"claude-3-haiku",
-			"llama",
-			"mixtral",
-			"o4mini",
+			"gpt-5.6-luna",
+			"gpt-5.4-mini",
+			"claude-haiku-4-5",
+			"mistral-small-4",
+			"gpt-oss-120b",
+			"gemma-4-31b",
 		},
 		Default: cfg.DefaultModel,
 	}

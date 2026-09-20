@@ -1,6 +1,6 @@
-# 📚 API Documentation
+# API Documentation
 
-This directory contains the automatically generated API documentation for the DuckDuckGo Chat CLI.
+This directory contains the automatically generated API documentation for the Duck.ai Chat CLI.
 
 ## Files
 
@@ -9,7 +9,7 @@ This directory contains the automatically generated API documentation for the Du
 - **`swagger.yaml`** - YAML format of the API specification (human-readable)
 - **`COMMAND_CONSISTENCY.md`** - Documentation about command consistency system
 
-## 🔄 Automatic Generation
+## Automatic Generation
 
 The API documentation is automatically generated from annotations in `internal/api/docs.go` using [swaggo/swag](https://github.com/swaggo/swag).
 
@@ -29,7 +29,7 @@ The source of truth for API documentation is **`internal/api/docs.go`** which co
 - Endpoint definitions via Go annotations
 - Response models and examples
 
-## 🌐 Accessing Documentation
+## Accessing Documentation
 
 When the API server is running, the interactive Swagger UI is available at:
 
@@ -37,7 +37,7 @@ When the API server is running, the interactive Swagger UI is available at:
 http://localhost:8080/doc/index.html
 ```
 
-## 🔧 Manual Generation
+## Manual Generation
 
 To manually regenerate the documentation:
 
@@ -49,14 +49,14 @@ To manually regenerate the documentation:
 swag init --generalInfo internal/api/docs.go --output docs/ --parseInternal
 ```
 
-## ⚠️ Important Notes
+## Important Notes
 
 1. **Do not edit the generated files directly** - They will be overwritten
 2. **Always update `internal/api/docs.go`** for any documentation changes
 3. **The files are version controlled** to ensure consistency across environments
 4. **Pre-release checks validate** that documentation is up-to-date
 
-## 🔍 Validation
+## Validation
 
 The consistency of the documentation is validated by:
 
@@ -64,7 +64,7 @@ The consistency of the documentation is validated by:
 - **CI/CD workflows** (test and release)
 - **Build scripts** (automatic regeneration)
 
-## 📝 Making Changes
+## Making Changes
 
 To update the API documentation:
 
@@ -73,9 +73,9 @@ To update the API documentation:
 3. Commit all changes (source + generated files)
 4. The CI/CD pipeline will validate consistency
 
-## 🏷️ Current Version
+## Current Version
 
-- **API Version**: 1.0.0
+- **API Version**: 1.3.0
 - **Contact**: devbyben (contact@devbyben.fr)
-- **Repository**: https://github.com/benoitpetit/duckduckGO-chat-cli
-- **Host**: localhost:8080 (default development) 
+- **Repository**: https://github.com/benoitpetit/duckduckgo-chat-cli
+- **Host**: localhost:8080 (default development)

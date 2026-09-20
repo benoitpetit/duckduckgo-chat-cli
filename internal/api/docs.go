@@ -1,4 +1,4 @@
-// Package api DuckDuckGo Chat CLI API
+// Package api Duck.ai Chat CLI API
 //
 // This is the REST API for DuckDuckGo Chat CLI, providing programmatic access to AI chat functionality.
 //
@@ -11,9 +11,9 @@
 // All responses follow a consistent format with success/error indicators and standardized error codes.
 //
 //	@title						duckduckGO-chat-cli API
-//	@version					1.0.0
-//	@description				REST API for DuckDuckGo Chat CLI - programmatic access to AI chat functionality
-//	@termsOfService				https://duckduckgo.com/terms
+//	@version					1.3.0
+//	@description				REST API for Duck.ai Chat CLI - programmatic access to AI chat functionality
+//	@termsOfService				https://duck.ai/
 //
 //	@contact.name				devbyben
 //	@contact.url				https://github.com/benoitpetit/duckduckGO-chat-cli

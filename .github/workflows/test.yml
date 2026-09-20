@@ -48,7 +48,7 @@ jobs:
     - name: 📚 Generate and validate API documentation
       run: |
         echo "📚 Installing swag for documentation generation..."
-        go install github.com/swaggo/swag/cmd/swag@latest
+        go install github.com/swaggo/swag/cmd/swag@v1.16.6
         
         echo "📚 Generating API documentation..."
         swag init --generalInfo internal/api/docs.go --output docs/ --parseInternal
@@ -74,13 +74,16 @@ jobs:
     - name: 🧪 Run tests
       run: go test -v ./...
 
+    - name: 🧪 Run race detector
+      run: go test -race ./...
+
     - name: 🔍 Basic code checks
       run: |
         echo "🔍 Running basic code quality checks..."
         
         # Check for goimports
         if ! command -v goimports &> /dev/null; then
-          go install golang.org/x/tools/cmd/goimports@latest
+          go install golang.org/x/tools/cmd/goimports@v0.35.0
         fi
         
         # Check imports
@@ -94,7 +97,7 @@ jobs:
         
         # Check for inefficient assignments
         if ! command -v ineffassign &> /dev/null; then
-          go install github.com/gordonklaus/ineffassign@latest
+          go install github.com/gordonklaus/ineffassign@v0.1.0
         fi
         ineffassign ./...
         
@@ -103,7 +106,7 @@ jobs:
     - name: 🔒 Security scan with gosec
       run: |
         if ! command -v gosec &> /dev/null; then
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8
         fi
         gosec -no-fail -fmt sarif -out results.sarif ./...
 

@@ -2,6 +2,7 @@ package chatcontext
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ func New() *Context {
 
 // AddFile adds file content to the context.
 func (c *Context) AddFile(path string, content []byte) {
-	c.items = append(c.items, fmt.Sprintf("[File Context]\nFile: %s\n\n%s", path, string(content)))
+	c.items = append(c.items, fmt.Sprintf("[File Context]\nFile: %s\n\n%s", filepath.Base(path), string(content)))
 }
 
 // AddURL adds URL content to the context.

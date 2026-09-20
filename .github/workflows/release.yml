@@ -63,20 +63,12 @@ jobs:
     - name: 📚 Generate API documentation
       run: |
         echo "📚 Installing swag for documentation generation..."
-        go install github.com/swaggo/swag/cmd/swag@latest
+        go install github.com/swaggo/swag/cmd/swag@v1.16.6
         
         echo "📚 Generating API documentation..."
         swag init --generalInfo internal/api/docs.go --output docs/ --parseInternal
         
         echo "✅ API documentation generated successfully"
-
-    - name: 🗑️ Delete remote tag if it exists (for re-runs)
-      run: |
-        VERSION="${{ steps.version.outputs.VERSION }}"
-        if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-          echo "⚠️ Tag v$VERSION already exists remotely. Deleting it to re-run workflow."
-          git push --delete origin "v$VERSION"
-        fi
 
     - name: 📦 Build binaries
       run: |
@@ -91,19 +83,19 @@ jobs:
         
         # Build for Linux
         echo "📦 Building Linux AMD64..."
-        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64 ./cmd/duckchat/main.go
+        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64 ./cmd/duckchat/main.go
         
         # Build for Windows
         echo "📦 Building Windows AMD64..."
-        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe ./cmd/duckchat/main.go
+        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe ./cmd/duckchat/main.go
         
         # Build for Apple Silicon
         echo "📦 Building Darwin ARM64..."
-        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
+        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
         
         # Build for Intel Mac
         echo "📦 Building Darwin AMD64..."
-        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
+        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
         
         # Generate SHA256 hashes
         echo "🔐 Generating SHA256 hashes..."
@@ -238,7 +230,7 @@ jobs:
         EOF
         
         git tag -a "v$VERSION" -F tag_message.txt
-        git push --force origin "v$VERSION"
+        git push origin "v$VERSION"
         
         rm tag_message.txt
 
@@ -289,4 +281,4 @@ jobs:
       run: |
         VERSION="${{ steps.version.outputs.VERSION }}"
         echo "🎉 Release v$VERSION created successfully!"
-        echo "📦 Files available at: https://github.com/benoitpetit/duckduckGO-chat-cli/releases/tag/v$VERSION"
+        echo "📦 Files available at: https://github.com/benoitpetit/duckduckgo-chat-cli/releases/tag/v$VERSION"

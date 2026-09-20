@@ -53,7 +53,7 @@
 ### Context Integration
 - **Web search** - Integrate DuckDuckGo search results into conversations
 - **Native Duck.ai tools** - Optional native Web Search with source citations and image generation
-- **File processing** - Add local file content (15+ formats: Go, Python, JS, TS, JSON, MD, etc.)
+- **File processing** - Add bounded local text files (Go, Python, JS, TS, JSON, Markdown, and similar formats)
 - **URL scraping** - Extract and analyze webpage content with Chrome-based scraping
 - **Project analysis** - Generate comprehensive project prompts with PMP auto-installation
 - **Session persistence** - Maintain conversation history across sessions
@@ -74,13 +74,14 @@
 - **Real-time endpoints** - Chat, history, and status endpoints
 - **Request logging** - Configurable API request/response logging
 - **Auto-documentation** - Interactive API documentation at root endpoint
+- **Safe local default** - Listens on `127.0.0.1`; configure an API key before exposing it beyond the local machine
 
 ### Library System
 - **Document collections** - Organize files into searchable libraries
 - **Advanced search** - Search across all libraries with pattern matching
 - **Library stats** - File counts, sizes, and modification dates
 - **Selective loading** - Load specific libraries or files into context
-- **Multi-format support** - 15+ file formats automatically recognized
+- **Text-file support** - Bounded, validated local text files with clear binary-file errors
 
 ### Advanced Features
 - **PMP Integration** - Auto-install and use Prompt My Project for code analysis
@@ -307,10 +308,9 @@ You: /load 12345
 | Option           | Description               | Default              | Range              |
 | ---------------- | ------------------------- | -------------------- | ------------------ |
 | `DefaultModel`   | Starting AI model         | gpt-5.6-luna          | 6 models available |
-| `GlobalPrompt`   | System prompt always sent | ""                   | Any text           |
+| `GlobalPrompt`   | Instructions prepended to the first message of each conversation | "" | Any text |
 | `ExportDir`      | Export directory          | ~/Documents/duckchat | Any valid path     |
 | `ShowMenu`       | Display commands on start | true                 | true/false         |
-| `AnalyticsEnabled`  | Enable session analytics | true                 | true/false         |
 
 ### Native Duck.ai Tools
 
@@ -366,8 +366,10 @@ validated for terminal use.
 | Option        | Description               | Default | Range           |
 |---------------|---------------------------|---------|-----------------|
 | `Enabled`     | Enable API server         | `false` | `true`/`false`  |
+| `Host`        | Bind address              | `127.0.0.1` | Local address by default |
 | `Port`        | API server port           | `8080`  | Any valid port  |
 | `Autostart`   | Start API on app launch   | `false` | `true`/`false`  |
+| `APIKey`      | Protect API requests      | empty | Required for remote exposure |
 
 > **Tip:** Use `/config` to modify these settings interactively.
 
@@ -395,7 +397,7 @@ The CLI includes an integrated update system that keeps your installation curren
 # The CLI will also prompt you when updates are available:
  A new version is available!
    Current: 1.2.2
-   Latest:  1.3.0
+   Latest:  1.4.0
  Run '/update' to update to the latest version.
 ```
 

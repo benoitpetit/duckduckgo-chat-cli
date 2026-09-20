@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/chat"
-	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/ui"
+	"duckduckgo-chat-cli/internal/version"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,8 +27,12 @@ var startTime = time.Now()
 // @Failure      400 {object} APIResponse{error=APIError} "Invalid request"
 // @Failure      500 {object} APIResponse{error=APIError} "Internal server error"
 // @Router       /chat [post]
-func ChatHandler(chatSession *chat.Chat, cfg *config.Config) gin.HandlerFunc {
+func ChatHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		chatSession, cfg := session.chat, session.cfg
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
 		var req ChatRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			response := NewErrorResponse(ErrorCodeValidation, "Invalid request payload", err.Error())
@@ -41,22 +45,31 @@ func ChatHandler(chatSession *chat.Chat, cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, response)
 			return
 		}
+		if len(req.Message) > 10000 {
+			c.JSON(http.StatusBadRequest, NewErrorResponse(ErrorCodeValidation, "Message is too long", "Field 'message' must be at most 10000 characters"))
+			return
+		}
 
 		// Change model if specified
 		if req.Model != "" {
-			if newModel := models.GetModel(req.Model); newModel != chatSession.Model {
+			newModel, ok := models.ResolveModel(req.Model)
+			if !ok {
+				c.JSON(http.StatusBadRequest, NewErrorResponse(ErrorCodeModelNotFound, "Model not found", fmt.Sprintf("Model '%s' is not available", req.Model)))
+				return
+			}
+			if newModel != chatSession.Model {
 				chatSession.ChangeModel(newModel)
 			}
 		}
 
 		// Log the request if enabled
 		if cfg.API.LogRequests {
-			ui.APILog("Received chat request from %s: '%s'", c.ClientIP(), req.Message)
+			ui.APILog("Received chat request from %s (%d characters)", c.ClientIP(), len(req.Message))
 		}
 
 		// Process the chat message
 		startTime := time.Now()
-		response, err := chat.ProcessInputAndReturn(chatSession, req.Message, cfg)
+		response, err := chat.ProcessInputContext(c.Request.Context(), chatSession, req.Message, cfg)
 		processingTime := time.Since(startTime)
 
 		// Track API call in analytics
@@ -106,8 +119,11 @@ func ChatHandler(chatSession *chat.Chat, cfg *config.Config) gin.HandlerFunc {
 // @Success      200 {object} APIResponse{data=HistoryResponse} "Chat history retrieved successfully"
 // @Failure      400 {object} APIResponse{error=APIError} "Invalid query parameters"
 // @Router       /history [get]
-func HistoryHandler(chatSession *chat.Chat) gin.HandlerFunc {
+func HistoryHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		session.mu.RLock()
+		defer session.mu.RUnlock()
+		chatSession := session.chat
 		startTime := time.Now()
 
 		// Parse query parameters
@@ -165,8 +181,11 @@ func HistoryHandler(chatSession *chat.Chat) gin.HandlerFunc {
 // @Produce      json
 // @Success      200 {object} APIResponse{data=ModelsResponse} "Available models retrieved successfully"
 // @Router       /models [get]
-func ModelsHandler(chatSession *chat.Chat) gin.HandlerFunc {
+func ModelsHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		session.mu.RLock()
+		defer session.mu.RUnlock()
+		chatSession := session.chat
 		startTime := time.Now()
 
 		availableModels := GetAvailableModels()
@@ -197,8 +216,11 @@ func ModelsHandler(chatSession *chat.Chat) gin.HandlerFunc {
 // @Success      200 {object} APIResponse{data=ModelInfo} "Model changed successfully"
 // @Failure      400 {object} APIResponse{error=APIError} "Invalid request or model not found"
 // @Router       /models [post]
-func ModelChangeHandler(chatSession *chat.Chat) gin.HandlerFunc {
+func ModelChangeHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		chatSession := session.chat
 		startTime := time.Now()
 
 		var req ModelChangeRequest
@@ -213,7 +235,14 @@ func ModelChangeHandler(chatSession *chat.Chat) gin.HandlerFunc {
 		}
 
 		// Validate model exists
-		newModel := models.GetModel(req.Model)
+		newModel, ok := models.ResolveModel(req.Model)
+		if !ok {
+			if chatSession.Analytics != nil {
+				chatSession.Analytics.RecordAPICall(time.Since(startTime), false, "model_not_found")
+			}
+			c.JSON(http.StatusBadRequest, NewErrorResponse(ErrorCodeModelNotFound, "Model not found", fmt.Sprintf("Model '%s' is not available", req.Model)))
+			return
+		}
 		availableModels := GetAvailableModels()
 
 		var modelInfo *ModelInfo
@@ -266,7 +295,7 @@ func HealthHandler() gin.HandlerFunc {
 
 		healthResponse := HealthResponse{
 			Status:    "healthy",
-			Version:   "1.3.0",
+			Version:   version.Current,
 			Uptime:    int64(uptime.Seconds()),
 			Services:  services,
 			Timestamp: time.Now(),
@@ -284,8 +313,11 @@ func HealthHandler() gin.HandlerFunc {
 // @Produce      json
 // @Success      200 {object} APIResponse "Chat history cleared successfully"
 // @Router       /history [delete]
-func ClearHistoryHandler(chatSession *chat.Chat, cfg *config.Config) gin.HandlerFunc {
+func ClearHistoryHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		chatSession, cfg := session.chat, session.cfg
 		requestStartTime := time.Now()
 		chatSession.Clear(cfg)
 
@@ -306,8 +338,11 @@ func ClearHistoryHandler(chatSession *chat.Chat, cfg *config.Config) gin.Handler
 // @Produce      json
 // @Success      200 {object} APIResponse "Session information retrieved successfully"
 // @Router       /session [get]
-func SessionInfoHandler(chatSession *chat.Chat) gin.HandlerFunc {
+func SessionInfoHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		session.mu.RLock()
+		defer session.mu.RUnlock()
+		chatSession := session.chat
 		requestStartTime := time.Now()
 		sessionInfo := map[string]interface{}{
 			"session_id":    chatSession.SessionID,

@@ -83,7 +83,7 @@ else
         check "false" "Working directory is clean"
     fi
 fi
-check "git remote get-url origin | grep -q 'duckduckGO-chat-cli'" "Origin remote configured"
+check "git remote get-url origin | grep -q 'duckduckgo-chat-cli'" "Origin remote configured"
 
 # Important files verification
 log_info "Checking files..."
@@ -95,7 +95,7 @@ check "[ -f .github/workflows/release.yml ]" "Release workflow present"
 
 # Documentation verification
 log_info "Checking documentation..."
-check "grep -q 'v[0-9]\+\.[0-9]\+\.[0-9]\+' README.md" "Version mentioned in README.md"
+check "grep -Eq 'v?[0-9]+\.[0-9]+\.[0-9]+' README.md" "Version mentioned in README.md"
 check "[ -f .github/RELEASE_WORKFLOW.md ]" "Workflow documentation present"
 
 # API Documentation verification
@@ -122,7 +122,7 @@ if command -v swag >/dev/null 2>&1; then
         check "false" "API documentation files present"
     fi
 else
-    log_warning "swag not installed. Install with: go install github.com/swaggo/swag/cmd/swag@latest"
+    log_warning "swag not installed. Install with: go install github.com/swaggo/swag/cmd/swag@v1.16.6"
     CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
     CHECKS_PASSED=$((CHECKS_PASSED + 1))
 fi

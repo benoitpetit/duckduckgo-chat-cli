@@ -127,12 +127,12 @@ push_to_github() {
     
     # Instructions for creating PR
     echo -e "\n${BLUE}📋 Next steps:${NC}"
-    echo "1. Go to GitHub: https://github.com/benoitpetit/duckduckGO-chat-cli"
+    echo "1. Go to GitHub: https://github.com/benoitpetit/duckduckgo-chat-cli"
     echo "2. Create a Pull Request from '$RELEASE_BRANCH' to 'prod'"
     echo "3. Once merged, release v$VERSION will be automatically created"
     echo ""
     echo -e "${YELLOW}Or use this direct URL:${NC}"
-    echo "https://github.com/benoitpetit/duckduckGO-chat-cli/compare/prod...$RELEASE_BRANCH?quick_pull=1"
+    echo "https://github.com/benoitpetit/duckduckgo-chat-cli/compare/prod...$RELEASE_BRANCH?quick_pull=1"
 }
 
 create_prod_branch_if_needed() {

@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	GitHubAPI     = "https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest"
-	GitHubRepo    = "https://github.com/benoitpetit/duckduckGO-chat-cli"
+	GitHubAPI     = "https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest"
+	GitHubRepo    = "https://github.com/benoitpetit/duckduckgo-chat-cli"
 	UpdateCache   = ".duckduckgo-chat-cli-update-cache"
 	CheckInterval = 4 * time.Hour // Check for updates every 4 hours (reduced for better user experience)
 )
@@ -482,7 +482,7 @@ func UpdateLastCheckTime() {
 	}
 	defer file.Close()
 
-	file.WriteString(time.Now().Format(time.RFC3339))
+	_, _ = file.WriteString(time.Now().Format(time.RFC3339))
 }
 
 // CheckForUpdatesAtStartup checks for updates at startup and shows a prompt

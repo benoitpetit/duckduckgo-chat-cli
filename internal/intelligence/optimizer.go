@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"duckduckgo-chat-cli/internal/ui"
 )
 
 // ContextOptimizer handles intelligent context management
@@ -66,7 +64,7 @@ func (co *ContextOptimizer) AnalyzeContext(messages []Message) *ContextAnalysis 
 			importantCount++
 		}
 
-		hash := co.hashContent(msg.Content)
+		hash := co.hashContent(msg.Role + "\x00" + msg.Content)
 		duplicates[hash]++
 	}
 
@@ -91,8 +89,6 @@ func (co *ContextOptimizer) AnalyzeContext(messages []Message) *ContextAnalysis 
 
 // OptimizeContext performs intelligent context optimization
 func (co *ContextOptimizer) OptimizeContext(messages []Message) ([]Message, int64) {
-	ui.Warningln("🧠 Analyzing context for optimization...")
-
 	originalSize := co.calculateTotalSize(messages)
 
 	// Step 1: Calculate importance scores
@@ -109,11 +105,6 @@ func (co *ContextOptimizer) OptimizeContext(messages []Message) ([]Message, int6
 
 	optimizedSize := co.calculateTotalSize(optimizedMessages)
 	bytesSaved := int64(originalSize - optimizedSize)
-
-	if bytesSaved > 0 {
-		ui.AIln("✅ Context optimized: %d → %d characters (%.1f%% reduction)",
-			originalSize, optimizedSize, float64(bytesSaved)/float64(originalSize)*100)
-	}
 
 	return optimizedMessages, bytesSaved
 }
@@ -182,7 +173,7 @@ func (co *ContextOptimizer) calculateImportanceScores(messages []Message) []Mess
 		}
 
 		scoredMessages[i].Importance = score
-		scoredMessages[i].Hash = co.hashContent(scoredMessages[i].Content)
+		scoredMessages[i].Hash = co.hashContent(scoredMessages[i].Role + "\x00" + scoredMessages[i].Content)
 	}
 
 	return scoredMessages
@@ -191,8 +182,6 @@ func (co *ContextOptimizer) calculateImportanceScores(messages []Message) []Mess
 // removeDuplicates removes duplicate content while preserving the most important version
 func (co *ContextOptimizer) removeDuplicates(messages []Message) []Message {
 	hashToMessage := make(map[uint64]Message)
-	duplicatesRemoved := 0
-
 	for _, msg := range messages {
 		existing, exists := hashToMessage[msg.Hash]
 		if exists {
@@ -200,14 +189,9 @@ func (co *ContextOptimizer) removeDuplicates(messages []Message) []Message {
 			if msg.Importance > existing.Importance {
 				hashToMessage[msg.Hash] = msg
 			}
-			duplicatesRemoved++
 		} else {
 			hashToMessage[msg.Hash] = msg
 		}
-	}
-
-	if duplicatesRemoved > 0 {
-		ui.AIln("🔍 Removed %d duplicate messages", duplicatesRemoved)
 	}
 
 	// Convert back to slice, preserving order
@@ -228,21 +212,14 @@ func (co *ContextOptimizer) removeDuplicates(messages []Message) []Message {
 
 // compressLowImportanceContent compresses or summarizes less important content
 func (co *ContextOptimizer) compressLowImportanceContent(messages []Message) []Message {
-	compressedCount := 0
-
 	for i := range messages {
 		if messages[i].Importance < co.ImportanceThreshold && len(messages[i].Content) > 500 {
 			compressed := co.compressContent(messages[i].Content)
 			if len(compressed) < len(messages[i].Content) {
 				messages[i].Content = compressed
 				messages[i].Compressed = true
-				compressedCount++
 			}
 		}
-	}
-
-	if compressedCount > 0 {
-		ui.AIln("📝 Compressed %d low-importance messages", compressedCount)
 	}
 
 	return messages
@@ -267,19 +244,11 @@ func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
 	// Keep adding messages until we hit the size limit
 	result := []Message{}
 	currentSize := 0
-	removedCount := 0
-
 	for _, msg := range sortedMessages {
 		if currentSize+len(msg.Content) <= co.MaxContextSize {
 			result = append(result, msg)
 			currentSize += len(msg.Content)
-		} else {
-			removedCount++
 		}
-	}
-
-	if removedCount > 0 {
-		ui.Warningln("✂️  Removed %d least important messages to fit context limit", removedCount)
 	}
 
 	// Restore chronological order
@@ -467,11 +436,7 @@ func (co *ContextOptimizer) IsOptimizationNeeded(messages []Message) bool {
 
 	// 3. Detected duplicates
 	duplicates := co.countDuplicates(messages)
-	if duplicates > 3 {
-		return true
-	}
-
-	return false
+	return duplicates > 3
 }
 
 func (co *ContextOptimizer) countDuplicates(messages []Message) int {

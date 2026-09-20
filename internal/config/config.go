@@ -30,11 +30,14 @@ type LibraryConfig struct {
 }
 
 type APIConfig struct {
-	Enabled     bool `json:"enabled"`
-	Port        int  `json:"port"`
-	Autostart   bool `json:"autostart"`
-	LogRequests bool `json:"log_requests"`
-	ShowGinLogs bool `json:"show_gin_logs"`
+	Enabled        bool     `json:"enabled"`
+	Host           string   `json:"host"`
+	Port           int      `json:"port"`
+	Autostart      bool     `json:"autostart"`
+	LogRequests    bool     `json:"log_requests"`
+	ShowGinLogs    bool     `json:"show_gin_logs"`
+	APIKey         string   `json:"api_key,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
 }
 
 // ToolsConfig controls Duck.ai's built-in tools. These flags are opt-in
@@ -75,14 +78,12 @@ func Initialize() *Config {
 	if cfg.Search.RetryDelay == 0 {
 		cfg.Search.RetryDelay = 1
 	}
-	cfg.Search.IncludeSnippet = true // default to true
+	// Defaults are initialized before unmarshalling, so an explicit false in
+	// an existing configuration remains false.
 
 	// Initialize library config with defaults
 	if len(cfg.Library.Directories) == 0 {
 		cfg.Library.Directories = []string{}
-	}
-	if !cfg.Library.Enabled {
-		cfg.Library.Enabled = true // default to enabled
 	}
 
 	// Initialize prompts map if nil
@@ -94,6 +95,9 @@ func Initialize() *Config {
 	configExists := configFileExists()
 	if cfg.API.Port == 0 {
 		cfg.API.Port = 8080 // default port
+	}
+	if cfg.API.Host == "" {
+		cfg.API.Host = "127.0.0.1"
 	}
 
 	// Only set defaults if no config file exists (first run) or if explicitly not set
@@ -115,6 +119,8 @@ func loadConfig() *Config {
 		ExportDir:        defaultExportPath(),
 		LastUpdateTime:   time.Now(),
 		ConfirmLongInput: true, // default to enabled for safety
+		Search:           SearchConfig{IncludeSnippet: true},
+		Library:          LibraryConfig{Enabled: true},
 		Prompts:          make(map[string]string),
 	}
 
@@ -171,8 +177,29 @@ func SaveConfig(cfg *Config) error {
 		return fmt.Errorf("failed to marshal config: %v", err)
 	}
 
-	if err := os.WriteFile(configPath(), data, 0644); err != nil {
+	tmp, err := os.CreateTemp(configDir, ".config.json-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config: %v", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to secure temporary config: %v", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
 		return fmt.Errorf("failed to write config: %v", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to sync config: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close config: %v", err)
+	}
+	if err := os.Rename(tmpName, configPath()); err != nil {
+		return fmt.Errorf("failed to replace config: %v", err)
 	}
 
 	return nil
@@ -193,7 +220,10 @@ func AcceptTermsOfService(cfg *Config) bool {
 		Message: "Please accept the terms of service to continue. Do you accept?",
 		Default: true,
 	}
-	survey.AskOne(prompt, &accepted)
+	if err := survey.AskOne(prompt, &accepted); err != nil {
+		ui.Warningln("Terms of service prompt canceled.")
+		return false
+	}
 
 	if accepted {
 		cfg.TOSAccepted = true
@@ -225,7 +255,10 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			},
 			Default: "Back to chat",
 		}
-		survey.AskOne(prompt, &choice)
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Configuration menu canceled.")
+			return
+		}
 
 		switch choice {
 		case "Default Model":
@@ -270,7 +303,10 @@ func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {
 		},
 		Default: cfg.DefaultModel,
 	}
-	survey.AskOne(prompt, &model)
+	if err := survey.AskOne(prompt, &model); err != nil {
+		ui.Warningln("Model selection canceled.")
+		return
+	}
 
 	if model != "" {
 		cfg.DefaultModel = model
@@ -292,7 +328,10 @@ func handleExportDirChange(cfg *Config) {
 		Default: cfg.ExportDir,
 		Help:    "Press Enter to use the default path.",
 	}
-	survey.AskOne(prompt, &path)
+	if err := survey.AskOne(prompt, &path); err != nil {
+		ui.Warningln("Export directory selection canceled.")
+		return
+	}
 
 	if path == "" {
 		path = defaultExportPath()
@@ -353,7 +392,10 @@ func handleShowMenuChange(cfg *Config) {
 		Message: "Show commands menu on startup?",
 		Default: cfg.ShowMenu,
 	}
-	survey.AskOne(prompt, &showMenu)
+	if err := survey.AskOne(prompt, &showMenu); err != nil {
+		ui.Warningln("Menu preference change canceled.")
+		return
+	}
 	cfg.ShowMenu = showMenu
 	if err := saveConfig(cfg); err != nil {
 		ui.Errorln("Error saving config: %v", err)
@@ -368,7 +410,10 @@ func handleGlobalPromptChange(cfg *Config) {
 		Message: "Enter global prompt (or leave empty to clear):",
 		Default: cfg.GlobalPrompt,
 	}
-	survey.AskOne(p, &prompt)
+	if err := survey.AskOne(p, &prompt); err != nil {
+		ui.Warningln("Global prompt change canceled.")
+		return
+	}
 	cfg.GlobalPrompt = prompt
 	if err := saveConfig(cfg); err != nil {
 		ui.Errorln("Error saving config: %v", err)
@@ -440,7 +485,10 @@ func handleLibrarySettings(cfg *Config) {
 		},
 		Default: "Back",
 	}
-	survey.AskOne(prompt, &choice)
+	if err := survey.AskOne(prompt, &choice); err != nil {
+		ui.Warningln("Library settings canceled.")
+		return
+	}
 
 	switch {
 	case strings.HasPrefix(choice, "Enabled"):
@@ -462,7 +510,9 @@ func handleAPISettings(cfg *Config) {
 			Message: "API Settings",
 			Options: []string{
 				fmt.Sprintf("Enabled (%t)", cfg.API.Enabled),
+				fmt.Sprintf("Host (%s)", cfg.API.Host),
 				fmt.Sprintf("Port (%d)", cfg.API.Port),
+				fmt.Sprintf("API key (%t)", cfg.API.APIKey != ""),
 				fmt.Sprintf("Autostart on launch (%t)", cfg.API.Autostart),
 				fmt.Sprintf("Log API Requests (%t)", cfg.API.LogRequests),
 				fmt.Sprintf("Show GIN Logs (%t)", cfg.API.ShowGinLogs),
@@ -470,14 +520,21 @@ func handleAPISettings(cfg *Config) {
 			},
 			Default: "Back",
 		}
-		survey.AskOne(prompt, &choice)
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("API settings canceled.")
+			return
+		}
 
 		switch {
 		case strings.HasPrefix(choice, "Enabled"):
 			cfg.API.Enabled = !cfg.API.Enabled
 			saveAndReport(cfg, fmt.Sprintf("API Enabled status set to: %t", cfg.API.Enabled))
+		case strings.HasPrefix(choice, "Host"):
+			handleAPIHostChange(cfg)
 		case strings.HasPrefix(choice, "Port"):
 			handleAPIPortChange(cfg)
+		case strings.HasPrefix(choice, "API key"):
+			handleAPIKeyChange(cfg)
 		case strings.HasPrefix(choice, "Autostart"):
 			cfg.API.Autostart = !cfg.API.Autostart
 			saveAndReport(cfg, fmt.Sprintf("API Autostart set to: %t", cfg.API.Autostart))
@@ -499,14 +556,41 @@ func handleAPIPortChange(cfg *Config) {
 		Message: "Enter API Port:",
 		Default: strconv.Itoa(cfg.API.Port),
 	}
-	survey.AskOne(prompt, &portStr)
+	if err := survey.AskOne(prompt, &portStr); err != nil {
+		ui.Warningln("API port change canceled.")
+		return
+	}
 
-	if port, err := strconv.Atoi(portStr); err == nil {
+	if port, err := strconv.Atoi(portStr); err == nil && port >= 1 && port <= 65535 {
 		cfg.API.Port = port
 		saveAndReport(cfg, fmt.Sprintf("API Port updated to: %d", port))
 	} else {
 		ui.Errorln("Invalid port number. No changes made.")
 	}
+}
+
+func handleAPIHostChange(cfg *Config) {
+	host := ""
+	prompt := &survey.Input{Message: "Enter API bind address:", Default: cfg.API.Host}
+	if err := survey.AskOne(prompt, &host); err != nil {
+		return
+	}
+	if strings.TrimSpace(host) == "" {
+		ui.Errorln("Bind address cannot be empty.")
+		return
+	}
+	cfg.API.Host = strings.TrimSpace(host)
+	saveAndReport(cfg, fmt.Sprintf("API bind address updated to: %s", cfg.API.Host))
+}
+
+func handleAPIKeyChange(cfg *Config) {
+	key := ""
+	prompt := &survey.Password{Message: "Enter API key (leave empty to disable authentication):"}
+	if err := survey.AskOne(prompt, &key); err != nil {
+		return
+	}
+	cfg.API.APIKey = strings.TrimSpace(key)
+	saveAndReport(cfg, fmt.Sprintf("API key protection enabled: %t", cfg.API.APIKey != ""))
 }
 
 func handleLongInputProtectionChange(cfg *Config) {
@@ -604,7 +688,10 @@ func HandlePromptManagement(cfg *Config) {
 			Options: []string{"List Prompts", "Add Prompt", "Edit Prompt", "Remove Prompt", "Back"},
 			Default: "Back",
 		}
-		survey.AskOne(prompt, &choice)
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Prompt management canceled.")
+			return
+		}
 		switch choice {
 		case "List Prompts":
 			names := ListPrompts(cfg)
@@ -624,8 +711,12 @@ func HandlePromptManagement(cfg *Config) {
 		case "Add Prompt":
 			name := ""
 			content := ""
-			survey.AskOne(&survey.Input{Message: "Prompt name:"}, &name)
-			survey.AskOne(&survey.Input{Message: "Prompt content:"}, &content)
+			if err := survey.AskOne(&survey.Input{Message: "Prompt name:"}, &name); err != nil {
+				return
+			}
+			if err := survey.AskOne(&survey.Input{Message: "Prompt content:"}, &content); err != nil {
+				return
+			}
 			if name == "" || content == "" {
 				ui.Errorln("Name and content required.")
 				continue
@@ -643,10 +734,14 @@ func HandlePromptManagement(cfg *Config) {
 				continue
 			}
 			name := ""
-			survey.AskOne(&survey.Select{Message: "Select prompt to edit:", Options: names}, &name)
+			if err := survey.AskOne(&survey.Select{Message: "Select prompt to edit:", Options: names}, &name); err != nil {
+				return
+			}
 			oldContent, _ := GetPrompt(cfg, name)
 			content := oldContent
-			survey.AskOne(&survey.Input{Message: "New content:", Default: oldContent}, &content)
+			if err := survey.AskOne(&survey.Input{Message: "New content:", Default: oldContent}, &content); err != nil {
+				return
+			}
 			err := EditPrompt(cfg, name, content)
 			if err != nil {
 				ui.Errorln("%v", err)
@@ -660,7 +755,9 @@ func HandlePromptManagement(cfg *Config) {
 				continue
 			}
 			name := ""
-			survey.AskOne(&survey.Select{Message: "Select prompt to remove:", Options: names}, &name)
+			if err := survey.AskOne(&survey.Select{Message: "Select prompt to remove:", Options: names}, &name); err != nil {
+				return
+			}
 			err := RemovePrompt(cfg, name)
 			if err != nil {
 				ui.Errorln("%v", err)

@@ -34,7 +34,7 @@ The source of truth for API documentation is **`internal/api/docs.go`** which co
 When the API server is running, the interactive Swagger UI is available at:
 
 ```
-http://localhost:8080/doc/index.html
+http://127.0.0.1:8080/doc/index.html
 ```
 
 ## Manual Generation
@@ -75,7 +75,7 @@ To update the API documentation:
 
 ## Current Version
 
-- **API Version**: 1.3.0
+- **API Version**: 1.4.0
 - **Contact**: devbyben (contact@devbyben.fr)
 - **Repository**: https://github.com/benoitpetit/duckduckgo-chat-cli
-- **Host**: localhost:8080 (default development)
+- **Host**: 127.0.0.1:8080 (default development)

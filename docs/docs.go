@@ -12,7 +12,7 @@ const docTemplate = `{
         "termsOfService": "https://duck.ai/",
         "contact": {
             "name": "devbyben",
-            "url": "https://github.com/benoitpetit/duckduckGO-chat-cli",
+            "url": "https://github.com/benoitpetit/duckduckgo-chat-cli",
             "email": "contact@devbyben.fr"
         },
         "license": {
@@ -460,7 +460,7 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string",
-                    "example": "1.3.0"
+                    "example": "1.4.0"
                 }
             }
         },
@@ -578,11 +578,11 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "1.3.0",
-	Host:             "localhost:8080",
+	Version:          "1.4.0",
+	Host:             "127.0.0.1:8080",
 	BasePath:         "/api/v1",
 	Schemes:          []string{"http", "https"},
-	Title:            "duckduckGO-chat-cli API",
+	Title:            "duckduckgo-chat-cli API",
 	Description:      "REST API for Duck.ai Chat CLI - programmatic access to AI chat functionality",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

@@ -71,6 +71,14 @@ func GetModel(alias string) Model {
 	return GPT5Luna // default model
 }
 
+// ResolveModel validates a model name without silently falling back to a
+// different model. GetModel remains compatible with older callers that rely
+// on the historical default behavior.
+func ResolveModel(alias string) (Model, bool) {
+	model, ok := modelMap[ModelAlias(strings.ToLower(strings.TrimSpace(alias)))]
+	return model, ok
+}
+
 func CheckChromeVersion() {
 	version, err := getChromeVersion()
 	if err != nil {

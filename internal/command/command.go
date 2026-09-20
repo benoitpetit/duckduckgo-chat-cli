@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -159,6 +160,7 @@ func GetSupportedCommands() []string {
 	for cmdName := range registry.Commands {
 		commands = append(commands, cmdName)
 	}
+	sort.Strings(commands)
 	return commands
 }
 
@@ -169,6 +171,11 @@ func GetCommandsByCategory() map[string][]CommandInfo {
 
 	for _, cmd := range registry.Commands {
 		categories[cmd.Category] = append(categories[cmd.Category], cmd)
+	}
+	for category := range categories {
+		sort.Slice(categories[category], func(i, j int) bool {
+			return categories[category][i].Name < categories[category][j].Name
+		})
 	}
 
 	return categories
@@ -244,11 +251,12 @@ func ExtractArguments(cmd *Command) map[string]string {
 
 // ValidateCommand performs additional validation on a parsed command
 func ValidateCommand(cmd *Command) error {
+	if _, exists := GetCommandRegistry().Commands[cmd.Type]; !exists {
+		return fmt.Errorf("unknown command: %s", cmd.Type)
+	}
 	switch cmd.Type {
 	case "/file":
-		if cmd.Args == "" {
-			return fmt.Errorf("/file command requires a file path")
-		}
+		// An empty argument opens the interactive file picker.
 
 	case "/url":
 		if cmd.Args == "" {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/chatcontext"
+	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
 
 	"github.com/PuerkitoBio/goquery"
@@ -25,22 +26,13 @@ type SearchResult struct {
 }
 
 func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) {
-	// Parse the command: /search <query> -- <request>
-	commandInput := strings.TrimPrefix(input, "/search ")
-
-	var query, userRequest string
-
-	// Check if there's a -- separator
-	if strings.Contains(commandInput, " -- ") {
-		parts := strings.SplitN(commandInput, " -- ", 2)
-		query = strings.TrimSpace(parts[0])
-		if len(parts) > 1 {
-			userRequest = strings.TrimSpace(parts[1])
-		}
-	} else {
-		// Fallback: if no --, treat everything as query for backward compatibility
-		query = strings.TrimSpace(commandInput)
+	parsed, parseErr := command.Parse(input)
+	if parseErr != nil || len(parsed.Commands) != 1 {
+		color.Red("Invalid search command: %v", parseErr)
+		return
 	}
+	query := strings.TrimSpace(parsed.Commands[0].Args)
+	userRequest := parsed.Prompt
 
 	if query == "" {
 		color.Red("Usage: /search <query> [-- request]")

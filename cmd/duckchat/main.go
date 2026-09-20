@@ -56,7 +56,8 @@ func getCommands() []prompt.Suggest {
 	registry := command.GetCommandRegistry()
 	commands := make([]prompt.Suggest, 0, len(registry.Commands))
 
-	for _, cmd := range registry.Commands {
+	for _, name := range command.GetSupportedCommands() {
+		cmd := registry.Commands[name]
 		commands = append(commands, prompt.Suggest{
 			Text:        cmd.Name,
 			Description: cmd.Description,
@@ -176,6 +177,14 @@ func executor(input string) {
 		}
 		os.Exit(0)
 	}
+	if !strings.HasPrefix(strings.TrimSpace(input), "/") {
+		if cfg.ConfirmLongInput && shouldConfirmLongInput(input) && !confirmSendMessage(input) {
+			ui.Warningln("Message not sent.")
+			return
+		}
+		chat.ProcessInput(chatSession, input, cfg)
+		return
+	}
 
 	// Track command usage
 	if strings.HasPrefix(input, "/") {
@@ -189,6 +198,12 @@ func executor(input string) {
 	if err != nil {
 		ui.Errorln("Error parsing command: %v", err)
 		return
+	}
+	for _, parsedCommand := range chainedCmd.Commands {
+		if err := command.ValidateCommand(parsedCommand); err != nil {
+			ui.Errorln("Invalid command: %v", err)
+			return
+		}
 	}
 
 	if len(chainedCmd.Commands) == 1 && !command.IsChainableCommand(chainedCmd.Commands[0].Type) {
@@ -286,7 +301,10 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 				Message: "The API server is currently running. Do you want to stop it?",
 				Default: true,
 			}
-			survey.AskOne(prompt, &confirm)
+			if err := survey.AskOne(prompt, &confirm); err != nil {
+				ui.Warningln("API stop canceled.")
+				return
+			}
 			if confirm {
 				api.StopServer()
 			}

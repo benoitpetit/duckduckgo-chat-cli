@@ -6,20 +6,20 @@
     "swagger": "2.0",
     "info": {
         "description": "REST API for Duck.ai Chat CLI - programmatic access to AI chat functionality",
-        "title": "duckduckGO-chat-cli API",
+        "title": "duckduckgo-chat-cli API",
         "termsOfService": "https://duck.ai/",
         "contact": {
             "name": "devbyben",
-            "url": "https://github.com/benoitpetit/duckduckGO-chat-cli",
+            "url": "https://github.com/benoitpetit/duckduckgo-chat-cli",
             "email": "contact@devbyben.fr"
         },
         "license": {
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "1.3.0"
+        "version": "1.4.0"
     },
-    "host": "localhost:8080",
+    "host": "127.0.0.1:8080",
     "basePath": "/api/v1",
     "paths": {
         "/chat": {
@@ -458,7 +458,7 @@
                 },
                 "version": {
                     "type": "string",
-                    "example": "1.3.0"
+                    "example": "1.4.0"
                 }
             }
         },

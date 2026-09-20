@@ -33,7 +33,7 @@ log_info "Generating API documentation..."
 # Check if swag is installed
 if ! command -v swag &> /dev/null; then
     log_warning "swag command not found. Installing..."
-    go install github.com/swaggo/swag/cmd/swag@latest
+    go install github.com/swaggo/swag/cmd/swag@v1.16.6
     log_success "swag installed successfully"
 fi
 
@@ -69,4 +69,4 @@ log_info "Generated files:"
 ls -lh $DOCS_DIR/*.go $DOCS_DIR/*.json $DOCS_DIR/*.yaml 2>/dev/null || true
 
 log_success "API documentation generated successfully!"
-log_info "Documentation available at: /doc/index.html when server is running" 
+log_info "Documentation available at: /doc/index.html when server is running"

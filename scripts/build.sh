@@ -33,11 +33,11 @@ echo "📚 Generating API documentation..."
 
 # Build pour Linux
 echo "📦 Building Linux AMD64..."
-GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64 ./cmd/duckchat/main.go
+GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64 ./cmd/duckchat/main.go
 
 # Build pour Windows
 echo "📦 Building Windows AMD64..."
-GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe ./cmd/duckchat/main.go
+GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe ./cmd/duckchat/main.go
 
 # Génération du hash SHA256 pour Windows
 echo "🔐 Generating SHA256 hash..."
@@ -47,11 +47,11 @@ cd ..
 
 # Build pour Apple Silicon
 echo "📦 Building Darwin ARM64..."
-GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
+GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
 
 # Build pour Intel Mac
 echo "📦 Building Darwin AMD64..."
-GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
+GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
 
 # Création du zip de release
 echo "📚 Creating release archive..."

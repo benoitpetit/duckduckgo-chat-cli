@@ -3,6 +3,7 @@ package chat
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -10,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -139,7 +139,7 @@ func InitializeSession(cfg *config.Config) *Chat {
 func setTerminalTitle(title string) {
 	switch runtime.GOOS {
 	case "windows":
-		exec.Command("cmd", "/c", fmt.Sprintf("title %s", title)).Run()
+		_ = exec.Command("cmd", "/c", fmt.Sprintf("title %s", title)).Run()
 	default:
 		fmt.Printf("\033]0;%s\007", title)
 	}
@@ -169,15 +169,18 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	ui.AIln("🔍 Using VQD with all required headers like web browser")
 
 	chat := &Chat{
-		OldVqd:     vqd,       // x-vqd-4 value
-		NewVqd:     vqd,       // x-vqd-4 value
-		VqdHash1:   vqdHash1,  // x-vqd-hash-1 value
-		FeSignals:  feSignals, // x-fe-signals value
-		FeVersion:  feVersion, // x-fe-version value
-		Model:      model,
-		Messages:   []Message{},
-		CookieJar:  jar,
-		Client:     &http.Client{Timeout: 30 * time.Second, Jar: jar},
+		OldVqd:    vqd,       // x-vqd-4 value
+		NewVqd:    vqd,       // x-vqd-4 value
+		VqdHash1:  vqdHash1,  // x-vqd-hash-1 value
+		FeSignals: feSignals, // x-fe-signals value
+		FeVersion: feVersion, // x-fe-version value
+		Model:     model,
+		Messages:  []Message{},
+		CookieJar: jar,
+		// Streaming requests are bounded by their request context rather than a
+		// short client-wide timeout. This keeps long responses and image
+		// generation cancellable without truncating healthy streams.
+		Client:     &http.Client{Jar: jar},
 		RetryCount: 0,
 
 		// Initialize new intelligent features
@@ -253,12 +256,14 @@ func (c *Chat) Clear(cfg *config.Config) {
 	clearTerminal()
 
 	if len(c.Messages) > 0 {
-		c.Messages = []Message{}
 		newHeaders, err := getCurrentDuckAIHeaders()
 		if err != nil {
 			ui.Errorln("Error refreshing Duck.ai chat proof: %v", err)
 			return
 		}
+		// Commit the clear only after the new proof is available. A failed
+		// browser bootstrap must not leave the session half-cleared.
+		c.Messages = []Message{}
 		c.NewVqd = ""
 		c.OldVqd = ""
 		c.VqdHash1 = newHeaders.VqdHash1
@@ -291,58 +296,16 @@ func clearTerminal() {
 		cmd = exec.Command("clear")
 	}
 	cmd.Stdout = color.Output
-	cmd.Run()
+	_ = cmd.Run()
 }
 
 func ProcessInput(c *Chat, input string, cfg *config.Config) {
-	if strings.TrimSpace(input) == "" {
-		return
-	}
-
-	// Track user message
-	c.Analytics.RecordMessage("user", len(input))
-
-	isFirstMessage := len(c.Messages) == 0
-	actualMessage := input
-	if isFirstMessage && cfg.GlobalPrompt != "" {
-		actualMessage = cfg.GlobalPrompt + "\n\n" + input
-	}
-
-	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: actualMessage,
+	_, err := processInput(context.Background(), c, input, cfg, func(stream <-chan string) string {
+		return RenderStream(stream, shortenModelName(string(c.Model)))
 	})
-
-	// Check if context optimization is needed
-	if c.ContextOptimizer.IsOptimizationNeeded(c.convertMessagesToIntelligence()) {
-		optimizedMessages, bytesSaved := c.ContextOptimizer.OptimizeContext(c.convertMessagesToIntelligence())
-		c.Messages = c.convertFromIntelligenceMessages(optimizedMessages)
-		c.Analytics.RecordContextOptimization(bytesSaved)
-	}
-
-	// Track chat interaction timing
-	startTime := time.Now()
-	stream, err := c.FetchStream(actualMessage)
 	if err != nil {
-		c.Analytics.RecordChatInteraction(time.Since(startTime), false, "unknown")
 		ui.Errorln("Error: %v", err)
-		return
 	}
-
-	// Use the new stable streaming renderer
-	modelName := shortenModelName(string(c.Model))
-	finalResponse := RenderStream(stream, modelName)
-
-	// Track successful chat interaction
-	c.Analytics.RecordChatInteraction(time.Since(startTime), true, "")
-
-	// Track assistant message
-	c.Analytics.RecordMessage("assistant", len(finalResponse))
-
-	c.Messages = append(c.Messages, Message{
-		Role:    "assistant",
-		Content: finalResponse,
-	})
 }
 
 // renderStreamToString captures the stream output into a single string.
@@ -384,17 +347,28 @@ func renderStreamToString(stream <-chan string) string {
 }
 
 func ProcessInputAndReturn(c *Chat, input string, cfg *config.Config) (string, error) {
+	return processInput(context.Background(), c, input, cfg, renderStreamToString)
+}
+
+// ProcessInputContext is the shared conversation pipeline used by HTTP and
+// interactive callers. The renderer is injected so the domain flow does not
+// depend on terminal output.
+func ProcessInputContext(ctx context.Context, c *Chat, input string, cfg *config.Config) (string, error) {
+	return processInput(ctx, c, input, cfg, renderStreamToString)
+}
+
+func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string) (string, error) {
 	if strings.TrimSpace(input) == "" {
 		return "", nil
 	}
 
-	// Check if this is the first message and if a GlobalPrompt is defined
 	isFirstMessage := len(c.Messages) == 0
-
-	// If it's the first message, combine GlobalPrompt and user message
 	actualMessage := input
 	if isFirstMessage && cfg.GlobalPrompt != "" {
 		actualMessage = cfg.GlobalPrompt + "\n\n" + input
+	}
+	if c.Analytics != nil {
+		c.Analytics.RecordMessage("user", len(input))
 	}
 
 	c.Messages = append(c.Messages, Message{
@@ -402,13 +376,28 @@ func ProcessInputAndReturn(c *Chat, input string, cfg *config.Config) (string, e
 		Content: actualMessage,
 	})
 
-	stream, err := c.FetchStream(actualMessage)
+	if c.ContextOptimizer != nil && c.ContextOptimizer.IsOptimizationNeeded(c.convertMessagesToIntelligence()) {
+		optimizedMessages, bytesSaved := c.ContextOptimizer.OptimizeContext(c.convertMessagesToIntelligence())
+		c.Messages = c.convertFromIntelligenceMessages(optimizedMessages)
+		if c.Analytics != nil {
+			c.Analytics.RecordContextOptimization(bytesSaved)
+		}
+	}
+
+	startTime := time.Now()
+	stream, err := c.FetchStreamContext(ctx, actualMessage)
 	if err != nil {
+		if c.Analytics != nil {
+			c.Analytics.RecordChatInteraction(time.Since(startTime), false, "unknown")
+		}
 		return "", fmt.Errorf("error fetching stream: %w", err)
 	}
 
-	// Capture the entire response from the stream
-	finalResponse := renderStreamToString(stream)
+	finalResponse := render(stream)
+	if c.Analytics != nil {
+		c.Analytics.RecordChatInteraction(time.Since(startTime), true, "")
+		c.Analytics.RecordMessage("assistant", len(finalResponse))
+	}
 
 	// Add the assistant's response to the message history
 	c.Messages = append(c.Messages, Message{
@@ -437,7 +426,11 @@ func shortenModelName(model string) string {
 }
 
 func (c *Chat) FetchStream(content string) (<-chan string, error) {
-	events, err := c.FetchEventStream(content)
+	return c.FetchStreamContext(context.Background(), content)
+}
+
+func (c *Chat) FetchStreamContext(ctx context.Context, content string) (<-chan string, error) {
+	events, err := c.FetchEventStreamContext(ctx, content)
 	if err != nil {
 		return nil, err
 	}
@@ -450,27 +443,47 @@ func (c *Chat) FetchStream(content string) (<-chan string, error) {
 			switch event.Type {
 			case "message":
 				if event.Message != "" {
-					stream <- event.Message
+					select {
+					case stream <- event.Message:
+					case <-ctx.Done():
+						return
+					}
 				}
 			case "source":
 				if event.SourceURL != "" {
-					stream <- formatSourceEvent(event)
+					select {
+					case stream <- formatSourceEvent(event):
+					case <-ctx.Done():
+						return
+					}
 				}
 			case "image":
 				if event.ImageBase64 != "" {
 					imageCopy := event
 					latestImage = &imageCopy
 				} else if event.ImageURL != "" {
-					stream <- fmt.Sprintf("\n\nImage generated: %s\n", event.ImageURL)
+					select {
+					case stream <- fmt.Sprintf("\n\nImage generated: %s\n", event.ImageURL):
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}
 		if latestImage != nil {
 			path, err := c.saveGeneratedImage(*latestImage)
 			if err != nil {
-				stream <- fmt.Sprintf("\n\nImage generated but could not be saved: %v\n", err)
+				select {
+				case stream <- fmt.Sprintf("\n\nImage generated but could not be saved: %v\n", err):
+				case <-ctx.Done():
+					return
+				}
 			} else {
-				stream <- fmt.Sprintf("\n\nImage generated: %s\n", path)
+				select {
+				case stream <- fmt.Sprintf("\n\nImage generated: %s\n", path):
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()
@@ -490,7 +503,11 @@ func formatSourceEvent(event StreamEvent) string {
 // from FetchStream so callers that need citations or generated image URLs can
 // consume structured events instead of scraping rendered text.
 func (c *Chat) FetchEventStream(content string) (<-chan StreamEvent, error) {
-	resp, err := c.Fetch(content)
+	return c.FetchEventStreamContext(context.Background(), content)
+}
+
+func (c *Chat) FetchEventStreamContext(ctx context.Context, content string) (<-chan StreamEvent, error) {
+	resp, err := c.FetchContext(ctx, content)
 	if err != nil {
 		return nil, err
 	}
@@ -507,14 +524,22 @@ func (c *Chat) FetchEventStream(content string) (<-chan StreamEvent, error) {
 			if !ok {
 				continue
 			}
-			stream <- event
+			select {
+			case stream <- event:
+			case <-ctx.Done():
+				return
+			}
 			if event.Type == "done" {
 				break
 			}
 		}
 
 		if err := scanner.Err(); err != nil {
-			log.Printf("Error reading response body: %v\n", err)
+			select {
+			case stream <- StreamEvent{Type: "error", Message: err.Error()}:
+			case <-ctx.Done():
+				return
+			}
 		}
 
 		if newVqd := resp.Header.Get("x-vqd-4"); newVqd != "" {
@@ -666,6 +691,10 @@ func firstImageURL(values ...string) string {
 }
 
 func (c *Chat) Fetch(content string) (*http.Response, error) {
+	return c.FetchContext(context.Background(), content)
+}
+
+func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response, error) {
 	startTime := time.Now()
 	// Duck.ai's proof is generated by its frontend and must be captured from
 	// a real browser request. It is rotated frequently, so refresh it for
@@ -698,7 +727,7 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 		color.Cyan("Payload: %s", string(jsonPayload))
 	}
 
-	req, err := http.NewRequest("POST", models.ChatURL, bytes.NewBuffer(jsonPayload))
+	req, err := http.NewRequestWithContext(ctx, "POST", models.ChatURL, bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
@@ -751,9 +780,15 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 			case 429:
 				errorType = "429"
 			}
-			c.Analytics.RecordChatInteraction(time.Since(startTime), false, errorType)
+			if c.Analytics != nil {
+				c.Analytics.RecordChatInteraction(time.Since(startTime), false, errorType)
+			}
 
-			time.Sleep(2 * time.Second)
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 
 			// Refresh ONLY VQD on errors, like the PowerShell script
 			ui.Warningln("🔄 Error %d detected, refreshing VQD...", resp.StatusCode)
@@ -765,12 +800,14 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 				c.FeVersion = newHeaders.FeVersion
 				ui.AIln("✅ Refreshed Duck.ai chat proof")
 			}
-			c.Analytics.RecordVQDRefresh()
+			if c.Analytics != nil {
+				c.Analytics.RecordVQDRefresh()
+			}
 
 			if c.RetryCount < 2 {
 				c.RetryCount++
 				ui.Warningln("Retrying request (attempt %d/3)...", c.RetryCount)
-				return c.Fetch(content)
+				return c.FetchContext(ctx, content)
 			}
 		}
 		return nil, fmt.Errorf("%d: Failed to send message. %s. Body: %s", resp.StatusCode, resp.Status, string(body))
@@ -834,7 +871,9 @@ func (c *Chat) AddURLContext(url string) error {
 		Content: fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content.Content),
 	})
 
-	c.Analytics.RecordURLProcessed()
+	if c.Analytics != nil {
+		c.Analytics.RecordURLProcessed()
+	}
 
 	return nil
 }
@@ -927,7 +966,12 @@ func printCommandsTable(commands []CommandHelp) {
 }
 
 func HandleURLCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) {
-	urlStr := strings.TrimSpace(strings.TrimPrefix(input, "/url"))
+	parsed, parseErr := command.Parse(input)
+	if parseErr != nil || len(parsed.Commands) != 1 {
+		ui.Errorln("Invalid URL command: %v", parseErr)
+		return
+	}
+	urlStr := strings.TrimSpace(parsed.Commands[0].Args)
 	if urlStr == "" {
 		ui.Errorln("URL cannot be empty.")
 		return
@@ -946,7 +990,12 @@ func HandleURLCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatc
 		ui.Warningln("Adding URL content: %s", urlStr)
 		c.addURLContext(urlStr, result.Content)
 		ui.AIln("Successfully added content from URL: %s", urlStr)
-		ui.Warningln("You can now ask questions about the URL content.")
+		if parsed.Prompt != "" {
+			ui.Systemln("Processing your request about the URL...")
+			ProcessInput(c, parsed.Prompt, cfg)
+		} else {
+			ui.Warningln("You can now ask questions about the URL content.")
+		}
 	}
 }
 
@@ -993,7 +1042,10 @@ func HandleExportCommand(c *Chat, cfg *config.Config) {
 	case "Search in conversation":
 		var searchText string
 		searchPrompt := &survey.Input{Message: "Enter text to search for:"}
-		survey.AskOne(searchPrompt, &searchText, survey.WithStdio(os.Stdin, os.Stdout, os.Stderr))
+		if err := survey.AskOne(searchPrompt, &searchText, survey.WithStdio(os.Stdin, os.Stdout, os.Stderr)); err != nil {
+			ui.Warningln("Export search canceled.")
+			return
+		}
 		if searchText == "" {
 			ui.Warningln("⚠️ Search text cannot be empty")
 			return
@@ -1081,7 +1133,9 @@ func loadAndRestoreSession(c *Chat, sessionID string) {
 
 func (c *Chat) ChangeModel(model models.Model) {
 	c.Model = model
-	c.Analytics.RecordModelChange(string(model))
+	if c.Analytics != nil {
+		c.Analytics.RecordModelChange(string(model))
+	}
 	setTerminalTitle(fmt.Sprintf("DuckDuckGo Chat - %s", model))
 	ui.AIln("Model changed to %s", model)
 }
@@ -1147,15 +1201,15 @@ func (c *Chat) saveCurrentSession() {
 	// Create session object
 	session := &persistence.ConversationSession{
 		ID:        c.SessionID,
-		StartTime: c.Analytics.SessionStartTime,
+		StartTime: time.Now(),
 		Model:     string(c.Model),
 		Messages:  intelligenceMessages,
 		Analytics: persistence.SessionAnalytics{
 			MessageCount:      len(c.Messages),
-			TotalTokens:       c.Analytics.TotalTokensEstimate,
-			APICallsCount:     c.Analytics.APICallsTotal,
-			ErrorCount:        c.Analytics.APICallsFailed,
-			OptimizationsUsed: c.Analytics.ContextOptimizations,
+			TotalTokens:       analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.TotalTokensEstimate }),
+			APICallsCount:     analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.APICallsTotal }),
+			ErrorCount:        analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.APICallsFailed }),
+			OptimizationsUsed: analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.ContextOptimizations }),
 		},
 	}
 
@@ -1169,7 +1223,17 @@ func (c *Chat) saveCurrentSession() {
 
 // ShowSessionStats displays analytics at the end of the session
 func (c *Chat) ShowSessionStats() {
-	c.Analytics.DisplayStatistics()
+	if c.Analytics != nil {
+		c.Analytics.DisplayStatistics()
+	}
+}
+
+func analyticsValue[T any](value *analytics.ChatAnalytics, read func(*analytics.ChatAnalytics) T) T {
+	var zero T
+	if value == nil {
+		return zero
+	}
+	return read(value)
 }
 
 // HandlePromptCommand processes the /prompt command for prompt management and loading

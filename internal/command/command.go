@@ -82,12 +82,6 @@ func GetCommandRegistry() *CommandRegistry {
 				RequiresArgs: true,
 				Category:     "context",
 			},
-			"/pmp": {
-				Name:        "/pmp",
-				Description: "Use a predefined prompt",
-				Usage:       "/pmp [path] [options] [-- prompt]",
-				Category:    "context",
-			},
 			"/export": {
 				Name:        "/export",
 				Description: "Export the chat history",

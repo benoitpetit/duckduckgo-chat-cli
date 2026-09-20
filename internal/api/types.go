@@ -99,7 +99,7 @@ type APIError struct {
 // @Description Health check response payload
 type HealthResponse struct {
 	Status    string            `json:"status" example:"healthy"`
-	Version   string            `json:"version" example:"1.5.1"`
+	Version   string            `json:"version" example:"1.5.2"`
 	Uptime    int64             `json:"uptime_seconds" example:"3600"`
 	Services  map[string]string `json:"services"`
 	Timestamp time.Time         `json:"timestamp" example:"2023-01-01T12:00:00Z"`
@@ -169,12 +169,15 @@ func generateMessageID(index int) string {
 
 // GetAvailableModels returns information about all available models
 func GetAvailableModels() []ModelInfo {
-	return []ModelInfo{
-		{ID: "gpt-5.6-luna", Name: "GPT-5.6 Luna", Description: "Duck.ai's default general-purpose model", IsDefault: true},
-		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Description: "Fast general-purpose model", IsDefault: false},
-		{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5", Description: "Anthropic's fast conversational model", IsDefault: false},
-		{ID: "mistral-small-4", Name: "Mistral Small 4", Description: "Mistral's efficient general-purpose model", IsDefault: false},
-		{ID: "gpt-oss-120b", Name: "GPT OSS 120B", Description: "Open-weight reasoning model", IsDefault: false},
-		{ID: "gemma-4-31b", Name: "Gemma 4 31B", Description: "Open model for general conversations", IsDefault: false},
+	definitions := models.Available()
+	result := make([]ModelInfo, 0, len(definitions))
+	for _, definition := range definitions {
+		result = append(result, ModelInfo{
+			ID:          string(definition.ID),
+			Name:        definition.Name,
+			Description: definition.Description,
+			IsDefault:   definition.Default,
+		})
 	}
+	return result
 }

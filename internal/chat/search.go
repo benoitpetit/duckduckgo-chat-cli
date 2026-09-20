@@ -17,12 +17,12 @@ import (
 )
 
 type SearchResult struct {
-	Title            string
-	FormattedUrl     string
-	Snippet          string
-	HtmlTitle        string
-	HtmlFormattedUrl string
-	HtmlSnippet      string
+	Title            string `json:"title"`
+	FormattedUrl     string `json:"url"`
+	Snippet          string `json:"snippet,omitempty"`
+	HtmlTitle        string `json:"html_title,omitempty"`
+	HtmlFormattedUrl string `json:"html_url,omitempty"`
+	HtmlSnippet      string `json:"html_snippet,omitempty"`
 }
 
 func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) {
@@ -40,7 +40,7 @@ func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *ch
 	}
 
 	color.Yellow("🔍 Searching for: %s (this may take a few seconds...)", query)
-	results, err := performSearch(query, cfg.Search.MaxResults)
+	results, err := performSearch(query, cfg.Search.MaxResults, cfg.Search.MaxRetries, cfg.Search.RetryDelay)
 	if err != nil {
 		color.Red("Search error: %v", err)
 		return
@@ -78,17 +78,24 @@ func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *ch
 	}
 }
 
-func performSearch(query string, maxResults int) ([]SearchResult, error) {
-	if maxResults <= 0 {
+func performSearch(query string, maxResults, maxRetries, retryDelay int) ([]SearchResult, error) {
+	if maxResults < 1 {
 		maxResults = 5
 	}
-
-	maxRetries := 3
+	if maxResults > 50 {
+		maxResults = 50
+	}
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	if retryDelay <= 0 {
+		retryDelay = 1
+	}
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			sleepDuration := time.Duration(1<<attempt) * time.Second
+			sleepDuration := time.Duration(retryDelay*(1<<attempt)) * time.Second
 			color.Yellow("Retrying search in %v... (attempt %d/%d)", sleepDuration, attempt+1, maxRetries)
 			time.Sleep(sleepDuration)
 		}
@@ -121,8 +128,17 @@ func performSearch(query string, maxResults int) ([]SearchResult, error) {
 }
 
 func formatSearchResults(results []SearchResult, includeSnippet bool) string {
-	// Affichage JSON pour une meilleure lisibilité et exploitation
-	jsonData, err := json.MarshalIndent(results, "", "  ")
+	// Affichage JSON pour une meilleure lisibilité et exploitation. Respect the
+	// snippet setting before serialization so disabled snippets do not consume
+	// context or leak extra page content into the prompt.
+	serialized := append([]SearchResult(nil), results...)
+	if !includeSnippet {
+		for i := range serialized {
+			serialized[i].Snippet = ""
+			serialized[i].HtmlSnippet = ""
+		}
+	}
+	jsonData, err := json.MarshalIndent(serialized, "", "  ")
 	if err == nil {
 		return "[Web Search Results: JSON]\n" + string(jsonData)
 	}
@@ -179,7 +195,7 @@ func duckSearch(query string, maxResults int) ([]duckResult, error) {
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Referer", "https://duckduckgo.com/")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

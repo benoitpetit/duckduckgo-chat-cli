@@ -75,7 +75,7 @@ To update the API documentation:
 
 ## Current Version
 
-- **API Version**: 1.5.1
+- **API Version**: 1.5.2
 - **Contact**: devbyben (contact@devbyben.fr)
 - **Repository**: https://github.com/benoitpetit/duckduckgo-chat-cli
 - **Host**: 127.0.0.1:8080 (default development)

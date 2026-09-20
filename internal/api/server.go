@@ -47,6 +47,15 @@ func StartServer(chatSession *chat.Chat, cfg *config.Config, port int) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	host := strings.TrimSpace(cfg.API.Host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if !isLoopbackHost(host) && strings.TrimSpace(cfg.API.APIKey) == "" {
+		ui.Errorln("Refusing to expose the API on %s without an API key", host)
+		return
+	}
+
 	// The API owns its conversation session. Sharing the interactive Chat
 	// instance would mix histories and allow terminal/API requests to race.
 	apiCfg := *cfg
@@ -58,10 +67,6 @@ func StartServer(chatSession *chat.Chat, cfg *config.Config, port int) {
 	}
 	apiChat := chat.NewChat("", "", "", "", chatSession.Model, &apiCfg)
 	router = setupRouter(NewSession(apiChat, &apiCfg), &apiCfg)
-	host := strings.TrimSpace(cfg.API.Host)
-	if host == "" {
-		host = "127.0.0.1"
-	}
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(host, strconv.Itoa(port)),
@@ -87,6 +92,15 @@ func StartServer(chatSession *chat.Chat, cfg *config.Config, port int) {
 			serverMu.Unlock()
 		}
 	}()
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // StopServer gracefully shuts down the API server.

@@ -66,14 +66,39 @@ func validateURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
 	}
+	if u.User != nil {
+		return fmt.Errorf("URLs with embedded credentials are not allowed")
+	}
 	host := strings.ToLower(u.Hostname())
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return fmt.Errorf("local URLs are not allowed")
 	}
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()) {
-		return fmt.Errorf("private or local URLs are not allowed")
+	if ip := net.ParseIP(host); ip != nil {
+		if isRestrictedIP(ip) {
+			return fmt.Errorf("private or local URLs are not allowed")
+		}
+		return nil
+	}
+
+	// Validate resolved addresses as well as literal IPs. This prevents a
+	// public-looking hostname from resolving to localhost, private networks,
+	// link-local addresses, or cloud metadata endpoints.
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil {
+		return fmt.Errorf("could not resolve URL host: %w", err)
+	}
+	for _, address := range addresses {
+		if isRestrictedIP(address.IP) {
+			return fmt.Errorf("private or local URLs are not allowed")
+		}
 	}
 	return nil
+}
+
+func isRestrictedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsLinkLocalMulticast()
 }
 
 func (wcr *WebContentResult) ToJSON() (string, error) {

@@ -67,15 +67,18 @@ type Config struct {
 func Initialize() *Config {
 	cfg := loadConfig()
 	if cfg.DefaultModel == "" {
-		cfg.DefaultModel = "gpt-5.6-luna"
+		cfg.DefaultModel = string(models.Default())
+	} else if _, ok := models.ResolveModel(cfg.DefaultModel); !ok {
+		ui.Warningln("Warning: Unknown configured model %q; using %s", cfg.DefaultModel, models.Default())
+		cfg.DefaultModel = string(models.Default())
 	}
-	if cfg.Search.MaxResults == 0 {
+	if cfg.Search.MaxResults < 1 || cfg.Search.MaxResults > 50 {
 		cfg.Search.MaxResults = 10
 	}
-	if cfg.Search.MaxRetries == 0 {
+	if cfg.Search.MaxRetries < 1 || cfg.Search.MaxRetries > 10 {
 		cfg.Search.MaxRetries = 3
 	}
-	if cfg.Search.RetryDelay == 0 {
+	if cfg.Search.RetryDelay < 1 || cfg.Search.RetryDelay > 30 {
 		cfg.Search.RetryDelay = 1
 	}
 	// Defaults are initialized before unmarshalling, so an explicit false in
@@ -115,7 +118,7 @@ func Initialize() *Config {
 func loadConfig() *Config {
 	cfg := &Config{
 		TOSAccepted:      false,
-		DefaultModel:     "gpt-5.6-luna",
+		DefaultModel:     string(models.Default()),
 		ExportDir:        defaultExportPath(),
 		LastUpdateTime:   time.Now(),
 		ConfirmLongInput: true, // default to enabled for safety
@@ -291,16 +294,13 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 
 func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {
 	model := ""
+	modelOptions := make([]string, 0, len(models.Available()))
+	for _, definition := range models.Available() {
+		modelOptions = append(modelOptions, string(definition.Alias))
+	}
 	prompt := &survey.Select{
 		Message: "Choose Default Model:",
-		Options: []string{
-			"gpt-5.6-luna",
-			"gpt-5.4-mini",
-			"claude-haiku-4-5",
-			"mistral-small-4",
-			"gpt-oss-120b",
-			"gemma-4-31b",
-		},
+		Options: modelOptions,
 		Default: cfg.DefaultModel,
 	}
 	if err := survey.AskOne(prompt, &model); err != nil {
@@ -356,12 +356,22 @@ func handleSearchSettings(cfg *Config) {
 			Prompt: &survey.Input{Message: "Max search results:", Default: strconv.Itoa(cfg.Search.MaxResults)},
 		},
 		{
+			Name:   "max_retries",
+			Prompt: &survey.Input{Message: "Max search retries:", Default: strconv.Itoa(cfg.Search.MaxRetries)},
+		},
+		{
+			Name:   "retry_delay",
+			Prompt: &survey.Input{Message: "Retry delay in seconds:", Default: strconv.Itoa(cfg.Search.RetryDelay)},
+		},
+		{
 			Name:   "include_snippet",
 			Prompt: &survey.Confirm{Message: "Include snippets in search results?", Default: cfg.Search.IncludeSnippet},
 		},
 	}
 	answers := struct {
 		MaxResults     string `survey:"max_results"`
+		MaxRetries     string `survey:"max_retries"`
+		RetryDelay     string `survey:"retry_delay"`
 		IncludeSnippet bool   `survey:"include_snippet"`
 	}{}
 
@@ -372,10 +382,20 @@ func handleSearchSettings(cfg *Config) {
 	}
 
 	maxResults, err := strconv.Atoi(answers.MaxResults)
-	if err != nil {
-		ui.Errorln("Invalid number for max results: %v", err)
+	if err != nil || maxResults < 1 || maxResults > 50 {
+		ui.Errorln("Invalid max results; expected a value between 1 and 50")
 	} else {
 		cfg.Search.MaxResults = maxResults
+	}
+	if maxRetries, parseErr := strconv.Atoi(answers.MaxRetries); parseErr == nil && maxRetries >= 1 && maxRetries <= 10 {
+		cfg.Search.MaxRetries = maxRetries
+	} else {
+		ui.Errorln("Invalid max retries; keeping the previous value")
+	}
+	if retryDelay, parseErr := strconv.Atoi(answers.RetryDelay); parseErr == nil && retryDelay >= 1 && retryDelay <= 30 {
+		cfg.Search.RetryDelay = retryDelay
+	} else {
+		ui.Errorln("Invalid retry delay; keeping the previous value")
 	}
 	cfg.Search.IncludeSnippet = answers.IncludeSnippet
 

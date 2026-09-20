@@ -52,10 +52,9 @@
 
 ### Context Integration
 - **Web search** - Integrate DuckDuckGo search results into conversations
-- **Native Duck.ai tools** - Optional native Web Search with source citations and image generation
+- **Native Duck.ai tools** - Optional native Web Search with source citations and image generation, with a loading indicator during browser authentication
 - **File processing** - Add bounded local text files (Go, Python, JS, TS, JSON, Markdown, and similar formats)
 - **URL scraping** - Extract and analyze webpage content with Chrome-based scraping
-- **Project analysis** - Generate comprehensive project prompts with PMP auto-installation
 - **Session persistence** - Maintain conversation history across sessions
 - **Library management** - Organize and search through document collections
 - **Command Chaining** - Chain multiple commands (e.g., `/url`, `/file`, `/search`) using `&&` to build a combined context before sending a final prompt with `--`.
@@ -67,7 +66,8 @@
 - **Content search** - Search within conversations and document libraries
 - **Interactive config** - Visual configuration menus for all settings
 - **Rich formatting** - Colored output with markdown rendering
-- **Performance** - Efficient memory usage and fast response times
+- **Performance** - Efficient memory usage, bounded network operations, and fast response times
+- **Cancellation** - Press Ctrl-C once to cancel an active request without closing the CLI
 
 ### API Server
 - **REST API** - Built-in HTTP server for external integrations
@@ -84,7 +84,6 @@
 - **Text-file support** - Bounded, validated local text files with clear binary-file errors
 
 ### Advanced Features
-- **PMP Integration** - Auto-install and use Prompt My Project for code analysis
 - **Dynamic headers** - Automatic browser session management
 - **Cross-platform** - Linux, Windows, macOS support
 
@@ -274,7 +273,6 @@ You: /load 12345
 |  `/file <path> [-- prompt]`    | `/file src/main.go -- Explain this code`      | Import file content as context and optionally analyze it with a prompt  |
 |  `/library [command] [args]`   | `/library add /path/to/docs` | Manage library directories for bulk file operations |
 |  `/url <link> [-- prompt]`     | `/url github.com/golang -- Summarize this page` | Add webpage content as context and optionally process it with a prompt  |
-|  `/pmp [path] [options] [-- prompt]` | `/pmp . -i "*.go" -e "test/*"` | Generate structured project prompts with automatic PMP installation |
 |  `/prompt` or `/prompt add <name> -- <prompt>` | `/prompt` or `/prompt add myprompt -- This is my prompt` | Manage and load custom prompts. `/prompt` opens the interactive menu; subcommands are also available. |
 |  `/stats`     | `/stats`                 | Show real-time session analytics and performance metrics |
 |  `/api [port]`         | `/api` or `/api 8080`    | Start or stop the API server    |
@@ -337,9 +335,10 @@ needs live web results.
 ### File and image support
 
 `/file` and `/library` currently import local text and source files into the
-conversation context. They do not yet upload PDF or image attachments through
-Duck.ai's native attachment protocol. Native image generation is supported
-separately as described above.
+conversation context. Individual files are limited to 10 MiB and a library
+load contributes at most 2 MiB to one request. They do not yet upload PDF or
+image attachments through Duck.ai's native attachment protocol. Native image
+generation is supported separately as described above.
 
 ### Dictation
 
@@ -351,7 +350,9 @@ validated for terminal use.
 
 | Option           | Description               | Default | Range      |
 | ---------------- | ------------------------- | ------- | ---------- |
-| `MaxResults`     | Results per search        | 10      | 1-20       |
+| `MaxResults`     | Results per search        | 10      | 1-50       |
+| `MaxRetries`     | Retry attempts for search | 3       | 1-10       |
+| `RetryDelay`     | Initial retry delay (s)   | 1       | 1-30       |
 | `IncludeSnippet` | Show result descriptions  | true    | true/false |
 
 ### Library Settings
@@ -370,6 +371,10 @@ validated for terminal use.
 | `Port`        | API server port           | `8080`  | Any valid port  |
 | `Autostart`   | Start API on app launch   | `false` | `true`/`false`  |
 | `APIKey`      | Protect API requests      | empty | Required for remote exposure |
+
+For safety, the API refuses to bind to a non-loopback address unless an
+`APIKey` is configured. Keep the default loopback binding when the API is only
+needed locally.
 
 > **Tip:** Use `/config` to modify these settings interactively.
 
@@ -397,7 +402,7 @@ The CLI includes an integrated update system that keeps your installation curren
 # The CLI will also prompt you when updates are available:
  A new version is available!
    Current: 1.2.2
-   Latest:  1.5.1
+   Latest:  1.5.2
  Run '/update' to update to the latest version.
 ```
 
@@ -443,6 +448,9 @@ DEBUG=true ./duckduckgo-chat-cli_linux_amd64
 # View session analytics for debugging
 /stats
 ```
+
+If a request is taking too long, press Ctrl-C once to cancel that request and
+continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 
 ## License & Ethics
 

@@ -108,19 +108,24 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		<-sigChan
-		ui.Warningln("\nReceived interrupt. Exiting gracefully.")
+		for range sigChan {
+			if chatSession != nil && chatSession.CancelCurrentRequest() {
+				ui.Warningln("\nRequest canceled.")
+				continue
+			}
+			ui.Warningln("\nReceived interrupt. Exiting gracefully.")
 
-		// Show session statistics before exiting
-		if chatSession != nil {
-			chatSession.ShowSessionStats()
-		}
+			// Show session statistics before exiting
+			if chatSession != nil {
+				chatSession.ShowSessionStats()
+			}
 
-		// Restore terminal state before exiting
-		if err := restoreTerminalState(); err != nil {
-			ui.Warningln("Warning: Could not restore terminal state: %v", err)
+			// Restore terminal state before exiting
+			if err := restoreTerminalState(); err != nil {
+				ui.Warningln("Warning: Could not restore terminal state: %v", err)
+			}
+			os.Exit(0)
 		}
-		os.Exit(0)
 	}()
 
 	ui.Systemln("Welcome to DuckDuckGo AI Chat CLI!")
@@ -139,8 +144,8 @@ func main() {
 		api.StartServer(chatSession, cfg, cfg.API.Port)
 	}
 
-	// Check for updates at startup
-	update.CheckForUpdatesAtStartup(Version)
+	// Do not block the first prompt on the optional GitHub update check.
+	go update.CheckForUpdatesAtStartup(Version)
 
 	if cfg.ShowMenu {
 		chat.PrintWelcomeMessage()
@@ -275,8 +280,6 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		chat.HandleLibraryCommand(chatSession, cmd.Raw, cfg)
 	case cmd.Type == "/url":
 		chat.HandleURLCommand(chatSession, cmd.Raw, cfg, nil)
-	case cmd.Type == "/pmp":
-		chat.HandlePMPCommand(chatSession, cmd.Raw, cfg)
 	case cmd.Type == "/export":
 		chat.HandleExportCommand(chatSession, cfg)
 	case cmd.Type == "/copy":

@@ -16,6 +16,9 @@ import (
 
 const maxTextFileSize = 10 << 20
 
+// Keep bulk library imports bounded even when every individual file is valid.
+const maxLibraryContextSize = 2 << 20
+
 func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) {
 	var path, userRequest string
 	var err error
@@ -44,26 +47,9 @@ func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chat
 		return
 	}
 
-	info, err := os.Stat(path)
+	content, err := readTextContextFile(path)
 	if err != nil {
 		ui.Errorln("File error: %v", err)
-		return
-	}
-	if info.IsDir() {
-		ui.Errorln("File error: %s is a directory", path)
-		return
-	}
-	if info.Size() > maxTextFileSize {
-		ui.Errorln("File error: %s exceeds the %d MiB limit", path, maxTextFileSize/(1<<20))
-		return
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		ui.Errorln("File error: %v", err)
-		return
-	}
-	if !isSupportedTextFile(path, content) {
-		ui.Errorln("File error: %s is not a supported text file", path)
 		return
 	}
 
@@ -82,6 +68,27 @@ func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chat
 			ui.Warningln("File content added to context. You can now ask questions about it.")
 		}
 	}
+}
+
+func readTextContextFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory", path)
+	}
+	if info.Size() > maxTextFileSize {
+		return nil, fmt.Errorf("%s exceeds the %d MiB limit", path, maxTextFileSize/(1<<20))
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !isSupportedTextFile(path, content) {
+		return nil, fmt.Errorf("%s is not a supported text file", path)
+	}
+	return content, nil
 }
 
 func (c *Chat) addFileContext(path string, content []byte) {

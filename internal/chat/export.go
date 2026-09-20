@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"duckduckgo-chat-cli/internal/models"
 )
 
 type ExportMetadata struct {
@@ -184,17 +186,8 @@ func sanitizeFilename(name string) string {
 }
 
 func formatModelName(modelName string) string {
-	displayNames := map[string]string{
-		"gpt-5.6-luna":     "GPT-5.6 Luna",
-		"gpt-5.4-mini":     "GPT-5.4 Mini",
-		"claude-haiku-4-5": "Claude Haiku 4.5",
-		"mistral-small-4":  "Mistral Small 4",
-		"gpt-oss-120b":     "GPT OSS 120B",
-		"gemma-4-31b":      "Gemma 4 31B",
-	}
-
-	if shortName, exists := displayNames[modelName]; exists {
-		return shortName
+	if resolved, ok := models.ResolveModel(modelName); ok {
+		return models.DisplayName(resolved)
 	}
 	return modelName
 }

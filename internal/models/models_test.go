@@ -39,6 +39,9 @@ func TestResolveModelRejectsUnknownModel(t *testing.T) {
 	if _, ok := ResolveModel("not-a-model"); ok {
 		t.Fatal("ResolveModel accepted an unknown model")
 	}
+	if got := GetModel("not-a-model"); got != "" {
+		t.Fatalf("GetModel returned %q for an unknown model", got)
+	}
 	if got, ok := ResolveModel("gpt-5.6-luna"); !ok || got != GPT5Luna {
 		t.Fatalf("ResolveModel returned (%q, %t)", got, ok)
 	}

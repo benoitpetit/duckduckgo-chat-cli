@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,7 +107,7 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 	updateInfo := &UpdateInfo{
 		CurrentVersion: cleanCurrentVersion,
 		LatestVersion:  cleanLatestVersion,
-		NeedsUpdate:    cleanCurrentVersion != cleanLatestVersion,
+		NeedsUpdate:    versionNeedsUpdate(cleanCurrentVersion, cleanLatestVersion),
 	}
 
 	if !updateInfo.NeedsUpdate {
@@ -135,6 +136,12 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 			if strings.Contains(asset.Name, osName) && strings.Contains(asset.Name, arch) {
 				downloadURL = asset.BrowserDownloadURL
 				binaryName = asset.Name
+				for _, checksum := range release.Assets {
+					if checksum.Name == asset.Name+".sha256" {
+						sha256URL = checksum.BrowserDownloadURL
+						break
+					}
+				}
 				color.Yellow("✅ Found alternative binary: %s", binaryName)
 				break
 			}
@@ -162,7 +169,8 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 
 // fetchLatestRelease fetches the latest release information from GitHub
 func fetchLatestRelease() (*ReleaseInfo, error) {
-	resp, err := http.Get(GitHubAPI)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(GitHubAPI)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +186,55 @@ func fetchLatestRelease() (*ReleaseInfo, error) {
 	}
 
 	return &release, nil
+}
+
+func versionNeedsUpdate(current, latest string) bool {
+	if strings.Contains(current, "dev") || strings.Contains(current, "test") {
+		return true
+	}
+	comparison, err := compareVersions(latest, current)
+	if err != nil {
+		return current != latest
+	}
+	return comparison > 0
+}
+
+func compareVersions(left, right string) (int, error) {
+	parse := func(value string) ([]int, error) {
+		value = strings.TrimPrefix(strings.TrimSpace(value), "v")
+		value = strings.SplitN(value, "-", 2)[0]
+		parts := strings.Split(value, ".")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("invalid semantic version %q", value)
+		}
+		result := make([]int, 3)
+		for i, part := range parts {
+			number, err := strconv.Atoi(part)
+			if err != nil || number < 0 {
+				return nil, fmt.Errorf("invalid semantic version %q", value)
+			}
+			result[i] = number
+		}
+		return result, nil
+	}
+
+	leftParts, err := parse(left)
+	if err != nil {
+		return 0, err
+	}
+	rightParts, err := parse(right)
+	if err != nil {
+		return 0, err
+	}
+	for i := range leftParts {
+		if leftParts[i] > rightParts[i] {
+			return 1, nil
+		}
+		if leftParts[i] < rightParts[i] {
+			return -1, nil
+		}
+	}
+	return 0, nil
 }
 
 // DownloadAndVerify downloads the new binary and verifies its SHA256
@@ -199,21 +256,24 @@ func DownloadAndVerify(updateInfo *UpdateInfo) (string, error) {
 		return "", fmt.Errorf("failed to download binary: %w", err)
 	}
 
-	// Download and verify SHA256 if available
-	if updateInfo.SHA256URL != "" {
-		color.Yellow("🔐 Verifying SHA256...")
-
-		sha256Path := filepath.Join(tempDir, updateInfo.BinaryName+".sha256")
-		if err := downloadFile(updateInfo.SHA256URL, sha256Path); err != nil {
-			color.Yellow("⚠️  Warning: Could not download SHA256 file, skipping verification")
-		} else {
-			if err := verifySHA256(binaryPath, sha256Path); err != nil {
-				os.RemoveAll(tempDir) // Clean up on error
-				return "", fmt.Errorf("SHA256 verification failed: %w", err)
-			}
-			color.Green("✅ SHA256 verification successful")
-		}
+	// Updates are only trusted when the corresponding release checksum is
+	// available and valid.
+	if updateInfo.SHA256URL == "" {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf("release does not provide a SHA256 checksum")
 	}
+	color.Yellow("🔐 Verifying SHA256...")
+
+	sha256Path := filepath.Join(tempDir, updateInfo.BinaryName+".sha256")
+	if err := downloadFile(updateInfo.SHA256URL, sha256Path); err != nil {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf("failed to download SHA256 checksum: %w", err)
+	}
+	if err := verifySHA256(binaryPath, sha256Path); err != nil {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf("SHA256 verification failed: %w", err)
+	}
+	color.Green("✅ SHA256 verification successful")
 
 	// Make binary executable (Unix-like systems)
 	if runtime.GOOS != "windows" {
@@ -229,7 +289,8 @@ func DownloadAndVerify(updateInfo *UpdateInfo) (string, error) {
 
 // downloadFile downloads a file from URL to local path
 func downloadFile(url, filepath string) error {
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -301,7 +362,25 @@ func PerformUpdate(newBinaryPath string) error {
 		return fmt.Errorf("failed to get current executable: %w", err)
 	}
 
-	// Create backup
+	// Stage and validate the new binary before touching the active executable.
+	stagedPath := currentExec + ".new"
+	_ = os.Remove(stagedPath)
+	if err := copyFile(newBinaryPath, stagedPath); err != nil {
+		return fmt.Errorf("failed to stage update: %w", err)
+	}
+	defer os.Remove(stagedPath)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(stagedPath, 0755); err != nil {
+			return fmt.Errorf("failed to make staged binary executable: %w", err)
+		}
+	}
+	if err := validateNewBinary(stagedPath); err != nil {
+		return fmt.Errorf("new binary validation failed: %w", err)
+	}
+
+	// Create backup, then atomically move the staged binary into place. The
+	// previous implementation copied directly into the live executable and
+	// could leave a truncated binary if the process was interrupted.
 	backupPath := currentExec + ".backup"
 	if err := os.Rename(currentExec, backupPath); err != nil {
 		return fmt.Errorf("failed to create backup: %w", err)
@@ -316,18 +395,9 @@ func PerformUpdate(newBinaryPath string) error {
 		}
 	}
 
-	// Copy new binary to current location
-	if err := copyFile(newBinaryPath, currentExec); err != nil {
+	if err := os.Rename(stagedPath, currentExec); err != nil {
 		recovery()
 		return fmt.Errorf("failed to install update: %w", err)
-	}
-
-	// Make executable (Unix-like systems)
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(currentExec, 0755); err != nil {
-			recovery()
-			return fmt.Errorf("failed to make new binary executable: %w", err)
-		}
 	}
 
 	// Test the new binary by getting its version
@@ -370,6 +440,9 @@ func validateNewBinary(binaryPath string) error {
 	info, err := os.Stat(binaryPath)
 	if err != nil {
 		return fmt.Errorf("cannot access binary: %w", err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("binary is empty")
 	}
 
 	// Check if it's a regular file

@@ -25,6 +25,16 @@ const (
 type Model string
 type ModelAlias string
 
+// Definition is the single source of truth for a model exposed by the CLI.
+// ID is the exact, case-sensitive identifier sent to Duck.ai.
+type Definition struct {
+	ID          Model
+	Alias       ModelAlias
+	Name        string
+	Description string
+	Default     bool
+}
+
 const (
 	GPT5Luna     Model = "gpt-5.6-luna"
 	GPT54Mini    Model = "gpt-5.4-mini"
@@ -41,39 +51,66 @@ const (
 	Gemma431BAlias    ModelAlias = "gemma-4-31b"
 )
 
-var modelMap = map[ModelAlias]Model{
-	GPT5LunaAlias:     GPT5Luna,
-	GPT54MiniAlias:    GPT54Mini,
-	ClaudeHaikuAlias:  ClaudeHaiku,
-	MistralSmallAlias: MistralSmall,
-	GPTOSS120BAlias:   GPTOSS120B,
-	Gemma431BAlias:    Gemma431B,
-	"gpt-4o-mini":     GPT5Luna,
-	"claude-3-haiku":  ClaudeHaiku,
-	"llama":           GPTOSS120B,
-	"mixtral":         MistralSmall,
-	"o4mini":          GPT54Mini,
+var modelDefinitions = []Definition{
+	{ID: GPT5Luna, Alias: GPT5LunaAlias, Name: "GPT-5.6 Luna", Description: "Duck.ai's default general-purpose model", Default: true},
+	{ID: GPT54Mini, Alias: GPT54MiniAlias, Name: "GPT-5.4 Mini", Description: "Fast general-purpose model"},
+	{ID: ClaudeHaiku, Alias: ClaudeHaikuAlias, Name: "Claude Haiku 4.5", Description: "Anthropic's fast conversational model"},
+	{ID: MistralSmall, Alias: MistralSmallAlias, Name: "Mistral Small 4", Description: "Mistral's efficient general-purpose model"},
+	{ID: GPTOSS120B, Alias: GPTOSS120BAlias, Name: "GPT OSS 120B", Description: "Open-weight reasoning model"},
+	{ID: Gemma431B, Alias: Gemma431BAlias, Name: "Gemma 4 31B", Description: "Open model for general conversations"},
 }
 
-var modelDisplayMap = map[Model]string{
-	GPT5Luna:     "GPT-5.6 Luna",
-	GPT54Mini:    "GPT-5.4 Mini",
-	ClaudeHaiku:  "Claude Haiku 4.5",
-	MistralSmall: "Mistral Small 4",
-	GPTOSS120B:   "GPT OSS 120B",
-	Gemma431B:    "Gemma 4 31B",
+var modelMap = buildModelMap()
+
+func buildModelMap() map[ModelAlias]Model {
+	result := make(map[ModelAlias]Model, len(modelDefinitions)+5)
+	for _, definition := range modelDefinitions {
+		result[definition.Alias] = definition.ID
+		result[ModelAlias(strings.ToLower(string(definition.ID)))] = definition.ID
+	}
+	// Compatibility aliases from earlier releases.
+	result["gpt-4o-mini"] = GPT5Luna
+	result["claude-3-haiku"] = ClaudeHaiku
+	result["llama"] = GPTOSS120B
+	result["mixtral"] = MistralSmall
+	result["o4mini"] = GPT54Mini
+	return result
+}
+
+// Available returns a copy of the current model catalog.
+func Available() []Definition {
+	return append([]Definition(nil), modelDefinitions...)
+}
+
+// Default returns the configured default model.
+func Default() Model {
+	for _, definition := range modelDefinitions {
+		if definition.Default {
+			return definition.ID
+		}
+	}
+	return GPT5Luna
+}
+
+// DisplayName returns the user-facing name for a canonical model ID.
+func DisplayName(model Model) string {
+	for _, definition := range modelDefinitions {
+		if definition.ID == model {
+			return definition.Name
+		}
+	}
+	return string(model)
 }
 
 func GetModel(alias string) Model {
-	if model, ok := modelMap[ModelAlias(strings.ToLower(alias))]; ok {
+	if model, ok := ResolveModel(alias); ok {
 		return model
 	}
-	return GPT5Luna // default model
+	return ""
 }
 
 // ResolveModel validates a model name without silently falling back to a
-// different model. GetModel remains compatible with older callers that rely
-// on the historical default behavior.
+// different model.
 func ResolveModel(alias string) (Model, bool) {
 	model, ok := modelMap[ModelAlias(strings.ToLower(strings.TrimSpace(alias)))]
 	return model, ok
@@ -218,9 +255,11 @@ func extractWindowsVersion(output string) string {
 func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 	// If a model argument is provided, try to use it directly
 	if modelArg != "" {
-		for alias, model := range modelMap {
-			if strings.EqualFold(modelArg, string(alias)) || strings.EqualFold(modelArg, string(model)) {
-				return alias
+		if model, ok := ResolveModel(modelArg); ok {
+			for _, definition := range modelDefinitions {
+				if definition.ID == model {
+					return definition.Alias
+				}
 			}
 		}
 		ui.Errorln("Invalid model choice: %s", modelArg)
@@ -228,20 +267,22 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 	}
 
 	// Show an interactive menu if no argument is provided
-	modelOptions := []string{
-		"GPT-5.6 Luna",
-		"GPT-5.4 Mini",
-		"Claude Haiku 4.5",
-		"Mistral Small 4",
-		"GPT OSS 120B",
-		"Gemma 4 31B",
-		"Cancel",
+	modelOptions := make([]string, 0, len(modelDefinitions)+1)
+	for _, definition := range modelDefinitions {
+		modelOptions = append(modelOptions, definition.Name)
 	}
+	modelOptions = append(modelOptions, "Cancel")
 
 	currentModel := GetCurrentModel(chat)
-	defaultModel, ok := modelDisplayMap[currentModel]
-	if !ok {
-		defaultModel = "GPT-5.6 Luna" // Fallback
+	defaultModel := ""
+	for _, definition := range modelDefinitions {
+		if definition.ID == currentModel {
+			defaultModel = definition.Name
+			break
+		}
+	}
+	if defaultModel == "" {
+		defaultModel = modelDefinitions[0].Name
 	}
 
 	var choice string
@@ -256,25 +297,16 @@ func HandleModelChange(chat interface{}, modelArg string) ModelAlias {
 		return ""
 	}
 
-	switch strings.ToLower(choice) {
-	case "gpt-5.6 luna":
-		return GPT5LunaAlias
-	case "gpt-5.4 mini":
-		return GPT54MiniAlias
-	case "claude haiku 4.5":
-		return ClaudeHaikuAlias
-	case "mistral small 4":
-		return MistralSmallAlias
-	case "gpt oss 120b":
-		return GPTOSS120BAlias
-	case "gemma 4 31b":
-		return Gemma431BAlias
-	case "cancel":
+	if strings.EqualFold(choice, "cancel") {
 		ui.Warningln("Model change canceled")
 		return ""
-	default:
-		return ""
 	}
+	for _, definition := range modelDefinitions {
+		if definition.Name == choice {
+			return definition.Alias
+		}
+	}
+	return ""
 }
 
 func GetCurrentModel(chat interface{}) Model {

@@ -247,7 +247,7 @@ func ModelChangeHandler(session *Session) gin.HandlerFunc {
 
 		var modelInfo *ModelInfo
 		for _, model := range availableModels {
-			if model.ID == req.Model {
+			if model.ID == string(newModel) {
 				modelInfo = &model
 				break
 			}
@@ -286,22 +286,32 @@ func ModelChangeHandler(session *Session) gin.HandlerFunc {
 func HealthHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		uptime := time.Since(startTime)
+		status := "healthy"
+		chatStatus := "ready"
+		if !chat.BrowserAvailable() {
+			status = "degraded"
+			chatStatus = "browser_unavailable"
+		}
 
 		services := map[string]string{
 			"api":    "healthy",
-			"chat":   "healthy",
-			"models": "healthy",
+			"chat":   chatStatus,
+			"models": "configured",
 		}
 
 		healthResponse := HealthResponse{
-			Status:    "healthy",
+			Status:    status,
 			Version:   version.Current,
 			Uptime:    int64(uptime.Seconds()),
 			Services:  services,
 			Timestamp: time.Now(),
 		}
 
-		successResponse := NewSuccessResponse(healthResponse, "Service is healthy")
+		message := "Service is healthy"
+		if status != "healthy" {
+			message = "Service is degraded"
+		}
+		successResponse := NewSuccessResponse(healthResponse, message)
 		c.JSON(http.StatusOK, successResponse)
 	}
 }

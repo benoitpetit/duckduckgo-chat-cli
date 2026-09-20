@@ -23,7 +23,10 @@ type DynamicHeaders struct {
 // captureDuckAIHeaders lets Duck.ai's own frontend solve its browser-bound
 // VQD proof of work and captures the headers used for the resulting request.
 // The challenge is intentionally not hard-coded: Duck.ai rotates it regularly.
-func captureDuckAIHeaders() (*DynamicHeaders, error) {
+func captureDuckAIHeaders(parent context.Context) (*DynamicHeaders, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	execPath, err := findBrowserExecutable()
 	if err != nil {
 		return nil, err
@@ -41,7 +44,7 @@ func captureDuckAIHeaders() (*DynamicHeaders, error) {
 		chromedp.WindowSize(1280, 900),
 	)
 
-	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(parent, allocatorOptions...)
 	defer cancelAllocator()
 
 	ctx, cancel := chromedp.NewContext(allocatorCtx)
@@ -148,8 +151,15 @@ func headersFromCDP(raw network.Headers) *DynamicHeaders {
 	return headers
 }
 
-func getCurrentDuckAIHeaders() (*DynamicHeaders, error) {
-	return captureDuckAIHeaders()
+func getCurrentDuckAIHeaders(ctx context.Context) (*DynamicHeaders, error) {
+	return captureDuckAIHeaders(ctx)
+}
+
+// BrowserAvailable reports whether the local browser dependency needed for
+// Duck.ai proof generation is installed.
+func BrowserAvailable() bool {
+	_, err := findBrowserExecutable()
+	return err == nil
 }
 
 func findBrowserExecutable() (string, error) {

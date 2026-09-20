@@ -460,7 +460,7 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string",
-                    "example": "1.5.1"
+                    "example": "1.5.2"
                 }
             }
         },
@@ -578,7 +578,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "1.5.1",
+	Version:          "1.5.2",
 	Host:             "127.0.0.1:8080",
 	BasePath:         "/api/v1",
 	Schemes:          []string{"http", "https"},

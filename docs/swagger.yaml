@@ -88,7 +88,7 @@ definitions:
         example: 3600
         type: integer
       version:
-        example: 1.5.1
+        example: 1.5.2
         type: string
     type: object
   HistoryResponse:
@@ -175,7 +175,7 @@ info:
     url: https://opensource.org/licenses/MIT
   termsOfService: https://duck.ai/
   title: duckduckgo-chat-cli API
-  version: 1.5.1
+  version: 1.5.2
 paths:
   /chat:
     post:

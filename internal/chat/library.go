@@ -431,10 +431,14 @@ func handleLibraryLoad(c *Chat, cfg *config.Config, argument string, userRequest
 	// Add selected files to context
 	var totalChars int
 	for _, file := range files {
-		content, err := os.ReadFile(file)
+		content, err := readTextContextFile(file)
 		if err != nil {
 			ui.Errorln("Failed to read file %s: %v", file, err)
 			continue
+		}
+		if totalChars+len(content) > maxLibraryContextSize {
+			ui.Warningln("Skipping %s: library context limit of %d MiB reached", file, maxLibraryContextSize/(1<<20))
+			break
 		}
 		c.Messages = append(c.Messages, Message{
 			Role:    "user",

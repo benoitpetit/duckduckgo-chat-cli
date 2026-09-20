@@ -78,7 +78,7 @@ The model IDs currently used by Duck.ai are:
 | GPT OSS 120B | `gpt-oss-120b` |
 | Gemma 4 31B | `gemma-4-31b` |
 
-The CLI keeps aliases for the previous IDs so existing configuration files continue to resolve to a current model. Unknown model names fall back to `gpt-5.6-luna`.
+The CLI keeps aliases for the previous IDs so existing configuration files continue to resolve to a current model. Unknown model names are rejected instead of being silently redirected.
 
 ## Error handling
 

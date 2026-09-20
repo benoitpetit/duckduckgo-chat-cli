@@ -37,6 +37,15 @@ type APIConfig struct {
 	ShowGinLogs bool `json:"show_gin_logs"`
 }
 
+// ToolsConfig controls Duck.ai's built-in tools. These flags are opt-in
+// because the tool protocol is not part of Duck.ai's public API and can
+// change independently of the chat endpoint.
+type ToolsConfig struct {
+	Enabled         bool `json:"enabled"`
+	WebSearch       bool `json:"web_search"`
+	ImageGeneration bool `json:"image_generation"`
+}
+
 type Config struct {
 	TOSAccepted      bool              `json:"tos_accepted"`
 	DefaultModel     string            `json:"default_model"`
@@ -45,6 +54,7 @@ type Config struct {
 	Search           SearchConfig      `json:"search"`
 	Library          LibraryConfig     `json:"library"`
 	API              APIConfig         `json:"api"`
+	Tools            ToolsConfig       `json:"tools"`
 	ShowMenu         bool              `json:"show_menu"`
 	GlobalPrompt     string            `json:"global_prompt"`
 	ConfirmLongInput bool              `json:"confirm_long_input"`
@@ -209,6 +219,7 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 				"Long Input Protection",
 				"Library Settings",
 				"API Settings",
+				"Duck.ai Native Tools",
 				"Prompt Management",
 				"Back to chat",
 			},
@@ -233,6 +244,8 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			handleLibrarySettings(cfg)
 		case "API Settings":
 			handleAPISettings(cfg)
+		case "Duck.ai Native Tools":
+			handleNativeToolsChange(cfg, chatSession)
 		case "Prompt Management":
 			HandlePromptManagement(cfg)
 		case "Back to chat", "":
@@ -361,6 +374,58 @@ func handleGlobalPromptChange(cfg *Config) {
 		ui.Errorln("Error saving config: %v", err)
 	} else {
 		ui.AIln("Global prompt updated.")
+	}
+}
+
+func handleNativeToolsChange(cfg *Config, chatSession interfaces.ChatSession) {
+	answers := struct {
+		Enabled         bool `survey:"enabled"`
+		WebSearch       bool `survey:"web_search"`
+		ImageGeneration bool `survey:"image_generation"`
+	}{}
+
+	questions := []*survey.Question{
+		{
+			Name: "enabled",
+			Prompt: &survey.Confirm{
+				Message: "Enable Duck.ai native tools?",
+				Default: cfg.Tools.Enabled,
+			},
+		},
+		{
+			Name: "web_search",
+			Prompt: &survey.Confirm{
+				Message: "Allow native Web Search?",
+				Default: cfg.Tools.WebSearch,
+			},
+		},
+		{
+			Name: "image_generation",
+			Prompt: &survey.Confirm{
+				Message: "Allow native image generation?",
+				Default: cfg.Tools.ImageGeneration,
+			},
+		},
+	}
+
+	if err := survey.Ask(questions, &answers); err != nil {
+		ui.Errorln("Error reading native tool settings: %v", err)
+		return
+	}
+
+	cfg.Tools.Enabled = answers.Enabled
+	cfg.Tools.WebSearch = answers.WebSearch
+	cfg.Tools.ImageGeneration = answers.ImageGeneration
+	if !cfg.Tools.Enabled {
+		cfg.Tools.WebSearch = false
+		cfg.Tools.ImageGeneration = false
+	}
+	chatSession.SetNativeTools(cfg.Tools.Enabled, cfg.Tools.WebSearch, cfg.Tools.ImageGeneration)
+
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving native tool settings: %v", err)
+	} else {
+		ui.AIln("Duck.ai native tool settings updated.")
 	}
 }
 

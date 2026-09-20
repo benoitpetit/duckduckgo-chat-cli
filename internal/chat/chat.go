@@ -53,6 +53,13 @@ type Chat struct {
 	ContextOptimizer *intelligence.ContextOptimizer
 	HistoryManager   *persistence.HistoryManager
 	SessionID        string
+
+	// Native Duck.ai tools are opt-in because their wire protocol is not
+	// public API and may change independently of the chat endpoint.
+	NativeToolsEnabled    bool
+	NativeWebSearch       bool
+	NativeImageGeneration bool
+	GeneratedImageDir     string
 }
 
 type Message struct {
@@ -61,6 +68,8 @@ type Message struct {
 }
 
 type ToolChoice struct {
+	WebSearch       bool `json:"WebSearch,omitempty"`
+	GenerateImage   bool `json:"GenerateImage,omitempty"`
 	NewsSearch      bool `json:"NewsSearch"`
 	VideosSearch    bool `json:"VideosSearch"`
 	LocalSearch     bool `json:"LocalSearch"`
@@ -96,6 +105,27 @@ type ChatPayload struct {
 	CanDelegateImageGeneration *bool          `json:"canDelegateImageGeneration,omitempty"`
 	ReasoningEffort            string         `json:"reasoningEffort"`
 	DurableStream              *DurableStream `json:"durableStream"`
+}
+
+// StreamEvent is a normalized event from Duck.ai's SSE response.
+// Message events contain assistant text, source events contain web citations,
+// and tool events expose native tool activity without leaking protocol JSON to
+// the terminal renderer.
+type StreamEvent struct {
+	Type        string
+	Message     string
+	ToolName    string
+	ToolCallID  string
+	ToolArgs    string
+	ToolResult  string
+	SourceURL   string
+	SourceTitle string
+	ImageURL    string
+	ImageBase64 string
+	ImageFormat string
+	ImageWidth  int
+	ImageHeight int
+	Raw         string
 }
 
 func InitializeSession(cfg *config.Config) *Chat {
@@ -155,6 +185,11 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 		ContextOptimizer: contextOptimizer,
 		HistoryManager:   historyManager,
 		SessionID:        sessionID,
+
+		NativeToolsEnabled:    cfg.Tools.Enabled,
+		NativeWebSearch:       cfg.Tools.WebSearch,
+		NativeImageGeneration: cfg.Tools.ImageGeneration,
+		GeneratedImageDir:     filepath.Join(cfg.ExportDir, "images"),
 	}
 
 	// Record initial model
@@ -402,43 +437,79 @@ func shortenModelName(model string) string {
 }
 
 func (c *Chat) FetchStream(content string) (<-chan string, error) {
-	resp, err := c.Fetch(content)
+	events, err := c.FetchEventStream(content)
 	if err != nil {
 		return nil, err
 	}
 
 	stream := make(chan string)
 	go func() {
+		defer close(stream)
+		var latestImage *StreamEvent
+		for event := range events {
+			switch event.Type {
+			case "message":
+				if event.Message != "" {
+					stream <- event.Message
+				}
+			case "source":
+				if event.SourceURL != "" {
+					stream <- formatSourceEvent(event)
+				}
+			case "image":
+				if event.ImageBase64 != "" {
+					imageCopy := event
+					latestImage = &imageCopy
+				} else if event.ImageURL != "" {
+					stream <- fmt.Sprintf("\n\nImage generated: %s\n", event.ImageURL)
+				}
+			}
+		}
+		if latestImage != nil {
+			path, err := c.saveGeneratedImage(*latestImage)
+			if err != nil {
+				stream <- fmt.Sprintf("\n\nImage generated but could not be saved: %v\n", err)
+			} else {
+				stream <- fmt.Sprintf("\n\nImage generated: %s\n", path)
+			}
+		}
+	}()
+
+	return stream, nil
+}
+
+func formatSourceEvent(event StreamEvent) string {
+	title := event.SourceTitle
+	if title == "" {
+		title = event.SourceURL
+	}
+	return fmt.Sprintf("\n\nSource: [%s](%s)\n", title, event.SourceURL)
+}
+
+// FetchEventStream returns normalized Duck.ai SSE events. It is kept separate
+// from FetchStream so callers that need citations or generated image URLs can
+// consume structured events instead of scraping rendered text.
+func (c *Chat) FetchEventStream(content string) (<-chan StreamEvent, error) {
+	resp, err := c.Fetch(content)
+	if err != nil {
+		return nil, err
+	}
+
+	stream := make(chan StreamEvent)
+	go func() {
 		defer resp.Body.Close()
 		defer close(stream)
 
 		scanner := bufio.NewScanner(resp.Body)
-
+		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for scanner.Scan() {
-			line := scanner.Text()
-
-			if line == "data: [DONE]" {
-				break
+			event, ok := parseSSEEventLine(scanner.Text())
+			if !ok {
+				continue
 			}
-
-			if strings.HasPrefix(line, "data: ") {
-				data := strings.TrimPrefix(line, "data: ")
-				var messageData struct {
-					Role    string `json:"role"`
-					Message string `json:"message"`
-					Created int64  `json:"created"`
-					ID      string `json:"id"`
-					Action  string `json:"action"`
-					Model   string `json:"model"`
-				}
-				if err := json.Unmarshal([]byte(data), &messageData); err != nil {
-					log.Printf("Error unmarshaling data: %v\n", err)
-					continue
-				}
-
-				if messageData.Message != "" {
-					stream <- messageData.Message
-				}
+			stream <- event
+			if event.Type == "done" {
+				break
 			}
 		}
 
@@ -450,11 +521,148 @@ func (c *Chat) FetchStream(content string) (<-chan string, error) {
 			c.OldVqd = c.NewVqd
 			c.NewVqd = newVqd
 		}
-
 		c.RetryCount = 0
 	}()
 
 	return stream, nil
+}
+
+func parseSSEEventLine(line string) (StreamEvent, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return StreamEvent{}, false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" {
+		return StreamEvent{}, false
+	}
+	if payload == "[DONE]" {
+		return StreamEvent{Type: "done"}, true
+	}
+	if payload == "[PING]" {
+		return StreamEvent{Type: "ping"}, true
+	}
+	if strings.HasPrefix(payload, "[CHAT_TITLE:") {
+		return StreamEvent{Type: "title", Message: strings.TrimSuffix(strings.TrimPrefix(payload, "[CHAT_TITLE:"), "]")}, true
+	}
+
+	var message struct {
+		Role          string          `json:"role"`
+		Name          string          `json:"name"`
+		Message       string          `json:"message"`
+		State         string          `json:"state"`
+		ToolName      string          `json:"toolName"`
+		ToolCallID    string          `json:"toolCallId"`
+		ToolArguments json.RawMessage `json:"toolArguments"`
+		Result        json.RawMessage `json:"result"`
+		Source        *struct {
+			URL   string `json:"url"`
+			Title string `json:"title"`
+		} `json:"source"`
+		ImageURL    string          `json:"imageUrl"`
+		ImageURLAlt string          `json:"image_url"`
+		URL         string          `json:"url"`
+		Data        json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(payload), &message); err != nil {
+		return StreamEvent{Type: "raw", Raw: payload}, true
+	}
+
+	if message.Role == "assistant" && message.Message != "" {
+		return StreamEvent{Type: "message", Message: message.Message}, true
+	}
+	if message.Role == "source" && message.Source != nil {
+		return StreamEvent{Type: "source", SourceURL: message.Source.URL, SourceTitle: message.Source.Title}, true
+	}
+	if message.Role == "tool-invocation" {
+		event := StreamEvent{Type: "tool", ToolName: message.ToolName, ToolCallID: message.ToolCallID, Raw: payload}
+		if len(message.ToolArguments) > 0 && string(message.ToolArguments) != "null" {
+			event.ToolArgs = string(message.ToolArguments)
+		}
+		if len(message.Result) > 0 && string(message.Result) != "null" {
+			event.ToolResult = string(message.Result)
+		}
+		if strings.Contains(strings.ToLower(message.ToolName), "image") {
+			event.Type = "image"
+			event.ImageURL = firstImageURL(message.ImageURL, message.ImageURLAlt, message.URL, string(message.Result), string(message.Data))
+		}
+		return event, true
+	}
+	if message.Role == "ui-component" && strings.EqualFold(message.Name, "generate-image") {
+		var imageData struct {
+			Type                  string `json:"type"`
+			B64Image              string `json:"b64Image"`
+			Width                 int    `json:"width"`
+			Height                int    `json:"height"`
+			Format                string `json:"format"`
+			ImageModelDisplayName string `json:"imageModelDisplayName"`
+		}
+		if err := json.Unmarshal(message.Data, &imageData); err == nil && imageData.B64Image != "" {
+			return StreamEvent{
+				Type:        "image",
+				ImageBase64: imageData.B64Image,
+				ImageFormat: imageData.Format,
+				ImageWidth:  imageData.Width,
+				ImageHeight: imageData.Height,
+				Raw:         payload,
+			}, true
+		}
+		return StreamEvent{Type: "meta", Raw: payload}, true
+	}
+	if message.ImageURL != "" || message.ImageURLAlt != "" {
+		return StreamEvent{Type: "image", ImageURL: firstImageURL(message.ImageURL, message.ImageURLAlt)}, true
+	}
+
+	return StreamEvent{Type: "meta", Raw: payload}, true
+}
+
+func (c *Chat) saveGeneratedImage(event StreamEvent) (string, error) {
+	if event.ImageBase64 == "" {
+		return "", fmt.Errorf("image event did not contain image data")
+	}
+	data, err := base64.StdEncoding.DecodeString(event.ImageBase64)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(event.ImageBase64)
+		if err != nil {
+			return "", fmt.Errorf("decode generated image: %w", err)
+		}
+	}
+
+	dir := c.GeneratedImageDir
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), "duckduckgo-chat-cli", "images")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create image directory: %w", err)
+	}
+	ext := strings.ToLower(strings.TrimSpace(event.ImageFormat))
+	if ext == "" {
+		ext = "jpeg"
+	}
+	if ext == "jpg" {
+		ext = "jpeg"
+	}
+	path := filepath.Join(dir, fmt.Sprintf("duckai-%d.%s", time.Now().UnixNano(), ext))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write generated image: %w", err)
+	}
+	return path, nil
+}
+
+func firstImageURL(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if strings.HasPrefix(value, `"`) {
+			var decoded string
+			if err := json.Unmarshal([]byte(value), &decoded); err == nil {
+				value = strings.TrimSpace(decoded)
+			}
+		}
+		if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *Chat) Fetch(content string) (*http.Response, error) {
@@ -479,14 +687,7 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 		return nil, fmt.Errorf("failed to create Duck.ai durable stream: %w", err)
 	}
 
-	payload := ChatPayload{
-		Model:                c.Model,
-		Messages:             c.Messages,
-		CanUseTools:          false,
-		CanUseApproxLocation: true,
-		ReasoningEffort:      "none",
-		DurableStream:        durableStream,
-	}
+	payload := c.buildPayload(durableStream)
 
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
@@ -582,6 +783,34 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+func (c *Chat) buildPayload(durableStream *DurableStream) ChatPayload {
+	payload := ChatPayload{
+		Model:                c.Model,
+		Messages:             c.Messages,
+		CanUseTools:          c.NativeToolsEnabled && (c.NativeWebSearch || c.NativeImageGeneration),
+		CanUseApproxLocation: true,
+		ReasoningEffort:      "none",
+		DurableStream:        durableStream,
+	}
+	if payload.CanUseTools {
+		payload.Metadata = &Metadata{ToolChoice: ToolChoice{
+			WebSearch:     c.NativeWebSearch,
+			GenerateImage: c.NativeImageGeneration,
+		}}
+		if c.NativeImageGeneration {
+			canDelegate := true
+			payload.CanDelegateImageGeneration = &canDelegate
+		}
+	}
+	return payload
+}
+
+func (c *Chat) SetNativeTools(enabled, webSearch, imageGeneration bool) {
+	c.NativeToolsEnabled = enabled
+	c.NativeWebSearch = webSearch
+	c.NativeImageGeneration = imageGeneration
 }
 
 func (c *Chat) AddURLContext(url string) error {

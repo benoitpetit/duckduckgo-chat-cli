@@ -33,7 +33,37 @@ The durable stream contains:
 - a freshly generated RSA 2048 public key encoded as a JWK;
 - `RSA-OAEP-256` as the key algorithm.
 
-The response is an SSE stream. The existing parser consumes the data events incrementally and exposes the assistant response to the terminal UI.
+The response is an SSE stream. The parser consumes the data events
+incrementally and exposes assistant text, source citations, native tool events,
+and generated image data to the terminal UI.
+
+## Native tools
+
+The current frontend accepts an optional metadata block for built-in tools:
+
+```json
+{
+  "canUseTools": true,
+  "metadata": {
+    "toolChoice": {
+      "WebSearch": true,
+      "GenerateImage": true
+    }
+  },
+  "canDelegateImageGeneration": true
+}
+```
+
+This protocol is reverse-engineered and remains opt-in in the CLI. Web Search
+responses emit `role: "source"` events with citation URLs. Image generation
+emits `role: "ui-component"` events named `generate-image`; the image data is
+currently delivered as base64 inside `data.b64Image`, with format and
+dimensions. The CLI decodes the final image event and writes it to the export
+image directory.
+
+The exact event shape can change with the Duck.ai frontend. Keep the parser
+covered by protocol fixtures and the opt-in live tests before enabling a new
+tool by default.
 
 ## Current models
 
@@ -64,3 +94,10 @@ If Chrome or Chromium cannot be found, the CLI reports that it is required for D
 ## Validation
 
 The protocol was validated with a real chat request after the migration to Duck.ai. The CLI returned `PONG` for the prompt `Reply PONG only`, with one successful interaction and no failed interactions.
+
+Native tool validation is opt-in because it launches Chrome and consumes live
+Duck.ai requests:
+
+```bash
+DUCKAI_LIVE_TEST=1 go test ./internal/chat -run 'TestNativeToolsAgainstDuckAI|TestNativeImageGenerationAgainstDuckAI' -v
+```

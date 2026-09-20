@@ -52,6 +52,7 @@
 
 ### Context Integration
 - **Web search** - Integrate DuckDuckGo search results into conversations
+- **Native Duck.ai tools** - Optional native Web Search with source citations and image generation
 - **File processing** - Add local file content (15+ formats: Go, Python, JS, TS, JSON, MD, etc.)
 - **URL scraping** - Extract and analyze webpage content with Chrome-based scraping
 - **Project analysis** - Generate comprehensive project prompts with PMP auto-installation
@@ -310,6 +311,41 @@ You: /load 12345
 | `ExportDir`      | Export directory          | ~/Documents/duckchat | Any valid path     |
 | `ShowMenu`       | Display commands on start | true                 | true/false         |
 | `AnalyticsEnabled`  | Enable session analytics | true                 | true/false         |
+
+### Native Duck.ai Tools
+
+Native Web Search and image generation are available as opt-in features because
+Duck.ai does not publish a stable tool protocol. Open `/config`, choose
+`Duck.ai Native Tools`, and enable the capabilities you want. Web citations are
+added to the streamed response. Generated images are decoded from the Duck.ai
+response and saved under `<ExportDir>/images`.
+
+The native tools use the same browser bootstrap as regular chat requests, so
+Chrome or Chromium is required. If Duck.ai changes its internal event format,
+the feature may need a protocol update without affecting regular text chat.
+
+The existing `/search` command remains available as a deterministic local
+context command; enabling native Web Search lets Duck.ai decide when a prompt
+needs live web results.
+
+| Option              | Description                       | Default |
+| ------------------- | --------------------------------- | ------- |
+| `Tools.Enabled`      | Enable native Duck.ai tools       | false   |
+| `Tools.WebSearch`    | Allow native Web Search           | false   |
+| `Tools.ImageGeneration` | Allow image generation          | false   |
+
+### File and image support
+
+`/file` and `/library` currently import local text and source files into the
+conversation context. They do not yet upload PDF or image attachments through
+Duck.ai's native attachment protocol. Native image generation is supported
+separately as described above.
+
+### Dictation
+
+The CLI does not include microphone capture or voice transcription. Dictation
+is intentionally not enabled until a portable audio and transcription path is
+validated for terminal use.
 
 ### Search Settings
 

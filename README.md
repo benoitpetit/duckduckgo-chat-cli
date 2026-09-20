@@ -10,10 +10,10 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go Version">
-  <a href="https://github.com/benoitpetit/duckduckGO-chat-cli/releases" target="_blank">
-    <img src="https://img.shields.io/github/v/release/benoitpetit/duckduckGO-chat-cli?style=flat-square" alt="Latest Release">
+  <a href="https://github.com/benoitpetit/duckduckgo-chat-cli/releases" target="_blank">
+    <img src="https://img.shields.io/github/v/release/benoitpetit/duckduckgo-chat-cli?style=flat-square" alt="Latest Release">
   </a>
-  <a href="[https://github.com/benoitpetit/duckduckGO-chat-cli#platforms](https://github.com/benoitpetit/duckduckGO-chat-cli?tab=readme-ov-file#-installation)" target="_blank">
+  <a href="https://github.com/benoitpetit/duckduckgo-chat-cli?tab=readme-ov-file#installation" target="_blank">
     <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20MacOS-blue?style=flat-square" alt="Platform">
   </a>
   <img src="https://img.shields.io/badge/License-Open%20Source-green?style=flat-square" alt="License">
@@ -143,7 +143,7 @@ Never lose important conversations:
 
 ## Installation
 
-> [Download Latest Release](https://github.com/benoitpetit/duckduckGO-chat-cli/releases/latest)
+> [Download Latest Release](https://github.com/benoitpetit/duckduckgo-chat-cli/releases/latest)
 
 ### 1. Direct Download & Run
 
@@ -151,7 +151,7 @@ Never lose important conversations:
 <summary><strong> Windows (PowerShell)</strong></summary>
 
 ```powershell
-$exe="duckduckgo-chat-cli_windows_amd64.exe"; Invoke-WebRequest -Uri ((Invoke-RestMethod "https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest").assets | Where-Object name -like "*windows_amd64.exe").browser_download_url -OutFile $exe; Start-Process -Wait -NoNewWindow -FilePath ".\$exe"
+$exe="duckduckgo-chat-cli_windows_amd64.exe"; Invoke-WebRequest -Uri ((Invoke-RestMethod "https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest").assets | Where-Object name -like "*windows_amd64.exe").browser_download_url -OutFile $exe; Start-Process -Wait -NoNewWindow -FilePath ".\$exe"
 ```
 
 </details>
@@ -160,7 +160,7 @@ $exe="duckduckgo-chat-cli_windows_amd64.exe"; Invoke-WebRequest -Uri ((Invoke-Re
 <summary><strong> Linux (curl)</strong></summary>
 
 ```bash
-curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest | grep -oP 'https.*linux_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_linux_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_linux_amd64 && ./duckduckgo-chat-cli_v*_linux_amd64
+curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | grep -oP 'https.*linux_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_linux_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_linux_amd64 && ./duckduckgo-chat-cli_v*_linux_amd64
 ```
 
 </details>
@@ -172,26 +172,28 @@ curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/
 <strong>Apple Silicon (ARM64):</strong>
 
 ```bash
-curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest | grep -oP 'https.*darwin_arm64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_arm64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_arm64 && ./duckduckgo-chat-cli_v*_darwin_arm64
+curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | grep -oP 'https.*darwin_arm64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_arm64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_arm64 && ./duckduckgo-chat-cli_v*_darwin_arm64
 ```
 
 <strong>Intel (AMD64):</strong>
 
 ```bash
-curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckGO-chat-cli/releases/latest | grep -oP 'https.*darwin_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_amd64 && ./duckduckgo-chat-cli_v*_darwin_amd64
+curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | grep -oP 'https.*darwin_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_amd64 && ./duckduckgo-chat-cli_v*_darwin_amd64
 ```
 
 </details>
 
 ### 2. Build from source
 
-** Prerequisites:**
+**Prerequisites:**
 - Go 1.21+ (`go version`)
 - Chrome/Chromium 115+ (`chromium-browser --version`)
 
+The chat backend is Duck.ai. Chrome or Chromium is used headlessly to obtain the rotating browser proof required by Duck.ai; no account credentials are stored by the CLI. See the [protocol notes](reverse/README.md) for the current request flow.
+
 ```sh
-git clone https://github.com/benoitpetit/duckduckGO-chat-cli
-cd duckduckGO-chat-cli
+git clone https://github.com/benoitpetit/duckduckgo-chat-cli
+cd duckduckgo-chat-cli
 ./scripts/build.sh
 ```
 
@@ -382,7 +384,7 @@ This project uses GitHub Actions for automated building and releasing:
 ### Development Documentation
 
 - **[CI/CD workflow](.github/workflows/release.yml)** - Build and release automation
-- **[ Reverse Engineering](reverse/README.md)** - Complete technical reverse engineering documentation
+- **[Reverse Engineering](reverse/README.md)** - Complete technical reverse engineering documentation
 
 ## Troubleshooting
 

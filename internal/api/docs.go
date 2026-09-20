@@ -11,7 +11,7 @@
 // All responses follow a consistent format with success/error indicators and standardized error codes.
 //
 //	@title						duckduckgo-chat-cli API
-//	@version					1.4.0
+//	@version					1.5.1
 //	@description				REST API for Duck.ai Chat CLI - programmatic access to AI chat functionality
 //	@termsOfService				https://duck.ai/
 //

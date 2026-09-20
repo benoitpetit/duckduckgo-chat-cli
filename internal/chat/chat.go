@@ -414,8 +414,8 @@ func shortenModelName(model string) string {
 		"gpt-5.4-mini":     "gpt-5.4-mini",
 		"claude-haiku-4-5": "claude-haiku-4-5",
 		"mistral-small-4":  "mistral-small-4",
-		"gpt-oss-120B":     "gpt-oss-120b",
-		"gemma-4-31B":      "gemma-4-31b",
+		"gpt-oss-120b":     "gpt-oss-120b",
+		"gemma-4-31b":      "gemma-4-31b",
 	}
 
 	if shortName, exists := displayNames[model]; exists {

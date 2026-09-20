@@ -189,8 +189,8 @@ func formatModelName(modelName string) string {
 		"gpt-5.4-mini":     "GPT-5.4 Mini",
 		"claude-haiku-4-5": "Claude Haiku 4.5",
 		"mistral-small-4":  "Mistral Small 4",
-		"gpt-oss-120B":     "GPT OSS 120B",
-		"gemma-4-31B":      "Gemma 4 31B",
+		"gpt-oss-120b":     "GPT OSS 120B",
+		"gemma-4-31b":      "Gemma 4 31B",
 	}
 
 	if shortName, exists := displayNames[modelName]; exists {

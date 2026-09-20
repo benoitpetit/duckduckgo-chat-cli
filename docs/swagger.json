@@ -17,7 +17,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "1.4.0"
+        "version": "1.5.1"
     },
     "host": "127.0.0.1:8080",
     "basePath": "/api/v1",
@@ -458,7 +458,7 @@
                 },
                 "version": {
                     "type": "string",
-                    "example": "1.4.0"
+                    "example": "1.5.1"
                 }
             }
         },

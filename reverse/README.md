@@ -75,8 +75,8 @@ The model IDs currently used by Duck.ai are:
 | GPT-5.4 Mini | `gpt-5.4-mini` |
 | Claude Haiku 4.5 | `claude-haiku-4-5` |
 | Mistral Small 4 | `mistral-small-4` |
-| GPT OSS 120B | `gpt-oss-120B` |
-| Gemma 4 31B | `gemma-4-31B` |
+| GPT OSS 120B | `gpt-oss-120b` |
+| Gemma 4 31B | `gemma-4-31b` |
 
 The CLI keeps aliases for the previous IDs so existing configuration files continue to resolve to a current model. Unknown model names fall back to `gpt-5.6-luna`.
 

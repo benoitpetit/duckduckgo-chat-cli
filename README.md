@@ -140,8 +140,8 @@ Never lose important conversations:
 | **GPT-5.4 Mini**   | gpt-5.4-mini      | gpt-5.4-mini | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
 | **Claude Haiku 4.5** | claude-haiku-4-5 | claude-haiku-4-5 | Creative writing | Explanations & summaries | • Clear responses<br>• Concise |
 | **Mistral Small 4** | mistral-small-4  | mistral-small-4 | Knowledge & analysis | Complex topics | • Reasoning<br>• Logic-focused |
-| **GPT OSS 120B**   | gpt-oss-120B     | gpt-oss-120b | Programming          | Code-related tasks       | • Technical precision<br>• Detailed |
-| **Gemma 4 31B**    | gemma-4-31B      | gemma-4-31b | Lightweight tasks    | Short answers            | • Efficient<br>• Compact responses |
+| **GPT OSS 120B**   | gpt-oss-120b     | gpt-oss-120b | Programming          | Code-related tasks       | • Technical precision<br>• Detailed |
+| **Gemma 4 31B**    | gemma-4-31b      | gemma-4-31b | Lightweight tasks    | Short answers            | • Efficient<br>• Compact responses |
 
 ## Installation
 
@@ -397,7 +397,7 @@ The CLI includes an integrated update system that keeps your installation curren
 # The CLI will also prompt you when updates are available:
  A new version is available!
    Current: 1.2.2
-   Latest:  1.4.0
+   Latest:  1.5.1
  Run '/update' to update to the latest version.
 ```
 

@@ -30,8 +30,8 @@ const (
 	GPT54Mini    Model = "gpt-5.4-mini"
 	ClaudeHaiku  Model = "claude-haiku-4-5"
 	MistralSmall Model = "mistral-small-4"
-	GPTOSS120B   Model = "gpt-oss-120B"
-	Gemma431B    Model = "gemma-4-31B"
+	GPTOSS120B   Model = "gpt-oss-120b"
+	Gemma431B    Model = "gemma-4-31b"
 
 	GPT5LunaAlias     ModelAlias = "gpt-5.6-luna"
 	GPT54MiniAlias    ModelAlias = "gpt-5.4-mini"

@@ -107,6 +107,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("GET /api/commands", s.handleCommands)
+	mux.HandleFunc("GET /api/sessions", s.handleSessions)
+	mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionDetail)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != s.expectedHost() {
 			http.Error(w, "invalid Host", http.StatusForbidden)

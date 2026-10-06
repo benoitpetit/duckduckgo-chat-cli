@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +48,8 @@ type HistoryManager struct {
 	optimizer        *intelligence.ContextOptimizer
 	mu               sync.RWMutex
 }
+
+var resumeSessionIDPattern = regexp.MustCompile(`^session_[A-Za-z0-9_-]{1,80}$`)
 
 // NewHistoryManager creates a new history manager
 func NewHistoryManager(storageDir string) *HistoryManager {
@@ -105,7 +108,9 @@ func (hm *HistoryManager) SaveSession(session *ConversationSession) error {
 	ui.AIln("📁 Session saved: %s", fullPath)
 
 	// Cleanup old sessions
-	go func() { _ = hm.cleanupOldSessions() }()
+	if err := hm.cleanupOldSessions(); err != nil {
+		ui.Warningln("Failed to clean conversation history: %v", err)
+	}
 
 	return nil
 }
@@ -236,15 +241,19 @@ func (hm *HistoryManager) GetSessionSummary(sessionID string) (*SessionSummary, 
 	}
 
 	summary := &SessionSummary{
-		ID:           session.ID,
-		StartTime:    session.StartTime,
-		EndTime:      session.EndTime,
-		Duration:     session.Analytics.SessionDuration,
-		MessageCount: session.Analytics.MessageCount,
-		Model:        session.Model,
-		FirstMessage: "",
-		LastMessage:  "",
-		KeyTopics:    []string{},
+		ID:            session.ID,
+		StartTime:     session.StartTime,
+		EndTime:       session.EndTime,
+		Duration:      session.Analytics.SessionDuration,
+		MessageCount:  session.Analytics.MessageCount,
+		Model:         session.Model,
+		ResumeCommand: "",
+		FirstMessage:  "",
+		LastMessage:   "",
+		KeyTopics:     []string{},
+	}
+	if resumeSessionIDPattern.MatchString(session.ID) {
+		summary.ResumeCommand = "/load " + session.ID
 	}
 
 	// Get first and last user messages
@@ -261,6 +270,51 @@ func (hm *HistoryManager) GetSessionSummary(sessionID string) (*SessionSummary, 
 	summary.KeyTopics = hm.extractKeyTopics(session.Messages)
 
 	return summary, nil
+}
+
+// ListSessionSummaries returns a newest-first list containing metadata and a short first-user-message preview only.
+func (hm *HistoryManager) ListSessionSummaries() ([]SessionSummary, error) {
+	files, err := os.ReadDir(hm.StorageDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage directory: %w", err)
+	}
+	summaries := make([]SessionSummary, 0)
+	for _, file := range files {
+		if file.IsDir() || !strings.HasPrefix(file.Name(), "session_") {
+			continue
+		}
+		path := filepath.Join(hm.StorageDir, file.Name())
+		var session *ConversationSession
+		switch {
+		case strings.HasSuffix(file.Name(), ".json.gz"):
+			session, err = hm.loadCompressed(path)
+		case strings.HasSuffix(file.Name(), ".json"):
+			session, err = hm.loadUncompressed(path)
+		default:
+			continue
+		}
+		if err != nil {
+			ui.Warningln("Failed to load session %s: %v", file.Name(), err)
+			continue
+		}
+		summary := SessionSummary{
+			ID: session.ID, StartTime: session.StartTime, EndTime: session.EndTime,
+			Duration: session.Analytics.SessionDuration, MessageCount: session.Analytics.MessageCount,
+			Model: session.Model, KeyTopics: []string{},
+		}
+		for _, message := range session.Messages {
+			if message.Role == "user" {
+				summary.FirstMessage = truncateMessage(message.Content, 100)
+				break
+			}
+		}
+		if resumeSessionIDPattern.MatchString(session.ID) {
+			summary.ResumeCommand = "/load " + session.ID
+		}
+		summaries = append(summaries, summary)
+	}
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].StartTime.After(summaries[j].StartTime) })
+	return summaries, nil
 }
 
 // RestoreSession restores messages from a saved session
@@ -498,15 +552,16 @@ func truncateMessage(message string, maxLength int) string {
 // Supporting types
 
 type SessionSummary struct {
-	ID           string        `json:"id"`
-	StartTime    time.Time     `json:"start_time"`
-	EndTime      time.Time     `json:"end_time"`
-	Duration     time.Duration `json:"duration"`
-	MessageCount int           `json:"message_count"`
-	Model        string        `json:"model"`
-	FirstMessage string        `json:"first_message"`
-	LastMessage  string        `json:"last_message"`
-	KeyTopics    []string      `json:"key_topics"`
+	ID            string        `json:"id"`
+	StartTime     time.Time     `json:"start_time"`
+	EndTime       time.Time     `json:"end_time"`
+	Duration      time.Duration `json:"duration"`
+	MessageCount  int           `json:"message_count"`
+	Model         string        `json:"model"`
+	ResumeCommand string        `json:"resume_command"`
+	FirstMessage  string        `json:"first_message"`
+	LastMessage   string        `json:"last_message"`
+	KeyTopics     []string      `json:"key_topics"`
 }
 
 type StorageStats struct {

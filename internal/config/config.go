@@ -49,6 +49,37 @@ type ToolsConfig struct {
 	ImageGeneration bool `json:"image_generation"`
 }
 
+// DashboardConfig contains settings for the loopback-only usage dashboard.
+type DashboardConfig struct {
+	Autostart                 bool `json:"autostart"`
+	Port                      int  `json:"port"`
+	RefreshIntervalSeconds    int  `json:"refresh_interval_seconds"`
+	RetentionDays             int  `json:"retention_days"`
+	ShowConversations         bool `json:"show_conversations"`
+	AllowConversationAnalysis bool `json:"allow_conversation_analysis"`
+	AnalysisTokenBudget       int  `json:"analysis_token_budget"`
+}
+
+func defaultDashboardConfig() DashboardConfig {
+	return DashboardConfig{Port: 8765, RefreshIntervalSeconds: 3, RetentionDays: 90, AnalysisTokenBudget: 8000}
+}
+
+func normalizeDashboardConfig(cfg *DashboardConfig) {
+	defaults := defaultDashboardConfig()
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		cfg.Port = defaults.Port
+	}
+	if cfg.RefreshIntervalSeconds < 1 || cfg.RefreshIntervalSeconds > 60 {
+		cfg.RefreshIntervalSeconds = defaults.RefreshIntervalSeconds
+	}
+	if cfg.RetentionDays < 1 || cfg.RetentionDays > 3650 {
+		cfg.RetentionDays = defaults.RetentionDays
+	}
+	if cfg.AnalysisTokenBudget < 1000 || cfg.AnalysisTokenBudget > 32000 {
+		cfg.AnalysisTokenBudget = defaults.AnalysisTokenBudget
+	}
+}
+
 type Config struct {
 	TOSAccepted      bool              `json:"tos_accepted"`
 	DefaultModel     string            `json:"default_model"`
@@ -58,6 +89,7 @@ type Config struct {
 	Library          LibraryConfig     `json:"library"`
 	API              APIConfig         `json:"api"`
 	Tools            ToolsConfig       `json:"tools"`
+	Dashboard        DashboardConfig   `json:"dashboard"`
 	ShowMenu         bool              `json:"show_menu"`
 	GlobalPrompt     string            `json:"global_prompt"`
 	ConfirmLongInput bool              `json:"confirm_long_input"`
@@ -66,6 +98,7 @@ type Config struct {
 
 func Initialize() *Config {
 	cfg := loadConfig()
+	normalizeDashboardConfig(&cfg.Dashboard)
 	if cfg.DefaultModel == "" {
 		cfg.DefaultModel = string(models.Default())
 	} else if _, ok := models.ResolveModel(cfg.DefaultModel); !ok {
@@ -124,6 +157,7 @@ func loadConfig() *Config {
 		ConfirmLongInput: true, // default to enabled for safety
 		Search:           SearchConfig{IncludeSnippet: true},
 		Library:          LibraryConfig{Enabled: true},
+		Dashboard:        defaultDashboardConfig(),
 		Prompts:          make(map[string]string),
 	}
 
@@ -156,6 +190,11 @@ func configPath() string {
 		}
 	}
 	return filepath.Join(configDir, "duckduckgo-chat-cli", "config.json")
+}
+
+// DashboardHistoryPath returns the local analytics history file, separate from exports.
+func DashboardHistoryPath() string {
+	return filepath.Join(filepath.Dir(configPath()), "dashboard-history.json")
 }
 
 // configFileExists checks if the configuration file exists
@@ -252,6 +291,7 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 				"Long Input Protection",
 				"Library Settings",
 				"API Settings",
+				"Dashboard Settings",
 				"Duck.ai Native Tools",
 				"Prompt Management",
 				"Back to chat",
@@ -280,6 +320,8 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			handleLibrarySettings(cfg)
 		case "API Settings":
 			handleAPISettings(cfg)
+		case "Dashboard Settings":
+			handleDashboardSettings(cfg)
 		case "Duck.ai Native Tools":
 			handleNativeToolsChange(cfg, chatSession)
 		case "Prompt Management":
@@ -568,6 +610,68 @@ func handleAPISettings(cfg *Config) {
 			return
 		}
 	}
+}
+
+func handleDashboardSettings(cfg *Config) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "Local Dashboard Settings",
+			Options: []string{
+				fmt.Sprintf("Autostart (%t)", cfg.Dashboard.Autostart),
+				fmt.Sprintf("Port (%d)", cfg.Dashboard.Port),
+				fmt.Sprintf("Refresh interval seconds (%d)", cfg.Dashboard.RefreshIntervalSeconds),
+				fmt.Sprintf("History retention days (%d)", cfg.Dashboard.RetentionDays),
+				fmt.Sprintf("Show conversations (%t)", cfg.Dashboard.ShowConversations),
+				fmt.Sprintf("Allow conversation analysis (%t)", cfg.Dashboard.AllowConversationAnalysis),
+				fmt.Sprintf("Analysis token budget (%d)", cfg.Dashboard.AnalysisTokenBudget),
+				"Back",
+			},
+			Default: "Back",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Dashboard settings canceled.")
+			return
+		}
+
+		switch {
+		case strings.HasPrefix(choice, "Autostart"):
+			cfg.Dashboard.Autostart = !cfg.Dashboard.Autostart
+			saveAndReport(cfg, fmt.Sprintf("Dashboard autostart set to: %t", cfg.Dashboard.Autostart))
+		case strings.HasPrefix(choice, "Show conversations"):
+			cfg.Dashboard.ShowConversations = !cfg.Dashboard.ShowConversations
+			saveAndReport(cfg, fmt.Sprintf("Dashboard conversations visible: %t", cfg.Dashboard.ShowConversations))
+		case strings.HasPrefix(choice, "Allow conversation analysis"):
+			cfg.Dashboard.AllowConversationAnalysis = !cfg.Dashboard.AllowConversationAnalysis
+			saveAndReport(cfg, fmt.Sprintf("Dashboard conversation analysis allowed: %t", cfg.Dashboard.AllowConversationAnalysis))
+		case strings.HasPrefix(choice, "Port"):
+			editDashboardInteger(cfg, "Dashboard port", cfg.Dashboard.Port, 1, 65535, func(v int) { cfg.Dashboard.Port = v })
+		case strings.HasPrefix(choice, "Refresh interval"):
+			editDashboardInteger(cfg, "Refresh interval in seconds", cfg.Dashboard.RefreshIntervalSeconds, 1, 60, func(v int) { cfg.Dashboard.RefreshIntervalSeconds = v })
+		case strings.HasPrefix(choice, "History retention"):
+			editDashboardInteger(cfg, "History retention in days", cfg.Dashboard.RetentionDays, 1, 3650, func(v int) { cfg.Dashboard.RetentionDays = v })
+		case strings.HasPrefix(choice, "Analysis token budget"):
+			editDashboardInteger(cfg, "Estimated analysis token budget", cfg.Dashboard.AnalysisTokenBudget, 1000, 32000, func(v int) { cfg.Dashboard.AnalysisTokenBudget = v })
+		case choice == "Back":
+			return
+		}
+	}
+}
+
+func editDashboardInteger(cfg *Config, label string, current, minimum, maximum int, set func(int)) {
+	input := ""
+	prompt := &survey.Input{Message: label + ":", Default: strconv.Itoa(current)}
+	if err := survey.AskOne(prompt, &input); err != nil {
+		ui.Warningln("Operation canceled. No changes made.")
+		return
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(input))
+	if err != nil || value < minimum || value > maximum {
+		ui.Errorln("Value must be between %d and %d. No changes made.", minimum, maximum)
+		return
+	}
+	set(value)
+	saveAndReport(cfg, fmt.Sprintf("%s updated to: %d", label, value))
 }
 
 func handleAPIPortChange(cfg *Config) {

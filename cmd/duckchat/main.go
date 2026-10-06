@@ -1,18 +1,23 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
+	"duckduckgo-chat-cli/internal/analytics"
 	"duckduckgo-chat-cli/internal/api"
 	"duckduckgo-chat-cli/internal/chat"
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
+	"duckduckgo-chat-cli/internal/dashboard"
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/ui"
 	"duckduckgo-chat-cli/internal/update"
@@ -27,6 +32,9 @@ var Version = "dev"
 
 var chatSession *chat.Chat
 var cfg *config.Config
+var dashboardServer *dashboard.Server
+var dashboardHistory *dashboard.HistoryStore
+var cliShutdown func()
 
 // Terminal state management
 var originalState *term.State
@@ -49,6 +57,117 @@ func restoreTerminalState() error {
 		return term.Restore(fd, originalState)
 	}
 	return nil
+}
+
+func newShutdownFinalizer(stopSnapshots func(), saveConversation func() error, saveAnalytics func() error, stopDashboard func() error, restore func() error) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if stopSnapshots != nil {
+				stopSnapshots()
+			}
+			for _, step := range []struct {
+				name string
+				run  func() error
+			}{
+				{"conversation", saveConversation},
+				{"analytics", saveAnalytics},
+				{"dashboard", stopDashboard},
+				{"terminal", restore},
+			} {
+				if step.run != nil {
+					if err := step.run(); err != nil {
+						ui.Warningln("Could not finalize %s: %v", step.name, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func startSnapshotRecorder(store *dashboard.HistoryStore, tracker *analytics.ChatAnalytics) func() {
+	if store == nil || tracker == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := store.Save(tracker.Snapshot()); err != nil {
+					ui.Warningln("Could not save dashboard snapshot: %v", err)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() { close(stop) })
+		<-done
+	}
+}
+
+func refreshDashboardSettings(configured *config.Config) {
+	if configured == nil {
+		return
+	}
+	if dashboardServer != nil {
+		dashboardServer.UpdateSettings(configured.Dashboard)
+	}
+	if dashboardHistory != nil {
+		if err := dashboardHistory.SetRetentionDays(configured.Dashboard.RetentionDays); err != nil {
+			ui.Warningln("Could not update dashboard history retention: %v", err)
+		}
+	}
+	if chatSession != nil && chatSession.HistoryManager != nil {
+		if err := chatSession.HistoryManager.SetRetentionDays(configured.Dashboard.RetentionDays); err != nil {
+			ui.Warningln("Could not update conversation history retention: %v", err)
+		}
+	}
+}
+
+func handleDashboardCommand(action string) {
+	if dashboardServer == nil {
+		ui.Errorln("Local dashboard is not initialized.")
+		return
+	}
+	switch action {
+	case "on":
+		if running, address := dashboardServer.Status(); running {
+			ui.AIln("Local dashboard is already running: %s", address)
+			return
+		}
+		address, err := dashboardServer.Start()
+		if err != nil {
+			ui.Errorln("Could not start local dashboard: %v", err)
+			return
+		}
+		ui.AIln("Local dashboard: %s", address)
+	case "off":
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := dashboardServer.Stop(ctx); err != nil {
+			ui.Errorln("Could not stop local dashboard: %v", err)
+			return
+		}
+		ui.AIln("Local dashboard stopped.")
+	case "status":
+		if running, address := dashboardServer.Status(); running {
+			ui.AIln("Local dashboard is running: %s", address)
+		} else {
+			ui.Mutedln("Local dashboard is stopped.")
+		}
+	case "":
+		ui.Mutedln("Usage: /dashboard on|off|status")
+	default:
+		ui.Errorln("Invalid dashboard action %q. Usage: /dashboard on|off|status", action)
+	}
 }
 
 // getCommands returns the command suggestions for autocompletion
@@ -103,31 +222,6 @@ func main() {
 		}
 	}()
 
-	// create a channel to listen for interrupts
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		for range sigChan {
-			if chatSession != nil && chatSession.CancelCurrentRequest() {
-				ui.Warningln("\nRequest canceled.")
-				continue
-			}
-			ui.Warningln("\nReceived interrupt. Exiting gracefully.")
-
-			// Show session statistics before exiting
-			if chatSession != nil {
-				chatSession.ShowSessionStats()
-			}
-
-			// Restore terminal state before exiting
-			if err := restoreTerminalState(); err != nil {
-				ui.Warningln("Warning: Could not restore terminal state: %v", err)
-			}
-			os.Exit(0)
-		}
-	}()
-
 	ui.Systemln("Welcome to DuckDuckGo AI Chat CLI!")
 
 	cfg = config.Initialize()
@@ -139,6 +233,45 @@ func main() {
 	}
 
 	chatSession = chat.InitializeSession(cfg)
+	dashboardHistory = dashboard.NewHistoryStore(config.DashboardHistoryPath(), cfg.Dashboard.RetentionDays)
+	if err := dashboardHistory.SetRetentionDays(cfg.Dashboard.RetentionDays); err != nil {
+		ui.Warningln("Could not apply dashboard history retention: %v", err)
+	}
+	if chatSession.HistoryManager != nil {
+		if err := chatSession.HistoryManager.SetRetentionDays(cfg.Dashboard.RetentionDays); err != nil {
+			ui.Warningln("Could not apply conversation history retention: %v", err)
+		}
+	}
+	if err := dashboardHistory.Save(chatSession.Analytics.Snapshot()); err != nil {
+		ui.Warningln("Could not save initial dashboard snapshot: %v", err)
+	}
+	stopSnapshots := startSnapshotRecorder(dashboardHistory, chatSession.Analytics)
+	dashboardServer = dashboard.NewServer(dashboard.Dependencies{
+		Analytics: chatSession.Analytics,
+		History:   dashboardHistory,
+		Sessions:  chatSession.HistoryManager,
+		Commands:  command.GetCommandRegistry,
+		Config:    cfg.Dashboard,
+		Analyze:   chat.NewDashboardAnalyzer(cfg).Analyze,
+	})
+	cliShutdown = newShutdownFinalizer(
+		stopSnapshots,
+		chatSession.SaveCurrentSession,
+		func() error { return dashboardHistory.Save(chatSession.Analytics.Snapshot()) },
+		func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			return dashboardServer.Stop(ctx)
+		},
+		restoreTerminalState,
+	)
+	if cfg.Dashboard.Autostart {
+		if address, err := dashboardServer.Start(); err != nil {
+			ui.Warningln("Local dashboard could not start: %v", err)
+		} else {
+			ui.AIln("Local dashboard: %s", address)
+		}
+	}
 
 	if cfg.API.Enabled && cfg.API.Autostart {
 		api.StartServer(chatSession, cfg, cfg.API.Port)
@@ -153,6 +286,27 @@ func main() {
 		chat.PrintCommands()
 	}
 
+	// Handle interrupts only after the shared finalizer exists.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+	go func() {
+		for range sigChan {
+			if chatSession != nil && chatSession.CancelCurrentRequest() {
+				ui.Warningln("\nRequest canceled.")
+				continue
+			}
+			ui.Warningln("\nReceived interrupt. Exiting gracefully.")
+			if chatSession != nil {
+				chatSession.ShowSessionStats()
+			}
+			if cliShutdown != nil {
+				cliShutdown()
+			}
+			os.Exit(0)
+		}
+	}()
+
 	p := prompt.New(
 		executor,
 		completer,
@@ -161,6 +315,9 @@ func main() {
 		prompt.OptionPrefixTextColor(prompt.Blue),
 	)
 	p.Run()
+	if cliShutdown != nil {
+		cliShutdown()
+	}
 
 }
 
@@ -176,9 +333,8 @@ func executor(input string) {
 			chatSession.ShowSessionStats()
 		}
 
-		// Restore terminal state before exiting
-		if err := restoreTerminalState(); err != nil {
-			ui.Warningln("Warning: Could not restore terminal state: %v", err)
+		if cliShutdown != nil {
+			cliShutdown()
 		}
 		os.Exit(0)
 	}
@@ -286,6 +442,7 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		chat.HandleCopyCommand(chatSession)
 	case cmd.Type == "/config":
 		config.HandleConfiguration(cfg, chatSession)
+		refreshDashboardSettings(cfg)
 	case cmd.Type == "/model":
 		newModel := models.HandleModelChange(chatSession, cmd.Args)
 		if newModel != "" {
@@ -338,6 +495,8 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		} else {
 			ui.Errorln("No active chat session found.")
 		}
+	case cmd.Type == "/dashboard":
+		handleDashboardCommand(cmd.Args)
 	case cmd.Type == "/update":
 		// Handle update command
 		force := strings.Contains(cmd.Args, "--force")

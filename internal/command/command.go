@@ -124,6 +124,12 @@ func GetCommandRegistry() *CommandRegistry {
 				Usage:       "/stats",
 				Category:    "core",
 			},
+			"/dashboard": {
+				Name:        "/dashboard",
+				Description: "Start, stop, or check the local usage dashboard",
+				Usage:       "/dashboard <on|off|status>",
+				Category:    "core",
+			},
 			"/update": {
 				Name:        "/update",
 				Description: "Update the CLI to the latest version",
@@ -276,6 +282,11 @@ func ValidateCommand(cmd *Command) error {
 	case "/stats":
 		// Stats command doesn't need validation
 		break
+
+	case "/dashboard":
+		if cmd.Args != "" && cmd.Args != "on" && cmd.Args != "off" && cmd.Args != "status" {
+			return fmt.Errorf("invalid /dashboard usage: /dashboard on|off|status")
+		}
 
 	case "/update":
 		// Update command doesn't need validation

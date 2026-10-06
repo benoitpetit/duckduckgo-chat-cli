@@ -64,6 +64,8 @@ type ChatAnalytics struct {
 	URLsProcessed     int `json:"urls_processed"`
 	SearchesPerformed int `json:"searches_performed"`
 
+	byModel map[string]ModelMetrics
+
 	mutex sync.RWMutex
 }
 
@@ -72,8 +74,39 @@ func NewChatAnalytics() *ChatAnalytics {
 	return &ChatAnalytics{
 		SessionStartTime: time.Now(),
 		CommandsUsed:     make(map[string]int),
+		byModel:          make(map[string]ModelMetrics),
 		mutex:            sync.RWMutex{},
 	}
+}
+
+// RecordModelInteraction records one response attempt against its selected model.
+func (ca *ChatAnalytics) RecordModelInteraction(model string, duration time.Duration, success bool, errorType string) {
+	if model == "" {
+		return
+	}
+	ca.mutex.Lock()
+	defer ca.mutex.Unlock()
+	if ca.byModel == nil {
+		ca.byModel = make(map[string]ModelMetrics)
+	}
+	metrics := ca.byModel[model]
+	metrics.Interactions++
+	metrics.TotalResponseTime += duration
+	metrics.AverageResponseTime = metrics.TotalResponseTime / time.Duration(metrics.Interactions)
+	if success {
+		metrics.Successful++
+	} else {
+		metrics.Failed++
+		switch errorType {
+		case "418":
+			metrics.Error418++
+		case "429":
+			metrics.Error429++
+		default:
+			metrics.OtherErrors++
+		}
+	}
+	ca.byModel[model] = metrics
 }
 
 // Chat Interaction Tracking (for CLI usage)

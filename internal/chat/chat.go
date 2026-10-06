@@ -430,11 +430,14 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 	}
 
 	startTime := time.Now()
+	usedModel := string(c.Model)
 	stream, err := c.FetchStreamContext(ctx, actualMessage)
 	if err != nil {
 		c.Messages = originalMessages
 		if c.Analytics != nil {
-			c.Analytics.RecordChatInteraction(time.Since(startTime), false, "unknown")
+			duration := time.Since(startTime)
+			c.Analytics.RecordChatInteraction(duration, false, "unknown")
+			c.Analytics.RecordModelInteraction(usedModel, duration, false, "unknown")
 		}
 		return "", fmt.Errorf("error fetching stream: %w", err)
 	}
@@ -445,7 +448,9 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 		return "", err
 	}
 	if c.Analytics != nil {
-		c.Analytics.RecordChatInteraction(time.Since(startTime), true, "")
+		duration := time.Since(startTime)
+		c.Analytics.RecordChatInteraction(duration, true, "")
+		c.Analytics.RecordModelInteraction(usedModel, duration, true, "")
 		c.Analytics.RecordMessage("assistant", len(finalResponse))
 	}
 
@@ -821,7 +826,9 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 				errorType = "429"
 			}
 			if c.Analytics != nil {
-				c.Analytics.RecordChatInteraction(time.Since(startTime), false, errorType)
+				duration := time.Since(startTime)
+				c.Analytics.RecordChatInteraction(duration, false, errorType)
+				c.Analytics.RecordModelInteraction(string(c.Model), duration, false, errorType)
 			}
 
 			select {

@@ -77,7 +77,16 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.listener = nil
 	s.url = ""
 	s.mu.Unlock()
-	return server.Shutdown(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		// Force-close active handlers (including in-flight analyses) after the
+		// graceful deadline; server.Close cancels their request contexts.
+		closeErr := server.Close()
+		if closeErr != nil {
+			return fmt.Errorf("graceful dashboard shutdown failed: %v; force close failed: %w", err, closeErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) Status() (bool, string) {

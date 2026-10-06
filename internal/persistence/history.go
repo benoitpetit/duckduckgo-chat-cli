@@ -47,6 +47,7 @@ type HistoryManager struct {
 	RetentionDays    int
 	optimizer        *intelligence.ContextOptimizer
 	mu               sync.RWMutex
+	saveMu           sync.Mutex
 }
 
 var resumeSessionIDPattern = regexp.MustCompile(`^session_[A-Za-z0-9_-]{1,80}$`)
@@ -60,7 +61,6 @@ func NewHistoryManager(storageDir string) *HistoryManager {
 		RetentionDays:    90,  // Keep sessions for 90 days
 		optimizer:        intelligence.NewContextOptimizer(),
 	}
-	_ = manager.cleanupOldSessions()
 	return manager
 }
 
@@ -69,6 +69,8 @@ func (hm *HistoryManager) SetRetentionDays(days int) error {
 	if days < 1 || days > 3650 {
 		return fmt.Errorf("retention days must be between 1 and 3650")
 	}
+	hm.saveMu.Lock()
+	defer hm.saveMu.Unlock()
 	hm.mu.Lock()
 	hm.RetentionDays = days
 	hm.mu.Unlock()
@@ -77,6 +79,8 @@ func (hm *HistoryManager) SetRetentionDays(days int) error {
 
 // SaveSession saves a conversation session with optimization
 func (hm *HistoryManager) SaveSession(session *ConversationSession) error {
+	hm.saveMu.Lock()
+	defer hm.saveMu.Unlock()
 	// Ensure storage directory exists
 	if err := os.MkdirAll(hm.StorageDir, 0755); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
@@ -136,6 +140,9 @@ func (hm *HistoryManager) LoadSession(sessionID string) (*ConversationSession, e
 func (hm *HistoryManager) ListSessions() ([]ConversationSession, error) {
 	files, err := os.ReadDir(hm.StorageDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []ConversationSession{}, nil
+		}
 		return nil, fmt.Errorf("failed to read storage directory: %w", err)
 	}
 
@@ -185,6 +192,9 @@ func (hm *HistoryManager) ListSessions() ([]ConversationSession, error) {
 func (hm *HistoryManager) ListConversationSessions() ([]ConversationSession, error) {
 	files, err := os.ReadDir(hm.StorageDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []ConversationSession{}, nil
+		}
 		return nil, fmt.Errorf("failed to read storage directory: %w", err)
 	}
 	sessions := make([]ConversationSession, 0)
@@ -307,6 +317,9 @@ func (hm *HistoryManager) GetSessionSummary(sessionID string) (*SessionSummary, 
 func (hm *HistoryManager) ListSessionSummaries() ([]SessionSummary, error) {
 	files, err := os.ReadDir(hm.StorageDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []SessionSummary{}, nil
+		}
 		return nil, fmt.Errorf("failed to read storage directory: %w", err)
 	}
 	summaries := make([]SessionSummary, 0)
@@ -419,23 +432,41 @@ func (hm *HistoryManager) GetStorageStats() (*StorageStats, error) {
 func (hm *HistoryManager) saveCompressed(session *ConversationSession, filePath string) error {
 	session.Compressed = true
 	gzFilepath := filePath + ".gz"
-
-	file, err := os.Create(gzFilepath)
+	tmp, err := os.CreateTemp(hm.StorageDir, ".session-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
-	gzWriter, err := gzip.NewWriterLevel(file, hm.CompressionLevel)
-	if err != nil {
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
 		return err
 	}
-	defer gzWriter.Close()
 
+	gzWriter, err := gzip.NewWriterLevel(tmp, hm.CompressionLevel)
+	if err != nil {
+		tmp.Close()
+		return err
+	}
 	encoder := json.NewEncoder(gzWriter)
 	encoder.SetIndent("", "  ")
-
-	return encoder.Encode(session)
+	if err := encoder.Encode(session); err != nil {
+		gzWriter.Close()
+		tmp.Close()
+		return err
+	}
+	if err := gzWriter.Close(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, gzFilepath)
 }
 
 func (hm *HistoryManager) loadCompressed(filePath string) (*ConversationSession, error) {

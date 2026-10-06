@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,39 @@ func TestHistoryManagerRejectsInvalidRetention(t *testing.T) {
 	manager := NewHistoryManager(t.TempDir())
 	if err := manager.SetRetentionDays(0); err == nil {
 		t.Fatal("SetRetentionDays(0) succeeded")
+	}
+}
+
+func TestHistoryManagerRestartAppliesLongerRetentionBeforePruning(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewHistoryManager(dir)
+	if err := manager.SetRetentionDays(365); err != nil {
+		t.Fatal(err)
+	}
+	archived := &ConversationSession{ID: "session_120_days", StartTime: time.Now().Add(-120 * 24 * time.Hour), Messages: []intelligence.Message{{Role: "user", Content: "keep me"}}}
+	if err := manager.SaveSession(archived); err != nil {
+		t.Fatal(err)
+	}
+
+	// NewHistoryManager must not apply its 90-day fallback before the caller
+	// can restore the configured 365-day retention.
+	restarted := NewHistoryManager(dir)
+	if err := restarted.SetRetentionDays(365); err != nil {
+		t.Fatal(err)
+	}
+	got, err := restarted.LoadSession(archived.ID)
+	if err != nil || got.ID != archived.ID {
+		t.Fatalf("120-day archive after restart = (%v, %v), want retained archive", got, err)
+	}
+}
+
+func TestHistoryListingsTreatMissingStorageAsEmpty(t *testing.T) {
+	manager := NewHistoryManager(filepath.Join(t.TempDir(), "not-created"))
+	if summaries, err := manager.ListSessionSummaries(); err != nil || len(summaries) != 0 {
+		t.Fatalf("ListSessionSummaries() = (%v, %v), want empty", summaries, err)
+	}
+	if sessions, err := manager.ListConversationSessions(); err != nil || len(sessions) != 0 {
+		t.Fatalf("ListConversationSessions() = (%v, %v), want empty", sessions, err)
 	}
 }
 

@@ -35,6 +35,7 @@ var cfg *config.Config
 var dashboardServer *dashboard.Server
 var dashboardHistory *dashboard.HistoryStore
 var cliShutdown func()
+var executorMu sync.Mutex
 
 // Terminal state management
 var originalState *term.State
@@ -296,6 +297,7 @@ func main() {
 				ui.Warningln("\nRequest canceled.")
 				continue
 			}
+			executorMu.Lock()
 			ui.Warningln("\nReceived interrupt. Exiting gracefully.")
 			if chatSession != nil {
 				chatSession.ShowSessionStats()
@@ -332,6 +334,8 @@ func main() {
 }
 
 func executor(input string) {
+	executorMu.Lock()
+	defer executorMu.Unlock()
 	if input == "" {
 		return
 	}

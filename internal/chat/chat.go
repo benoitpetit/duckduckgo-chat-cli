@@ -50,10 +50,12 @@ type Chat struct {
 	RetryCount int
 
 	// New intelligent features
-	Analytics        *analytics.ChatAnalytics
-	ContextOptimizer *intelligence.ContextOptimizer
-	HistoryManager   *persistence.HistoryManager
-	SessionID        string
+	Analytics                  *analytics.ChatAnalytics
+	ContextOptimizer           *intelligence.ContextOptimizer
+	HistoryManager             *persistence.HistoryManager
+	SessionID                  string
+	ConversationStartTime      time.Time
+	suppressSensitiveDebugLogs bool
 
 	// Native Duck.ai tools are opt-in because their wire protocol is not
 	// public API and may change independently of the chat endpoint.
@@ -194,10 +196,11 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 		RetryCount: 0,
 
 		// Initialize new intelligent features
-		Analytics:        analytics,
-		ContextOptimizer: contextOptimizer,
-		HistoryManager:   historyManager,
-		SessionID:        sessionID,
+		Analytics:             analytics,
+		ContextOptimizer:      contextOptimizer,
+		HistoryManager:        historyManager,
+		SessionID:             sessionID,
+		ConversationStartTime: time.Now(),
 
 		NativeToolsEnabled:    cfg.Tools.Enabled,
 		NativeWebSearch:       cfg.Tools.WebSearch,
@@ -291,6 +294,7 @@ func (c *Chat) Clear(cfg *config.Config) {
 
 		// Generate new session ID for the fresh start
 		c.SessionID = fmt.Sprintf("session_%d", time.Now().UnixNano())
+		c.ConversationStartTime = time.Now()
 
 		ui.AIln("Chat history and context cleared")
 	} else {
@@ -774,7 +778,7 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 		return nil, fmt.Errorf("error marshaling payload: %v", err)
 	}
 
-	if os.Getenv("DEBUG") == "true" {
+	if shouldLogRequestDetails(c) {
 		color.Cyan("Payload: %s", string(jsonPayload))
 	}
 
@@ -813,7 +817,7 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
-		if os.Getenv("DEBUG") == "true" {
+		if shouldLogRequestDetails(c) {
 			color.Red("Request Headers: %+v", req.Header)
 			color.Red("Response Headers: %+v", resp.Header)
 			color.Red("Response Status: %d", resp.StatusCode)
@@ -901,6 +905,10 @@ func (c *Chat) SetNativeTools(enabled, webSearch, imageGeneration bool) {
 	c.NativeToolsEnabled = enabled
 	c.NativeWebSearch = webSearch
 	c.NativeImageGeneration = imageGeneration
+}
+
+func shouldLogRequestDetails(c *Chat) bool {
+	return os.Getenv("DEBUG") == "true" && (c == nil || !c.suppressSensitiveDebugLogs)
 }
 
 func (c *Chat) AddURLContext(url string) error {
@@ -1213,6 +1221,7 @@ func (c *Chat) RestoreContext(session *persistence.ConversationSession) {
 		}
 	}
 	c.SessionID = session.ID
+	c.ConversationStartTime = session.StartTime
 	c.Model = models.Model(session.Model) // Restore the model used in that session
 	ui.AIln("Context restored from session %s. Model set to %s.", session.ID, session.Model)
 }
@@ -1260,13 +1269,16 @@ func (c *Chat) SaveCurrentSession() error {
 	intelligenceMessages := c.convertMessagesToIntelligence()
 
 	// Create session object
-	started := time.Now()
+	started := c.ConversationStartTime
 	var sessionAnalytics analytics.Snapshot
 	if c.Analytics != nil {
 		sessionAnalytics = c.Analytics.Snapshot()
-		if !sessionAnalytics.SessionStartTime.IsZero() {
+		if started.IsZero() && !sessionAnalytics.SessionStartTime.IsZero() {
 			started = sessionAnalytics.SessionStartTime
 		}
+	}
+	if started.IsZero() {
+		started = time.Now()
 	}
 	session := &persistence.ConversationSession{
 		ID:        c.SessionID,

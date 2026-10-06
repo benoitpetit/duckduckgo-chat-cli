@@ -53,7 +53,7 @@ func (a *DashboardAnalyzer) Analyze(ctx context.Context, model models.Model, pro
 	cfg := a.config
 	isolatedChat := &Chat{
 		Model: model, Messages: []Message{}, Client: &http.Client{Jar: jar}, CookieJar: jar,
-		Analytics: analytics.NewChatAnalytics(), SessionID: "dashboard-analysis",
+		Analytics: analytics.NewChatAnalytics(), SessionID: "dashboard-analysis", suppressSensitiveDebugLogs: true,
 	}
 	response, err := ProcessInputContext(ctx, isolatedChat, prompt, &cfg)
 	if err != nil {

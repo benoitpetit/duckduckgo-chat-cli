@@ -1,5 +1,5 @@
 const $ = (selector, root = document) => root.querySelector(selector);
-const state = { settings: null, stats: null, sessions: [], timer: null, selectedSession: "", toastTimer: null };
+const state = { settings: null, stats: null, sessions: [], timer: null, selectedSession: "", toastTimer: null, modelSignature: "" };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { cache: "no-store", ...options });
@@ -52,6 +52,11 @@ function renderMetrics(current) {
   $("#metricTokens").textContent = `~${number(field(current, "total_tokens_estimate", "TotalTokensEstimate"))}`;
   $("#metricOptimizations").textContent = number(field(current, "context_optimizations", "ContextOptimizations"));
   $("#metricBytes").textContent = `${number(field(current, "bytes_saved", "BytesSaved"))} octets économisés`;
+  $("#metricErrors").textContent = number(field(current, "chat_interactions_failed", "ChatInteractionsFailed"));
+  $("#metricErrorRate").textContent = `${percent(field(current, "chat_interactions_failed", "ChatInteractionsFailed"), total)} des requêtes`;
+  $("#metricSearches").textContent = number(field(current, "searches_performed", "SearchesPerformed"));
+  $("#metricFiles").textContent = number(field(current, "files_processed", "FilesProcessed"));
+  $("#metricURLs").textContent = number(field(current, "urls_processed", "URLsProcessed"));
 
   const commands = field(current, "commands_used", "CommandsUsed") || {};
   const ranked = Object.entries(commands).sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -99,6 +104,7 @@ function renderHistory(history) {
 
 async function refreshStats() {
   try {
+    await refreshSettings();
     const data = await api("/api/stats");
     state.stats = data;
     renderMetrics(data.current || {});
@@ -107,6 +113,32 @@ async function refreshStats() {
   } catch (error) {
     $("#updatedAt").textContent = "Connexion locale interrompue";
     notify(`Statistiques indisponibles : ${error.message}`);
+  }
+}
+
+async function refreshSettings() {
+  const settings = await api("/api/settings");
+  const modelSignature = JSON.stringify([settings.currentModel, settings.models || []]);
+  state.settings = settings;
+  const showConversations = Boolean(settings.showConversations);
+  const allowConversationAnalysis = Boolean(settings.allowConversationAnalysis);
+  $("#sessionsNav").hidden = !showConversations;
+  $("#conversationAnalysis").hidden = !allowConversationAnalysis;
+  if (!showConversations) {
+    state.sessions = [];
+    state.selectedSession = "";
+    $("#sessionList").replaceChildren();
+    $("#sessionDetail").textContent = "La consultation des conversations est désactivée dans la configuration.";
+    if (document.querySelector("#page-sessions.active")) showPage("overview");
+  }
+  if (!allowConversationAnalysis) {
+    $("#reportPreview").hidden = true;
+    $("#conversationResult").hidden = true;
+    $("#conversationResult").textContent = "";
+  }
+  if (modelSignature !== state.modelSignature) {
+    state.modelSignature = modelSignature;
+    renderModels();
   }
 }
 
@@ -239,13 +271,18 @@ async function start() {
   let searchTimer;
   $("#sessionSearch").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadSessions, 180); });
   try {
-    state.settings = await api("/api/settings");
-    $("#sessionsNav").hidden = !state.settings.showConversations;
-    $("#conversationAnalysis").hidden = !state.settings.allowConversationAnalysis;
-    renderModels();
+    await refreshSettings();
     await Promise.all([refreshStats(), loadCommands()]);
-    state.timer = setInterval(refreshStats, Math.max(1, state.settings.refreshIntervalSeconds || 3) * 1000);
+    scheduleRefresh();
   } catch (error) { notify(`Configuration du dashboard indisponible : ${error.message}`); }
+}
+
+function scheduleRefresh() {
+  clearTimeout(state.timer);
+  state.timer = setTimeout(async () => {
+    await refreshStats();
+    scheduleRefresh();
+  }, Math.max(1, state.settings?.refreshIntervalSeconds || 3) * 1000);
 }
 
 start();

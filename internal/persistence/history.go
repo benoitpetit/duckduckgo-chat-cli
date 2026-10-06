@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"duckduckgo-chat-cli/internal/intelligence"
@@ -44,17 +45,31 @@ type HistoryManager struct {
 	CompressionLevel int
 	RetentionDays    int
 	optimizer        *intelligence.ContextOptimizer
+	mu               sync.RWMutex
 }
 
 // NewHistoryManager creates a new history manager
 func NewHistoryManager(storageDir string) *HistoryManager {
-	return &HistoryManager{
+	manager := &HistoryManager{
 		StorageDir:       storageDir,
 		MaxSessions:      100, // Keep last 100 sessions
 		CompressionLevel: 6,   // Balanced compression
-		RetentionDays:    30,  // Keep sessions for 30 days
+		RetentionDays:    90,  // Keep sessions for 90 days
 		optimizer:        intelligence.NewContextOptimizer(),
 	}
+	_ = manager.cleanupOldSessions()
+	return manager
+}
+
+// SetRetentionDays validates and applies retention, pruning expired sessions immediately.
+func (hm *HistoryManager) SetRetentionDays(days int) error {
+	if days < 1 || days > 3650 {
+		return fmt.Errorf("retention days must be between 1 and 3650")
+	}
+	hm.mu.Lock()
+	hm.RetentionDays = days
+	hm.mu.Unlock()
+	return hm.cleanupOldSessions()
 }
 
 // SaveSession saves a conversation session with optimization
@@ -90,7 +105,7 @@ func (hm *HistoryManager) SaveSession(session *ConversationSession) error {
 	ui.AIln("📁 Session saved: %s", fullPath)
 
 	// Cleanup old sessions
-	go hm.cleanupOldSessions()
+	go func() { _ = hm.cleanupOldSessions() }()
 
 	return nil
 }
@@ -378,18 +393,24 @@ func (hm *HistoryManager) loadUncompressed(filePath string) (*ConversationSessio
 	return &session, nil
 }
 
-func (hm *HistoryManager) cleanupOldSessions() {
+func (hm *HistoryManager) cleanupOldSessions() error {
 	sessions, err := hm.ListSessions()
-	if err != nil {
-		return
+	if os.IsNotExist(err) {
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	hm.mu.RLock()
+	retentionDays, maxSessions := hm.RetentionDays, hm.MaxSessions
+	hm.mu.RUnlock()
 
 	now := time.Now()
 	removed := 0
 
 	// Remove sessions older than retention period
 	for _, session := range sessions {
-		if now.Sub(session.StartTime) > time.Duration(hm.RetentionDays)*24*time.Hour {
+		if now.Sub(session.StartTime) > time.Duration(retentionDays)*24*time.Hour {
 			filename := fmt.Sprintf("session_%s.json", session.ID)
 			gzFilename := fmt.Sprintf("session_%s.json.gz", session.ID)
 
@@ -400,8 +421,8 @@ func (hm *HistoryManager) cleanupOldSessions() {
 	}
 
 	// Remove excess sessions if over limit
-	if len(sessions) > hm.MaxSessions {
-		excess := sessions[hm.MaxSessions:]
+	if len(sessions) > maxSessions {
+		excess := sessions[maxSessions:]
 		for _, session := range excess {
 			filename := fmt.Sprintf("session_%s.json", session.ID)
 			gzFilename := fmt.Sprintf("session_%s.json.gz", session.ID)
@@ -415,6 +436,7 @@ func (hm *HistoryManager) cleanupOldSessions() {
 	if removed > 0 {
 		ui.AIln("🧹 Cleaned up %d old sessions", removed)
 	}
+	return nil
 }
 
 func (hm *HistoryManager) extractKeyTopics(messages []intelligence.Message) []string {

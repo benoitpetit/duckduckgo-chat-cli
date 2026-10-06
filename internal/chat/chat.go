@@ -171,6 +171,9 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	analytics := analytics.NewChatAnalytics()
 	contextOptimizer := intelligence.NewContextOptimizer()
 	historyManager := persistence.NewHistoryManager(cfg.ExportDir)
+	if err := historyManager.SetRetentionDays(cfg.Dashboard.RetentionDays); err != nil {
+		ui.Warningln("Failed to apply conversation retention: %v", err)
+	}
 
 	// Use all headers like the real web browser
 	ui.AIln("🔍 Using VQD with all required headers like web browser")
@@ -259,7 +262,10 @@ func GetVQD() (string, string, string, string) {
 func (c *Chat) Clear(cfg *config.Config) {
 	// Save current session before clearing if it has content
 	if len(c.Messages) > 0 {
-		c.saveCurrentSession()
+		if err := c.SaveCurrentSession(); err != nil {
+			ui.Warningln("Failed to save session before clearing: %v", err)
+			return
+		}
 	}
 
 	clearTerminal()
@@ -1171,7 +1177,10 @@ func loadAndRestoreSession(c *Chat, sessionID string) {
 
 	// Save current session before loading a new one
 	if len(c.Messages) > 0 {
-		c.saveCurrentSession()
+		if err := c.SaveCurrentSession(); err != nil {
+			ui.Warningln("Failed to save session before loading another: %v", err)
+			return
+		}
 	}
 
 	c.RestoreContext(session)
@@ -1239,36 +1248,41 @@ func (c *Chat) convertFromIntelligenceMessages(messages []intelligence.Message) 
 	return result
 }
 
-// saveCurrentSession saves the current conversation session to persistent storage
-func (c *Chat) saveCurrentSession() {
+// SaveCurrentSession synchronously archives the current conversation before a lifecycle transition.
+func (c *Chat) SaveCurrentSession() error {
 	if len(c.Messages) == 0 {
-		return // No content to save
+		return nil
+	}
+	if c.HistoryManager == nil {
+		return fmt.Errorf("conversation history manager is unavailable")
 	}
 
 	// Convert messages to intelligence format
 	intelligenceMessages := c.convertMessagesToIntelligence()
 
 	// Create session object
+	started := time.Now()
+	var sessionAnalytics analytics.Snapshot
+	if c.Analytics != nil {
+		sessionAnalytics = c.Analytics.Snapshot()
+		if !sessionAnalytics.SessionStartTime.IsZero() {
+			started = sessionAnalytics.SessionStartTime
+		}
+	}
 	session := &persistence.ConversationSession{
 		ID:        c.SessionID,
-		StartTime: time.Now(),
+		StartTime: started,
 		Model:     string(c.Model),
 		Messages:  intelligenceMessages,
 		Analytics: persistence.SessionAnalytics{
 			MessageCount:      len(c.Messages),
-			TotalTokens:       analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.TotalTokensEstimate }),
-			APICallsCount:     analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.APICallsTotal }),
-			ErrorCount:        analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.APICallsFailed }),
-			OptimizationsUsed: analyticsValue(c.Analytics, func(a *analytics.ChatAnalytics) int { return a.ContextOptimizations }),
+			TotalTokens:       sessionAnalytics.TotalTokensEstimate,
+			APICallsCount:     sessionAnalytics.APICallsTotal,
+			ErrorCount:        sessionAnalytics.APICallsFailed,
+			OptimizationsUsed: sessionAnalytics.ContextOptimizations,
 		},
 	}
-
-	// Save session asynchronously
-	go func() {
-		if err := c.HistoryManager.SaveSession(session); err != nil {
-			ui.Warningln("Failed to save session: %v", err)
-		}
-	}()
+	return c.HistoryManager.SaveSession(session)
 }
 
 // ShowSessionStats displays analytics at the end of the session
@@ -1276,14 +1290,6 @@ func (c *Chat) ShowSessionStats() {
 	if c.Analytics != nil {
 		c.Analytics.DisplayStatistics()
 	}
-}
-
-func analyticsValue[T any](value *analytics.ChatAnalytics, read func(*analytics.ChatAnalytics) T) T {
-	var zero T
-	if value == nil {
-		return zero
-	}
-	return read(value)
 }
 
 // HandlePromptCommand processes the /prompt command for prompt management and loading

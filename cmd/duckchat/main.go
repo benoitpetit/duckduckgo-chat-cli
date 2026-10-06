@@ -313,6 +313,16 @@ func main() {
 		prompt.OptionTitle("duckduckgo-chat-cli"),
 		prompt.OptionPrefix("You: "),
 		prompt.OptionPrefixTextColor(prompt.Blue),
+		prompt.OptionSuggestionTextColor(prompt.LightGray),
+		prompt.OptionSuggestionBGColor(prompt.DarkGray),
+		prompt.OptionSelectedSuggestionTextColor(prompt.Black),
+		prompt.OptionSelectedSuggestionBGColor(prompt.Green),
+		prompt.OptionDescriptionTextColor(prompt.LightGray),
+		prompt.OptionDescriptionBGColor(prompt.DarkGray),
+		prompt.OptionSelectedDescriptionTextColor(prompt.Black),
+		prompt.OptionSelectedDescriptionBGColor(prompt.Green),
+		prompt.OptionPreviewSuggestionTextColor(prompt.Turquoise),
+		prompt.OptionPreviewSuggestionBGColor(prompt.DarkGray),
 	)
 	p.Run()
 	if cliShutdown != nil {

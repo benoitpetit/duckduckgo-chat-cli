@@ -1012,9 +1012,8 @@ func printCommandsTable(commands []CommandHelp) {
 	}
 
 	for _, cmd := range commands {
-		// Use UserColor for the command and default white for the description
-		ui.UserColor.Printf("  %-*s", maxLength+4, cmd.Command)
-		ui.Whiteln("- %s", cmd.Description)
+		ui.SystemColor.Printf("  %-*s", maxLength+4, cmd.Command)
+		ui.WhiteColor.Printf("- %s\n", cmd.Description)
 	}
 }
 

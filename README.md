@@ -414,6 +414,20 @@ The CLI includes an integrated update system that keeps your installation curren
 4. **Installation:** Replaces the current binary with the new version
 5. **Restart:** Prompts you to restart the CLI to use the new version
 
+## Local Usage Dashboard
+
+The CLI can serve a private usage dashboard from the same process. It listens only on `127.0.0.1` and does not open a browser automatically.
+
+```text
+/dashboard on      Start the dashboard and print its local URL
+/dashboard off     Stop the dashboard
+/dashboard status  Show whether it is running
+```
+
+Use `/config` → **Dashboard Settings** to enable autostart, change the refresh interval and history retention, and configure conversation access. Aggregate usage and conversation archives are kept locally for 90 days by default. The conversation list is disabled by default.
+
+The dashboard includes a web reference for CLI commands, live session and per-model statistics, and optional AI reports. Metrics reports use aggregate statistics only. Conversation reports require **Show conversations** to view archived sessions and the separate **Allow conversation analysis** setting to send selected excerpts to Duck.ai. The report preview shows its included session count and estimated input tokens before you confirm; the initial configurable budget is 8,000 estimated tokens.
+
 ## Development & Contributing
 
 ### Automated Release Process

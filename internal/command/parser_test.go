@@ -54,3 +54,24 @@ func TestDashboardSubcommandsValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandRegistryIncludesUsageAndDashboardExamples(t *testing.T) {
+	registry := GetCommandRegistry()
+	for name, info := range registry.Commands {
+		if info.Usage == "" {
+			t.Errorf("command %s has no usage string", name)
+		}
+	}
+	info := registry.Commands["/dashboard"]
+	want := map[string]bool{"/dashboard on": false, "/dashboard off": false, "/dashboard status": false}
+	for _, example := range info.Examples {
+		if _, exists := want[example]; exists {
+			want[example] = true
+		}
+	}
+	for example, found := range want {
+		if !found {
+			t.Errorf("dashboard command is missing example %q", example)
+		}
+	}
+}

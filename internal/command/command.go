@@ -17,6 +17,7 @@ type CommandInfo struct {
 	Name         string
 	Description  string
 	Usage        string
+	Examples     []string
 	IsChainable  bool
 	RequiresArgs bool
 	Category     string
@@ -24,7 +25,7 @@ type CommandInfo struct {
 
 // GetCommandRegistry returns the centralized command registry
 func GetCommandRegistry() *CommandRegistry {
-	return &CommandRegistry{
+	registry := &CommandRegistry{
 		Commands: map[string]CommandInfo{
 			"/help": {
 				Name:        "/help",
@@ -151,6 +152,24 @@ func GetCommandRegistry() *CommandRegistry {
 			},
 		},
 	}
+	for name, examples := range map[string][]string{
+		"/help": {"/help"}, "/exit": {"/exit"}, "/clear": {"/clear"}, "/history": {"/history"},
+		"/search":  {"/search Go concurrency", "/search Go concurrency -- Summarize the results"},
+		"/file":    {"/file ./README.md", "/file ./main.go -- Explain this code"},
+		"/library": {"/library", "/library add ./docs"},
+		"/url":     {"/url https://example.com", "/url https://example.com -- Summarize this page"},
+		"/export":  {"/export"}, "/copy": {"/copy"}, "/config": {"/config"},
+		"/model": {"/model", "/model gpt-5.6-luna"}, "/version": {"/version"},
+		"/api": {"/api", "/api 8080"}, "/stats": {"/stats"},
+		"/dashboard": {"/dashboard on", "/dashboard off", "/dashboard status"},
+		"/update":    {"/update", "/update --force"}, "/load": {"/load", "/load session_123"},
+		"/prompt": {"/prompt", "/prompt list", "/prompt add concise -- Answer briefly"},
+	} {
+		info := registry.Commands[name]
+		info.Examples = examples
+		registry.Commands[name] = info
+	}
+	return registry
 }
 
 // GetSupportedCommands returns a list of all supported commands

@@ -161,7 +161,8 @@ jobs:
         ## Downloads
         - **Linux:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64`
         - **Windows:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
-        - **macOS:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
+        - **macOS Apple Silicon:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
+        - **macOS Intel:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_amd64`
         - **All platforms:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip`
         
         ## Security
@@ -187,7 +188,8 @@ jobs:
           ## Downloads
           - **Linux:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64`
           - **Windows:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
-          - **macOS:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
+          - **macOS Apple Silicon:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
+          - **macOS Intel:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_amd64`
           - **All platforms:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip`
           
           ## Security
@@ -211,6 +213,7 @@ jobs:
         files: |
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64
+          build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_amd64
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip
           build/*.sha256

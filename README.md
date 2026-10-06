@@ -137,7 +137,6 @@ Never lose important conversations:
 
 - **Session Persistence**: Automatically saves conversations with metadata
 - **Compression Storage**: Efficient gzip compression reduces storage by 70%
-- **Session Recovery**: Resume conversations from any previous session
 - **Intelligent Indexing**: Fast search and retrieval of historical conversations
 - **Searchable Archive**: Use `/history` to browse and search past conversations
 - **Session Loading**: Load previous sessions interactively or by ID with `/load`
@@ -173,25 +172,34 @@ $exe="duckduckgo-chat-cli_windows_amd64.exe"; Invoke-WebRequest -Uri ((Invoke-Re
 <summary><strong> Linux (curl)</strong></summary>
 
 ```bash
-curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | grep -oP 'https.*linux_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_linux_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_linux_amd64 && ./duckduckgo-chat-cli_v*_linux_amd64
+asset_url=$(curl -fsSL https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | sed -n 's/.*"browser_download_url": "\([^"]*_linux_amd64\)".*/\1/p' | head -n 1)
+curl -fL "$asset_url" -o duckchat
+chmod +x duckchat
+./duckchat
 ```
 
 </details>
 
 <details>
-<summary><strong> MacOS (curl)</strong></summary>
+<summary><strong> macOS (curl)</strong></summary>
 
 <br/>
 <strong>Apple Silicon (ARM64):</strong>
 
 ```bash
-curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | grep -oP 'https.*darwin_arm64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_arm64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_arm64 && ./duckduckgo-chat-cli_v*_darwin_arm64
+asset_url=$(curl -fsSL https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | sed -n 's/.*"browser_download_url": "\([^"]*_darwin_arm64\)".*/\1/p' | head -n 1)
+curl -fL "$asset_url" -o duckchat
+chmod +x duckchat
+./duckchat
 ```
 
 <strong>Intel (AMD64):</strong>
 
 ```bash
-curl -LO $(curl -s https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | grep -oP 'https.*darwin_amd64' | grep -oP 'https.*v[0-9]+\.[0-9]+\.[0-9]+_darwin_amd64' | head -1) && chmod +x duckduckgo-chat-cli_v*_darwin_amd64 && ./duckduckgo-chat-cli_v*_darwin_amd64
+asset_url=$(curl -fsSL https://api.github.com/repos/benoitpetit/duckduckgo-chat-cli/releases/latest | sed -n 's/.*"browser_download_url": "\([^"]*_darwin_amd64\)".*/\1/p' | head -n 1)
+curl -fL "$asset_url" -o duckchat
+chmod +x duckchat
+./duckchat
 ```
 
 </details>
@@ -465,9 +473,10 @@ The dashboard includes a web reference for CLI commands, session and per-model s
 
 Build and verification use the same scripts locally and in GitHub Actions:
 
-- **Local build:** `./scripts/build.sh 1.2.3`
+- **Local build:** `./scripts/build.sh 1.6.1`
 - **Pre-release checks:** `./scripts/pre-release-check.sh`
-- **GitHub release:** Run **Actions → Build and Release → Run workflow** and provide a version such as `1.2.3`
+- **GitHub release:** Run **Actions → Build and Release → Run workflow** and provide a version such as `1.6.1`
+- **CLI release dispatch:** After pushing a clean `master`, run `./scripts/release.sh 1.6.1` with an authenticated GitHub CLI.
 - **Windows icon:** The Windows `.exe` embeds `logo.png`; Linux and macOS command-line binaries do not carry an application icon.
 
 ### Development Documentation
@@ -512,7 +521,7 @@ continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 - This is an unofficial client and not affiliated with or endorsed by DuckDuckGo\*
 
 <p align="center">
-  <table width="100%"">
+  <table width="100%">
     <tr>
       <td align="center" style="border: 1px solid #d0954c; padding: 20px;">
         <strong>Made for the community</strong>

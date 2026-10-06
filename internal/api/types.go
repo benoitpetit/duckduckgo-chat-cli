@@ -20,7 +20,7 @@ type ChatRequest struct {
 // ModelChangeRequest represents a model change request
 // @Description Model change request payload
 type ModelChangeRequest struct {
-	Model string `json:"model" binding:"required" example:"gpt-5.6-luna" enum:"gpt-5.6-luna,gpt-5.4-nano,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,gpt-oss-120b,gemma-4-31b"`
+	Model string `json:"model" binding:"required" example:"gpt-5.6-luna" enum:"gpt-5.6-luna,gpt-5.4-nano,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,mistral-small-2603,gpt-oss-120b,tinfoil/gpt-oss-120b,gemma-4-31b,tinfoil/gemma4-31b"`
 } // @name ModelChangeRequest
 
 // API Response Types
@@ -99,7 +99,7 @@ type APIError struct {
 // @Description Health check response payload
 type HealthResponse struct {
 	Status    string            `json:"status" example:"healthy"`
-	Version   string            `json:"version" example:"1.5.2"`
+	Version   string            `json:"version" example:"1.6.0"`
 	Uptime    int64             `json:"uptime_seconds" example:"3600"`
 	Services  map[string]string `json:"services"`
 	Timestamp time.Time         `json:"timestamp" example:"2023-01-01T12:00:00Z"`

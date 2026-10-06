@@ -32,3 +32,6 @@ build/
 duckduckgo-chat-cli
 duckduckgo-chat-cli_*
 duckchat*
+
+# Local design and implementation notes stay outside the public source tree.
+docs/superpowers/

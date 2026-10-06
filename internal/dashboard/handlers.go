@@ -2,12 +2,42 @@ package dashboard
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"sort"
 	"time"
 
 	"duckduckgo-chat-cli/internal/models"
 )
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	serveAsset(w, "web/index.html", "text/html; charset=utf-8")
+}
+
+func (s *Server) handleStyle(w http.ResponseWriter, _ *http.Request) {
+	serveAsset(w, "web/style.css", "text/css; charset=utf-8")
+}
+
+func (s *Server) handleAppScript(w http.ResponseWriter, _ *http.Request) {
+	serveAsset(w, "web/app.js", "text/javascript; charset=utf-8")
+}
+
+func serveAsset(w http.ResponseWriter, path, contentType string) {
+	data, err := fs.ReadFile(webFiles, path)
+	if err != nil {
+		http.Error(w, "dashboard asset unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
 
 func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 	var current any = map[string]any{}

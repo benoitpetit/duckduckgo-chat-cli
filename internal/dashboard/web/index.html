@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>DuckChat · Usage Dashboard</title>
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="DuckChat Dashboard">
+          <span class="brand-mark">D</span>
+          <span><strong>DuckChat</strong><small>LOCAL DASHBOARD</small></span>
+        </a>
+        <nav class="navigation" aria-label="Navigation principale">
+          <button class="nav-item active" data-page="overview"><span class="nav-icon">◫</span> Vue d’ensemble</button>
+          <button class="nav-item" data-page="sessions" id="sessionsNav" hidden><span class="nav-icon">◷</span> Conversations</button>
+          <button class="nav-item" data-page="commands"><span class="nav-icon">⌘</span> Commandes</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="local-badge"><i></i> Stockage local</span>
+          <p>Les statistiques restent sur cette machine.</p>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div><div class="eyebrow">DUCKDUCKGO CHAT CLI</div><h1 id="pageTitle">Vue d’ensemble</h1></div>
+          <div class="live-state"><span class="pulse"></span><span>En direct</span><span class="divider"></span><span id="updatedAt">En attente des données…</span></div>
+        </header>
+
+        <section class="page active" id="page-overview">
+          <div class="section-heading"><div><h2>Activité de la session</h2><p>Mesures observées depuis le lancement de la CLI.</p></div><span class="subtle-label">ACTUALISATION AUTOMATIQUE</span></div>
+          <div class="metric-grid" id="metricGrid">
+            <article class="metric-card"><span>Interactions</span><strong id="metricInteractions">—</strong><small>requêtes envoyées</small></article>
+            <article class="metric-card"><span>Taux de réussite</span><strong id="metricSuccess">—</strong><small>réponses reçues</small></article>
+            <article class="metric-card"><span>Latence moyenne</span><strong id="metricLatency">—</strong><small>temps de réponse</small></article>
+            <article class="metric-card"><span>Messages</span><strong id="metricMessages">—</strong><small>dans cette session</small></article>
+            <article class="metric-card"><span>Tokens estimés</span><strong id="metricTokens">—</strong><small>approximation locale</small></article>
+            <article class="metric-card"><span>Contexte optimisé</span><strong id="metricOptimizations">—</strong><small id="metricBytes">économies de contexte</small></article>
+          </div>
+
+          <div class="content-grid">
+            <article class="panel wide-panel">
+              <div class="panel-heading"><div><h3>Historique des sessions</h3><p>Volume de messages par session enregistrée.</p></div><span class="panel-icon">↗</span></div>
+              <div class="history-chart" id="historyChart"><div class="empty-state">Les tendances apparaîtront après l’enregistrement d’une session.</div></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h3>Commandes fréquentes</h3><p>Utilisation dans la session active.</p></div><span class="panel-icon">⌘</span></div>
+              <div class="rank-list" id="commandStats"><div class="empty-state">Aucune commande enregistrée pour le moment.</div></div>
+            </article>
+          </div>
+
+          <article class="panel model-panel">
+            <div class="panel-heading"><div><h3>Performance par modèle</h3><p>Comparaison basée sur les réponses réellement observées.</p></div><span class="subtle-label">AUCUN COÛT ESTIMÉ</span></div>
+            <div class="table-wrap"><table><thead><tr><th>Modèle</th><th>Requêtes</th><th>Réussite</th><th>Latence moyenne</th></tr></thead><tbody id="modelStats"><tr><td colspan="4" class="empty-state">Les données par modèle apparaîtront après une requête.</td></tr></tbody></table></div>
+          </article>
+
+          <article class="panel analysis-panel">
+            <div class="panel-heading"><div><div class="eyebrow">AIDE À LA DÉCISION</div><h3>Analyse par IA</h3><p>À lancer à la demande avec un modèle de la CLI.</p></div><span class="ai-mark">✳</span></div>
+            <div class="analysis-controls"><label for="analysisModel">Modèle</label><select id="analysisModel" aria-label="Modèle pour l’analyse"></select><button class="button primary" id="metricsAnalysis">Analyser les statistiques <span>→</span></button></div>
+            <div class="analysis-result" id="metricsResult" hidden></div>
+            <div class="conversation-analysis" id="conversationAnalysis" hidden>
+              <div><strong>Rapport personnalisé</strong><p>Des extraits de conversations archivées seront inclus après confirmation. Le contenu transmis est envoyé à Duck.ai.</p></div>
+              <div class="analysis-controls"><button class="button secondary" id="previewReport">Préparer l’estimation</button></div>
+              <div class="preview-box" id="reportPreview" hidden><span id="reportEstimate"></span><button class="button primary" id="runReport">Envoyer les extraits pour analyse <span>→</span></button></div>
+              <div class="analysis-result" id="conversationResult" hidden></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="page" id="page-sessions">
+          <div class="section-heading"><div><h2>Conversations archivées</h2><p>Rechercher, consulter et reprendre une session dans le terminal.</p></div><label class="search-box"><span>⌕</span><input id="sessionSearch" type="search" placeholder="Rechercher une session…" autocomplete="off"></label></div>
+          <div class="sessions-layout"><div class="session-list panel" id="sessionList"><div class="empty-state">Chargement des sessions…</div></div><article class="session-detail panel" id="sessionDetail"><div class="empty-state">Choisissez une conversation pour voir son contenu.</div></article></div>
+        </section>
+
+        <section class="page" id="page-commands">
+          <div class="section-heading"><div><h2>Référence des commandes</h2><p>Les commandes se lancent dans le terminal de la CLI.</p></div><span class="subtle-label">AIDE WEB</span></div>
+          <div class="command-groups" id="commandDocs"><div class="empty-state">Chargement des commandes…</div></div>
+        </section>
+
+        <footer><span>DuckChat Dashboard</span><span>Accessible uniquement depuis cette machine · <code>127.0.0.1</code></span></footer>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

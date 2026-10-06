@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,6 +16,9 @@ import (
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/persistence"
 )
+
+//go:embed web/index.html web/style.css web/app.js
+var webFiles embed.FS
 
 type AnalyzeFunc func(context.Context, models.Model, string) (string, error)
 
@@ -113,6 +117,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/analysis/metrics", s.handleMetricsAnalysis)
 	mux.HandleFunc("GET /api/analysis/conversations/preview", s.handleConversationPreview)
 	mux.HandleFunc("POST /api/analysis/conversations", s.handleConversationAnalysis)
+	mux.HandleFunc("GET /assets/style.css", s.handleStyle)
+	mux.HandleFunc("GET /assets/app.js", s.handleAppScript)
+	mux.HandleFunc("GET /", s.handleIndex)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != s.expectedHost() {
 			http.Error(w, "invalid Host", http.StatusForbidden)

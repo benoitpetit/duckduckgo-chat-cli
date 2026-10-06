@@ -29,6 +29,7 @@ type Dependencies struct {
 
 type Server struct {
 	mu       sync.RWMutex
+	analysis sync.Mutex
 	deps     Dependencies
 	settings config.DashboardConfig
 	listener net.Listener
@@ -109,6 +110,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionDetail)
+	mux.HandleFunc("POST /api/analysis/metrics", s.handleMetricsAnalysis)
+	mux.HandleFunc("GET /api/analysis/conversations/preview", s.handleConversationPreview)
+	mux.HandleFunc("POST /api/analysis/conversations", s.handleConversationAnalysis)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != s.expectedHost() {
 			http.Error(w, "invalid Host", http.StatusForbidden)

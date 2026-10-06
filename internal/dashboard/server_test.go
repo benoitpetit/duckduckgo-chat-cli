@@ -31,7 +31,7 @@ func testServer(t *testing.T, port int) *Server {
 		Analytics: analytics.NewChatAnalytics(),
 		History:   NewHistoryStore(t.TempDir()+"/stats.jsonl", 90),
 		Commands:  command.GetCommandRegistry,
-		Config:    config.DashboardConfig{Port: port, RefreshIntervalSeconds: 3, RetentionDays: 90},
+		Config:    config.DashboardConfig{Port: port, RefreshIntervalSeconds: 3, RetentionDays: 90, AnalysisTokenBudget: 8000},
 	})
 }
 

@@ -181,6 +181,37 @@ func (hm *HistoryManager) ListSessions() ([]ConversationSession, error) {
 	return sessions, nil
 }
 
+// ListConversationSessions returns retained archives with transcript contents for explicit local analysis.
+func (hm *HistoryManager) ListConversationSessions() ([]ConversationSession, error) {
+	files, err := os.ReadDir(hm.StorageDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage directory: %w", err)
+	}
+	sessions := make([]ConversationSession, 0)
+	for _, file := range files {
+		if file.IsDir() || !strings.HasPrefix(file.Name(), "session_") {
+			continue
+		}
+		path := filepath.Join(hm.StorageDir, file.Name())
+		var session *ConversationSession
+		switch {
+		case strings.HasSuffix(file.Name(), ".json.gz"):
+			session, err = hm.loadCompressed(path)
+		case strings.HasSuffix(file.Name(), ".json"):
+			session, err = hm.loadUncompressed(path)
+		default:
+			continue
+		}
+		if err != nil {
+			ui.Warningln("Failed to load session %s: %v", file.Name(), err)
+			continue
+		}
+		sessions = append(sessions, *session)
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartTime.After(sessions[j].StartTime) })
+	return sessions, nil
+}
+
 // SearchSessions searches for sessions containing specific content
 func (hm *HistoryManager) SearchSessions(query string) ([]ConversationSession, error) {
 	files, err := os.ReadDir(hm.StorageDir)

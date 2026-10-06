@@ -22,7 +22,7 @@ func sessionTestServer(t *testing.T, show bool) (*Server, *persistence.HistoryMa
 	server := NewServer(Dependencies{
 		History:  NewHistoryStore(filepath.Join(t.TempDir(), "stats.jsonl"), 90),
 		Sessions: history, Commands: command.GetCommandRegistry,
-		Config: config.DashboardConfig{Port: 8765, RefreshIntervalSeconds: 3, RetentionDays: 90, ShowConversations: show},
+		Config: config.DashboardConfig{Port: 8765, RefreshIntervalSeconds: 3, RetentionDays: 90, ShowConversations: show, AnalysisTokenBudget: 8000},
 	})
 	return server, history
 }

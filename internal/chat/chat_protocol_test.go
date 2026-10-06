@@ -3,6 +3,8 @@ package chat
 import (
 	"os"
 	"testing"
+
+	"duckduckgo-chat-cli/internal/models"
 )
 
 func TestNewDurableStreamBuildsDuckAIJWK(t *testing.T) {
@@ -56,6 +58,15 @@ func TestBuildPayloadKeepsNativeToolsDisabledByDefault(t *testing.T) {
 	}
 	if payload.Metadata != nil {
 		t.Fatal("metadata should be omitted when native tools are disabled")
+	}
+}
+
+func TestBuildPayloadUsesLowReasoningForTinfoilModels(t *testing.T) {
+	for _, model := range []models.Model{models.GPTOSS120B, models.Gemma431B} {
+		payload := (&Chat{Model: model}).buildPayload(&DurableStream{})
+		if payload.ReasoningEffort != "low" {
+			t.Errorf("buildPayload(%q).ReasoningEffort = %q, want low", model, payload.ReasoningEffort)
+		}
 	}
 }
 

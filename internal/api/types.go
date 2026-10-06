@@ -20,7 +20,7 @@ type ChatRequest struct {
 // ModelChangeRequest represents a model change request
 // @Description Model change request payload
 type ModelChangeRequest struct {
-	Model string `json:"model" binding:"required" example:"gpt-5.6-luna" enum:"gpt-5.6-luna,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,gpt-oss-120b,gemma-4-31b"`
+	Model string `json:"model" binding:"required" example:"gpt-5.6-luna" enum:"gpt-5.6-luna,gpt-5.4-nano,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,gpt-oss-120b,gemma-4-31b"`
 } // @name ModelChangeRequest
 
 // API Response Types
@@ -84,7 +84,7 @@ type ModelInfo struct {
 type ModelsResponse struct {
 	Models       []ModelInfo `json:"models"`
 	CurrentModel string      `json:"current_model" example:"gpt-5.6-luna"`
-	TotalModels  int         `json:"total_models" example:"6"`
+	TotalModels  int         `json:"total_models" example:"7"`
 } // @name ModelsResponse
 
 // APIError represents API error details

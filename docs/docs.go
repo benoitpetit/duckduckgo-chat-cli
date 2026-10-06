@@ -561,7 +561,7 @@ const docTemplate = `{
                 },
                 "total_models": {
                     "type": "integer",
-                    "example": 6
+                    "example": 7
                 }
             }
         }

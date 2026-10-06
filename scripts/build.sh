@@ -1,73 +1,71 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Demande de la version
-echo -n "🔖 Enter version number (e.g. 1.0.0): "
-read VERSION
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
-# Validation du format de version (X.X.X)
-if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "❌ Invalid version format. Please use X.X.X format (e.g. 1.0.0)"
-    exit 1
+VERSION="${1:-}"
+if [[ -z "$VERSION" ]]; then
+  read -r -p "🔖 Enter version number (e.g. 1.0.0): " VERSION
+fi
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "❌ Invalid version format. Please use X.X.X format (e.g. 1.0.0)" >&2
+  exit 1
 fi
 
-# Confirmation
-echo -n "🤔 Build version $VERSION? (y/n): "
-read CONFIRM
-if [[ $CONFIRM != "y" && $CONFIRM != "Y" ]]; then
+if [[ $# -eq 0 ]]; then
+  read -r -p "🤔 Build version $VERSION? (y/n): " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[yY]$ ]]; then
     echo "❌ Build cancelled"
     exit 0
+  fi
 fi
 
-# Création du dossier build s'il n'existe pas
-BUILD_DIR="build"
-mkdir -p $BUILD_DIR
-
-# Nettoyage du dossier build
-rm -rf $BUILD_DIR/*
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
+mkdir -p "$BUILD_DIR"
+find "$BUILD_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 
 echo "🚀 Building DuckDuckGo Chat CLI v$VERSION..."
-
-# Génération de la documentation API
 echo "📚 Generating API documentation..."
-./scripts/generate-docs.sh
+"$ROOT_DIR/scripts/generate-docs.sh"
 
-# Build pour Linux
+LDFLAGS="-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION"
+
 echo "📦 Building Linux AMD64..."
-GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64 ./cmd/duckchat/main.go
+GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64" ./cmd/duckchat
 
-# Build pour Windows
-echo "📦 Building Windows AMD64..."
-GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe ./cmd/duckchat/main.go
+echo "📦 Building Windows AMD64 with logo.png application icon..."
+"$ROOT_DIR/scripts/build_windows_binary.sh" "$VERSION" "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe"
 
-# Génération du hash SHA256 pour Windows
-echo "🔐 Generating SHA256 hash..."
-cd $BUILD_DIR
-sha256sum duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe > duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256
-cd ..
-
-# Build pour Apple Silicon
 echo "📦 Building Darwin ARM64..."
-GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
+GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64" ./cmd/duckchat
 
-# Build pour Intel Mac
 echo "📦 Building Darwin AMD64..."
-GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
+GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64" ./cmd/duckchat
 
-# Création du zip de release
+echo "🔐 Generating SHA256 checksums..."
+checksum() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1"
+  else
+    shasum -a 256 "$1"
+  fi
+}
+for binary in "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_*; do
+  [[ "$binary" == *.sha256 || "$binary" == *.zip ]] && continue
+  checksum "$binary" > "$binary.sha256"
+done
+
 echo "📚 Creating release archive..."
-cd $BUILD_DIR
-zip duckduckgo-chat-cli_v${VERSION}_release.zip \
-    duckduckgo-chat-cli_v${VERSION}_linux_amd64 \
-    duckduckgo-chat-cli_v${VERSION}_darwin_arm64 \
-    duckduckgo-chat-cli_v${VERSION}_darwin_amd64 \
-    duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe \
-    duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256
-cd ..
+archive="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
+zip -j "$archive" "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_arm64 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_amd64 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64.sha256 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_arm64.sha256 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_amd64.sha256 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe.sha256
 
 echo "✅ Build v$VERSION complete! Files available in $BUILD_DIR:"
-ls -lh $BUILD_DIR
-
-# Vérification des fichiers
-echo -e "\n🔍 SHA256 hashes:"
-cd $BUILD_DIR
-sha256sum *
+ls -lh "$BUILD_DIR"

@@ -60,86 +60,25 @@ jobs:
         fi
         echo "✅ Version v$VERSION is available"
 
-    - name: 📚 Generate API documentation
-      run: |
-        echo "📚 Installing swag for documentation generation..."
-        go install github.com/swaggo/swag/cmd/swag@v1.16.6
-        
-        echo "📚 Generating API documentation..."
-        swag init --generalInfo internal/api/docs.go --output docs/ --parseInternal
-        
-        echo "✅ API documentation generated successfully"
+    - name: 🧪 Run pre-release verification
+      run: ./scripts/pre-release-check.sh
 
-    - name: 📦 Build binaries
+    - name: 📦 Build release binaries
+      run: ./scripts/build.sh "${{ steps.version.outputs.VERSION }}"
+
+    - name: 🧪 Verify release artifacts
       run: |
         VERSION="${{ steps.version.outputs.VERSION }}"
         BUILD_DIR="build"
-        
-        echo "🚀 Building DuckDuckGo Chat CLI v$VERSION..."
-        
-        # Create build directory
-        mkdir -p $BUILD_DIR
-        rm -rf $BUILD_DIR/*
-        
-        # Build for Linux
-        echo "📦 Building Linux AMD64..."
-        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64 ./cmd/duckchat/main.go
-        
-        # Build for Windows
-        echo "📦 Building Windows AMD64..."
-        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe ./cmd/duckchat/main.go
-        
-        # Build for Apple Silicon
-        echo "📦 Building Darwin ARM64..."
-        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64 ./cmd/duckchat/main.go
-        
-        # Build for Intel Mac
-        echo "📦 Building Darwin AMD64..."
-        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Current=$VERSION" -o $BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64 ./cmd/duckchat/main.go
-        
-        # Generate SHA256 hashes
-        echo "🔐 Generating SHA256 hashes..."
-        cd $BUILD_DIR
-        sha256sum duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe > duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256
-        sha256sum duckduckgo-chat-cli_v${VERSION}_linux_amd64 > duckduckgo-chat-cli_v${VERSION}_linux_amd64.sha256
-        sha256sum duckduckgo-chat-cli_v${VERSION}_darwin_arm64 > duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256
-        sha256sum duckduckgo-chat-cli_v${VERSION}_darwin_amd64 > duckduckgo-chat-cli_v${VERSION}_darwin_amd64.sha256
-        
-        # Create release archive
-        echo "📚 Creating release archive..."
-        zip duckduckgo-chat-cli_v${VERSION}_release.zip \
-            duckduckgo-chat-cli_v${VERSION}_linux_amd64 \
-            duckduckgo-chat-cli_v${VERSION}_darwin_arm64 \
-            duckduckgo-chat-cli_v${VERSION}_darwin_amd64 \
-            duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe \
-            duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256 \
-            duckduckgo-chat-cli_v${VERSION}_linux_amd64.sha256 \
-            duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256 \
-            duckduckgo-chat-cli_v${VERSION}_darwin_amd64.sha256
-        
-        echo "✅ Build v$VERSION complete!"
-        ls -lah
-        cd ..
-
-    - name: 🧪 Test binaries
-      run: |
-        VERSION="${{ steps.version.outputs.VERSION }}"
-        BUILD_DIR="build"
-        
-        echo "🧪 Testing built binaries..."
-        
-        # Test Linux binary
-        if [ -f "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64" ]; then
-          chmod +x "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64"
-          echo "✅ Linux binary is executable"
-        else
-          echo "❌ Linux binary not found"
-          exit 1
-        fi
-        
-        # Check file sizes
-        echo "📊 File sizes:"
-        ls -lah $BUILD_DIR/
+        for suffix in linux_amd64 darwin_arm64 darwin_amd64 windows_amd64.exe; do
+          artifact="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_${suffix}"
+          test -s "$artifact" || { echo "Missing build artifact: $artifact"; exit 1; }
+          test -s "$artifact.sha256" || { echo "Missing checksum: $artifact.sha256"; exit 1; }
+        done
+        test -s "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
+        file "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe" | grep -q 'PE32+'
+        echo "Windows PE executable built with its generated icon resource."
+        ls -lah "$BUILD_DIR"
 
     - name: 📝 Generate release notes
       id: release_notes
@@ -169,23 +108,23 @@ jobs:
         WHATS_NEW=""
         
         if [ -n "$FEATURES" ]; then
-          WHATS_NEW="${WHATS_NEW}### 🆕 New Features\n${FEATURES}\n\n"
+          WHATS_NEW="${WHATS_NEW}### New Features\n${FEATURES}\n\n"
         fi
-        
+
         if [ -n "$IMPROVEMENTS" ]; then
-          WHATS_NEW="${WHATS_NEW}### ⚡ Improvements\n${IMPROVEMENTS}\n\n"
+          WHATS_NEW="${WHATS_NEW}### Improvements\n${IMPROVEMENTS}\n\n"
         fi
-        
+
         if [ -n "$FIXES" ]; then
-          WHATS_NEW="${WHATS_NEW}### 🐛 Bug Fixes\n${FIXES}\n\n"
+          WHATS_NEW="${WHATS_NEW}### Bug Fixes\n${FIXES}\n\n"
         fi
-        
+
         if [ -n "$DOCS" ]; then
-          WHATS_NEW="${WHATS_NEW}### 📚 Documentation\n${DOCS}\n\n"
+          WHATS_NEW="${WHATS_NEW}### Documentation\n${DOCS}\n\n"
         fi
-        
+
         if [ -n "$OTHER" ]; then
-          WHATS_NEW="${WHATS_NEW}### 🔧 Other Changes\n${OTHER}\n\n"
+          WHATS_NEW="${WHATS_NEW}### Other Changes\n${OTHER}\n\n"
         fi
         
         # Fallback if no categorized commits
@@ -195,9 +134,12 @@ jobs:
         
         # Default message if no commits
         if [ -z "$WHATS_NEW" ]; then
-          WHATS_NEW="### 🆕 What's New\n- Automated build and release process\n- Cross-platform support (Linux, Windows, macOS)\n- Enhanced security with SHA256 checksums\n\n"
+          WHATS_NEW="### What's New\n- Automated build and release process\n- Cross-platform support (Linux, Windows, macOS)\n- Enhanced security with SHA256 checksums\n\n"
         fi
         
+        # Remove emoji code points from commit subjects before publishing notes.
+        WHATS_NEW=$(printf '%s' "$WHATS_NEW" | perl -CSDA -pe 's/[ \t]*(?:[#*0-9]\x{FE0F}?\x{20E3}|[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\x{FE0F}\x{200D}\x{20E3}])+[ \t]*/ /g; s/[ \t]+$//gm')
+
         # Save to output (escape for GitHub Actions)
         echo "WHATS_NEW<<EOF" >> $GITHUB_OUTPUT
         echo -e "$WHATS_NEW" >> $GITHUB_OUTPUT
@@ -205,7 +147,7 @@ jobs:
         
         echo "✅ Release notes generated"
 
-    - name: 🏷️ Create Git tag
+    - name: Create Git tag
       run: |
         VERSION="${{ steps.version.outputs.VERSION }}"
         git config user.name "GitHub Actions"
@@ -213,20 +155,20 @@ jobs:
         
         # Create tag with dynamic release notes
         cat > tag_message.txt << 'EOF'
-        🚀 Release v${{ steps.version.outputs.VERSION }}
+        Release v${{ steps.version.outputs.VERSION }}
         
         ${{ steps.release_notes.outputs.WHATS_NEW }}
-        ## 📦 Downloads
+        ## Downloads
         - **Linux:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64`
         - **Windows:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
         - **macOS:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
         - **All platforms:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip`
         
-        ## 🔐 Security
+        ## Security
         SHA256 checksums are provided for all binaries.
         
         ---
-        *Built with ♥ by GitHub Actions*
+        *Built by GitHub Actions*
         EOF
         
         git tag -a "v$VERSION" -F tag_message.txt
@@ -234,24 +176,24 @@ jobs:
         
         rm tag_message.txt
 
-    - name: 📢 Create GitHub Release
+    - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ steps.version.outputs.VERSION }}
-        name: 🦆 DuckDuckGo Chat CLI v${{ steps.version.outputs.VERSION }}
+        name: DuckDuckGo Chat CLI v${{ steps.version.outputs.VERSION }}
         body: |
           ${{ steps.release_notes.outputs.WHATS_NEW }}
           
-          ## 📦 Downloads
+          ## Downloads
           - **Linux:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64`
           - **Windows:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
           - **macOS:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
           - **All platforms:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip`
           
-          ## 🔐 Security
+          ## Security
           SHA256 checksums are provided for all binaries.
           
-          ## 🚀 Installation
+          ## Installation
           
           ### Linux/macOS
           ```bash
@@ -265,7 +207,7 @@ jobs:
           Download the `.exe` file and add it to your PATH.
           
           ---
-          *Built with ♥ by GitHub Actions*
+          *Built by GitHub Actions*
         files: |
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64

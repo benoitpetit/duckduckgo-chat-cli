@@ -37,13 +37,15 @@ type Definition struct {
 
 const (
 	GPT5Luna     Model = "gpt-5.6-luna"
+	GPT54Nano    Model = "gpt-5.4-nano"
 	GPT54Mini    Model = "gpt-5.4-mini"
 	ClaudeHaiku  Model = "claude-haiku-4-5"
-	MistralSmall Model = "mistral-small-4"
-	GPTOSS120B   Model = "gpt-oss-120b"
-	Gemma431B    Model = "gemma-4-31b"
+	MistralSmall Model = "mistral-small-2603"
+	GPTOSS120B   Model = "tinfoil/gpt-oss-120b"
+	Gemma431B    Model = "tinfoil/gemma4-31b"
 
 	GPT5LunaAlias     ModelAlias = "gpt-5.6-luna"
+	GPT54NanoAlias    ModelAlias = "gpt-5.4-nano"
 	GPT54MiniAlias    ModelAlias = "gpt-5.4-mini"
 	ClaudeHaikuAlias  ModelAlias = "claude-haiku-4-5"
 	MistralSmallAlias ModelAlias = "mistral-small-4"
@@ -53,6 +55,7 @@ const (
 
 var modelDefinitions = []Definition{
 	{ID: GPT5Luna, Alias: GPT5LunaAlias, Name: "GPT-5.6 Luna", Description: "Duck.ai's default general-purpose model", Default: true},
+	{ID: GPT54Nano, Alias: GPT54NanoAlias, Name: "GPT-5.4 Nano", Description: "Fast, lightweight model for everyday tasks"},
 	{ID: GPT54Mini, Alias: GPT54MiniAlias, Name: "GPT-5.4 Mini", Description: "Fast general-purpose model"},
 	{ID: ClaudeHaiku, Alias: ClaudeHaikuAlias, Name: "Claude Haiku 4.5", Description: "Anthropic's fast conversational model"},
 	{ID: MistralSmall, Alias: MistralSmallAlias, Name: "Mistral Small 4", Description: "Mistral's efficient general-purpose model"},

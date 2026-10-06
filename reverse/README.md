@@ -24,7 +24,7 @@ The production endpoint is:
 POST https://duck.ai/duckchat/v1/chat
 ```
 
-The request uses the current frontend headers, the `duck.ai` origin and referer, and the current model identifier. The payload includes the conversation messages, `canUseTools`, `canUseApproxLocation`, `reasoningEffort`, and a `durableStream` object.
+The request uses the current frontend headers, the `duck.ai` origin and referer, and the current model identifier. The payload includes the conversation messages, `canUseTools`, `canUseApproxLocation`, `reasoningEffort`, and a `durableStream` object. The CLI currently sends `reasoningEffort: "low"` for GPT OSS 120B and Gemma 4 31B, and `"none"` for the other listed models.
 
 The durable stream contains:
 
@@ -72,13 +72,14 @@ The model IDs currently used by Duck.ai are:
 | Model | ID |
 | --- | --- |
 | GPT-5.6 Luna | `gpt-5.6-luna` |
+| GPT-5.4 Nano | `gpt-5.4-nano` |
 | GPT-5.4 Mini | `gpt-5.4-mini` |
 | Claude Haiku 4.5 | `claude-haiku-4-5` |
-| Mistral Small 4 | `mistral-small-4` |
-| GPT OSS 120B | `gpt-oss-120b` |
-| Gemma 4 31B | `gemma-4-31b` |
+| Mistral Small 4 | `mistral-small-2603` |
+| GPT OSS 120B | `tinfoil/gpt-oss-120b` |
+| Gemma 4 31B | `tinfoil/gemma4-31b` |
 
-The CLI keeps aliases for the previous IDs so existing configuration files continue to resolve to a current model. Unknown model names are rejected instead of being silently redirected.
+The CLI keeps user-facing aliases such as `mistral-small-4`, `gpt-oss-120b`, and `gemma-4-31b`, while sending Duck.ai's service IDs `mistral-small-2603`, `tinfoil/gpt-oss-120b`, and `tinfoil/gemma4-31b`. The CLI keeps aliases for previous model names so existing configuration files continue to resolve to a current model. Unknown model names are rejected instead of being silently redirected.
 
 ## Error handling
 

@@ -880,12 +880,16 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 }
 
 func (c *Chat) buildPayload(durableStream *DurableStream) ChatPayload {
+	reasoningEffort := "none"
+	if c.Model == models.GPTOSS120B || c.Model == models.Gemma431B {
+		reasoningEffort = "low"
+	}
 	payload := ChatPayload{
 		Model:                c.Model,
 		Messages:             c.Messages,
 		CanUseTools:          c.NativeToolsEnabled && (c.NativeWebSearch || c.NativeImageGeneration),
 		CanUseApproxLocation: true,
-		ReasoningEffort:      "none",
+		ReasoningEffort:      reasoningEffort,
 		DurableStream:        durableStream,
 	}
 	if payload.CanUseTools {

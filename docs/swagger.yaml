@@ -160,7 +160,7 @@ definitions:
           $ref: '#/definitions/ModelInfo'
         type: array
       total_models:
-        example: 6
+        example: 7
         type: integer
     type: object
 host: 127.0.0.1:8080

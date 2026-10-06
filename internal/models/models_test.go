@@ -5,6 +5,7 @@ import "testing"
 func TestGetModelUsesCurrentDuckAIIDs(t *testing.T) {
 	tests := map[string]Model{
 		"gpt-5.6-luna":     GPT5Luna,
+		"gpt-5.4-nano":     GPT54Nano,
 		"gpt-5.4-mini":     GPT54Mini,
 		"claude-haiku-4-5": ClaudeHaiku,
 		"mistral-small-4":  MistralSmall,
@@ -24,14 +25,31 @@ func TestGetModelUsesCurrentDuckAIIDs(t *testing.T) {
 
 func TestDuckAIModelIDsUseWireCase(t *testing.T) {
 	tests := map[string]Model{
-		"gpt-oss-120b": GPTOSS120B,
-		"gemma-4-31b":  Gemma431B,
+		"gpt-5.4-nano":         GPT54Nano,
+		"mistral-small-2603":   MistralSmall,
+		"tinfoil/gpt-oss-120b": GPTOSS120B,
+		"tinfoil/gemma4-31b":   Gemma431B,
 	}
 
 	for want, model := range tests {
 		if string(model) != want {
 			t.Errorf("model ID = %q, want %q", model, want)
 		}
+	}
+}
+
+func TestAvailableIncludesVerifiedGPT54Nano(t *testing.T) {
+	for _, definition := range Available() {
+		if definition.ID == GPT54Nano && definition.Alias == GPT54NanoAlias {
+			return
+		}
+	}
+	t.Fatal("available models do not include the live-verified GPT-5.4 nano model")
+}
+
+func TestMistralSmall4AliasResolvesToCurrentDuckAIID(t *testing.T) {
+	if got := GetModel("mistral-small-4"); got != "mistral-small-2603" {
+		t.Fatalf("GetModel(%q) = %q, want %q", "mistral-small-4", got, "mistral-small-2603")
 	}
 }
 

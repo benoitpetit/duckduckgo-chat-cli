@@ -40,6 +40,11 @@ type Snapshot struct {
 	AssistantMessages          int                     `json:"assistant_messages"`
 	ContextMessages            int                     `json:"context_messages"`
 	TotalTokensEstimate        int                     `json:"total_tokens_estimate"`
+	UserTokensEstimate         int                     `json:"user_tokens_estimate"`
+	AssistantTokensEstimate    int                     `json:"assistant_tokens_estimate"`
+	ContextTokensEstimate      int                     `json:"context_tokens_estimate"`
+	DailyUserMessages          map[string]int          `json:"daily_user_messages"`
+	DailyActivityAvailableFrom string                  `json:"daily_activity_available_from"`
 	ContextOptimizations       int                     `json:"context_optimizations"`
 	ContextCompressions        int                     `json:"context_compressions"`
 	BytesSaved                 int64                   `json:"bytes_saved"`
@@ -68,16 +73,23 @@ func (ca *ChatAnalytics) Snapshot() Snapshot {
 		VQDRefreshCount: ca.VQDRefreshCount, HeaderRefreshCount: ca.HeaderRefreshCount,
 		MessagesTotal: ca.MessagesTotal, UserMessages: ca.UserMessages, AssistantMessages: ca.AssistantMessages,
 		ContextMessages: ca.ContextMessages, TotalTokensEstimate: ca.TotalTokensEstimate,
+		UserTokensEstimate: ca.UserTokensEstimate, AssistantTokensEstimate: ca.AssistantTokensEstimate,
+		ContextTokensEstimate: ca.ContextTokensEstimate, DailyActivityAvailableFrom: ca.DailyActivityAvailableFrom,
 		ContextOptimizations: ca.ContextOptimizations, ContextCompressions: ca.ContextCompressions, BytesSaved: ca.BytesSaved,
 		ModelChanges: ca.ModelChanges, CurrentModel: ca.CurrentModel, FilesProcessed: ca.FilesProcessed,
 		URLsProcessed: ca.URLsProcessed, SearchesPerformed: ca.SearchesPerformed,
-		CommandsUsed: make(map[string]int, len(ca.CommandsUsed)), ByModel: make(map[string]ModelMetrics, len(ca.byModel)),
+		CommandsUsed:      make(map[string]int, len(ca.CommandsUsed)),
+		DailyUserMessages: make(map[string]int, len(ca.DailyUserMessages)),
+		ByModel:           make(map[string]ModelMetrics, len(ca.byModel)),
 	}
 	for command, count := range ca.CommandsUsed {
 		snapshot.CommandsUsed[command] = count
 	}
 	for model, metrics := range ca.byModel {
 		snapshot.ByModel[model] = metrics
+	}
+	for date, count := range ca.DailyUserMessages {
+		snapshot.DailyUserMessages[date] = count
 	}
 	return snapshot
 }

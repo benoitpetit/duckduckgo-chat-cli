@@ -105,6 +105,27 @@ func DisplayName(model Model) string {
 	return string(model)
 }
 
+// SupportsImageInput reports whether Duck.ai currently accepts image inputs
+// for this model. The capability belongs to Duck.ai's integration, which can
+// differ from the underlying provider model.
+func SupportsImageInput(model Model) bool {
+	switch model {
+	case GPT5Luna, GPT54Nano, GPT54Mini, ClaudeHaiku:
+		return true
+	default:
+		return false
+	}
+}
+
+// ImageInputModel returns a Duck.ai model that can accept an image context.
+// GPT-5.4 mini is the safe routing target for models without upload support.
+func ImageInputModel(model Model) Model {
+	if SupportsImageInput(model) {
+		return model
+	}
+	return GPT54Mini
+}
+
 func GetModel(alias string) Model {
 	if model, ok := ResolveModel(alias); ok {
 		return model

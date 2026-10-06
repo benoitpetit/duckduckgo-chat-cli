@@ -9,7 +9,7 @@ bootstrap; it is not required to compile the binaries.
 From the repository root, run the build script:
 
 ```bash
-./scripts/build.sh 1.6.1
+./scripts/build.sh 1.7.1
 ```
 
 Passing a version builds without an interactive prompt. Omitting it asks for a
@@ -19,7 +19,7 @@ SHA256 files for each binary, and creates a release ZIP under `build/`.
 Checksums use `sha256sum` when available and fall back to `shasum -a 256` on
 macOS.
 
-The Windows executable embeds `logo.png` as its application icon. The builder
+The Windows executable embeds `docs/images/logo.png` as its application icon. The builder
 uses the pinned `go-winres` tool to create a temporary Windows resource object
 and removes it after the `.exe` is linked. The Linux and macOS command-line
 binaries do not contain an application icon; those formats require a separate
@@ -40,6 +40,6 @@ embedded logo. The Windows resource generator is pinned in
 
 The GitHub Actions workflow uses the same build and verification scripts. Start
 it from **Actions → Build and Release → Run workflow** and provide a semantic
-version such as `1.6.1`. After committing and pushing `master`, the same workflow
-can be dispatched from a terminal with `./scripts/release.sh 1.6.1`; this
+version such as `1.7.1`. After committing and pushing `master`, the same workflow
+can be dispatched from a terminal with `./scripts/release.sh 1.7.1`; this
 requires an authenticated GitHub CLI (`gh auth login`).

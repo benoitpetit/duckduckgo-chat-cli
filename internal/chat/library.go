@@ -440,10 +440,12 @@ func handleLibraryLoad(c *Chat, cfg *config.Config, argument string, userRequest
 			ui.Warningln("Skipping %s: library context limit of %d MiB reached", file, maxLibraryContextSize/(1<<20))
 			break
 		}
+		message := fmt.Sprintf("[File Context]\nFile: %s\n\n%s", file, string(content))
 		c.Messages = append(c.Messages, Message{
 			Role:    "user",
-			Content: fmt.Sprintf("[File Context]\nFile: %s\n\n%s", file, string(content)),
+			Content: message,
 		})
+		c.recordContextMessage(message)
 		totalChars += len(content)
 
 		if c.Analytics != nil {

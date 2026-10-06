@@ -12,6 +12,7 @@ import (
 
 	"duckduckgo-chat-cli/internal/interfaces"
 	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/security"
 	"duckduckgo-chat-cli/internal/ui"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -51,13 +52,16 @@ type ToolsConfig struct {
 
 // DashboardConfig contains settings for the loopback-only usage dashboard.
 type DashboardConfig struct {
-	Autostart                 bool `json:"autostart"`
-	Port                      int  `json:"port"`
-	RefreshIntervalSeconds    int  `json:"refresh_interval_seconds"`
-	RetentionDays             int  `json:"retention_days"`
-	ShowConversations         bool `json:"show_conversations"`
-	AllowConversationAnalysis bool `json:"allow_conversation_analysis"`
-	AnalysisTokenBudget       int  `json:"analysis_token_budget"`
+	Autostart                 bool   `json:"autostart"`
+	Port                      int    `json:"port"`
+	RefreshIntervalSeconds    int    `json:"refresh_interval_seconds"`
+	RetentionDays             int    `json:"retention_days"`
+	ShowConversations         bool   `json:"show_conversations"`
+	ShowConversationContent   bool   `json:"show_conversation_content"`
+	AllowConversationAnalysis bool   `json:"allow_conversation_analysis"`
+	AnalysisTokenBudget       int    `json:"analysis_token_budget"`
+	PasswordSalt              string `json:"password_salt,omitempty"`
+	PasswordHash              string `json:"password_hash,omitempty"`
 }
 
 func defaultDashboardConfig() DashboardConfig {
@@ -619,10 +623,13 @@ func handleDashboardSettings(cfg *Config) {
 			Message: "Local Dashboard Settings",
 			Options: []string{
 				fmt.Sprintf("Autostart (%t)", cfg.Dashboard.Autostart),
+				fmt.Sprintf("Set/change dashboard password (%t)", cfg.Dashboard.PasswordHash != ""),
+				"Remove dashboard password",
 				fmt.Sprintf("Port (%d)", cfg.Dashboard.Port),
 				fmt.Sprintf("Refresh interval seconds (%d)", cfg.Dashboard.RefreshIntervalSeconds),
 				fmt.Sprintf("History retention days (%d)", cfg.Dashboard.RetentionDays),
 				fmt.Sprintf("Show conversations (%t)", cfg.Dashboard.ShowConversations),
+				fmt.Sprintf("Show prompt and response content (%t)", cfg.Dashboard.ShowConversationContent),
 				fmt.Sprintf("Allow conversation analysis (%t)", cfg.Dashboard.AllowConversationAnalysis),
 				fmt.Sprintf("Analysis token budget (%d)", cfg.Dashboard.AnalysisTokenBudget),
 				"Back",
@@ -638,9 +645,16 @@ func handleDashboardSettings(cfg *Config) {
 		case strings.HasPrefix(choice, "Autostart"):
 			cfg.Dashboard.Autostart = !cfg.Dashboard.Autostart
 			saveAndReport(cfg, fmt.Sprintf("Dashboard autostart set to: %t", cfg.Dashboard.Autostart))
+		case strings.HasPrefix(choice, "Set/change dashboard password"):
+			handleDashboardPasswordChange(cfg)
+		case choice == "Remove dashboard password":
+			handleDashboardPasswordRemoval(cfg)
 		case strings.HasPrefix(choice, "Show conversations"):
 			cfg.Dashboard.ShowConversations = !cfg.Dashboard.ShowConversations
 			saveAndReport(cfg, fmt.Sprintf("Dashboard conversations visible: %t", cfg.Dashboard.ShowConversations))
+		case strings.HasPrefix(choice, "Show prompt and response content"):
+			cfg.Dashboard.ShowConversationContent = !cfg.Dashboard.ShowConversationContent
+			saveAndReport(cfg, fmt.Sprintf("Dashboard prompt and response content visible: %t", cfg.Dashboard.ShowConversationContent))
 		case strings.HasPrefix(choice, "Allow conversation analysis"):
 			cfg.Dashboard.AllowConversationAnalysis = !cfg.Dashboard.AllowConversationAnalysis
 			saveAndReport(cfg, fmt.Sprintf("Dashboard conversation analysis allowed: %t", cfg.Dashboard.AllowConversationAnalysis))
@@ -656,6 +670,50 @@ func handleDashboardSettings(cfg *Config) {
 			return
 		}
 	}
+}
+
+func handleDashboardPasswordChange(cfg *Config) {
+	password := ""
+	if err := survey.AskOne(&survey.Password{Message: "Enter dashboard password:"}, &password); err != nil {
+		ui.Warningln("Dashboard password change canceled.")
+		return
+	}
+	confirmation := ""
+	if err := survey.AskOne(&survey.Password{Message: "Confirm dashboard password:"}, &confirmation); err != nil {
+		ui.Warningln("Dashboard password change canceled.")
+		return
+	}
+	if password != confirmation {
+		ui.Errorln("Passwords do not match. No changes made.")
+		return
+	}
+	salt, hash, err := security.HashPassword(password)
+	if err != nil {
+		ui.Errorln("Could not set dashboard password: %v", err)
+		return
+	}
+	cfg.Dashboard.PasswordSalt = salt
+	cfg.Dashboard.PasswordHash = hash
+	saveAndReport(cfg, "Dashboard password protection enabled.")
+}
+
+func handleDashboardPasswordRemoval(cfg *Config) {
+	if cfg.Dashboard.PasswordHash == "" {
+		ui.AIln("Dashboard password protection is already disabled.")
+		return
+	}
+	confirmed := false
+	if err := survey.AskOne(&survey.Confirm{Message: "Disable dashboard password protection?", Default: false}, &confirmed); err != nil {
+		ui.Warningln("Dashboard password removal canceled.")
+		return
+	}
+	if !confirmed {
+		ui.AIln("Dashboard password protection was not changed.")
+		return
+	}
+	cfg.Dashboard.PasswordSalt = ""
+	cfg.Dashboard.PasswordHash = ""
+	saveAndReport(cfg, "Dashboard password protection disabled.")
 }
 
 func editDashboardInteger(cfg *Config, label string, current, minimum, maximum int, set func(int)) {

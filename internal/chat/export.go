@@ -65,6 +65,9 @@ func (c *Chat) formatConversation(metadata ExportMetadata) string {
 			title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
 			writeSection(&sb, title, timestamp, msg.Content)
 		}
+		for _, image := range msg.Images {
+			writeSection(&sb, "📷 Image Attachment", timestamp, imageAttachmentMarker(image))
+		}
 	}
 
 	return sb.String()
@@ -130,14 +133,14 @@ func (c *Chat) formatSearchInConversation(metadata ExportMetadata, searchText st
 			foundResults = true
 
 			// Ajouter le contexte (question et réponse)
-			if msg.Role == "user" && i+1 < len(c.Messages) {
-				writeSection(&sb, "🧑 User Message", time.Now().Format("15:04"), msg.Content)
-				if c.Messages[i+1].Role == "assistant" {
+			if msg.Role == "user" {
+				writeSection(&sb, "🧑 User Message", time.Now().Format("15:04"), exportMessageContent(msg))
+				if i+1 < len(c.Messages) && c.Messages[i+1].Role == "assistant" {
 					title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
 					writeSection(&sb, title, time.Now().Format("15:04"), c.Messages[i+1].Content)
 				}
 			} else if msg.Role == "assistant" && i > 0 {
-				writeSection(&sb, "🧑 User Message", time.Now().Format("15:04"), c.Messages[i-1].Content)
+				writeSection(&sb, "🧑 User Message", time.Now().Format("15:04"), exportMessageContent(c.Messages[i-1]))
 				title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
 				writeSection(&sb, title, time.Now().Format("15:04"), msg.Content)
 			}
@@ -149,6 +152,16 @@ func (c *Chat) formatSearchInConversation(metadata ExportMetadata, searchText st
 	}
 
 	return sb.String()
+}
+
+func exportMessageContent(msg Message) string {
+	var content strings.Builder
+	content.WriteString(msg.Content)
+	for _, image := range msg.Images {
+		content.WriteString("\n\n")
+		content.WriteString(imageAttachmentMarker(image))
+	}
+	return content.String()
 }
 
 func writeMetadataHeader(sb *strings.Builder, metadata ExportMetadata) {

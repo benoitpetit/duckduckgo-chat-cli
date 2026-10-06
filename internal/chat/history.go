@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"duckduckgo-chat-cli/internal/media"
+
 	"github.com/fatih/color"
 )
 
@@ -40,6 +42,10 @@ func PrintHistory(c *Chat) {
 			dimWhite.Println(msg.Content)
 		default:
 			dimWhite.Println(msg.Content)
+		}
+		for _, image := range msg.Images {
+			dimYellow.Print("  ")
+			dimWhite.Println(imageAttachmentMarker(image))
 		}
 
 		// add a newline between messages
@@ -82,10 +88,17 @@ func (c *Chat) GetMarkdownContent() string {
 				md.WriteString(msg.Content + "\n")
 			}
 		}
+		for _, image := range msg.Images {
+			md.WriteString("\n" + imageAttachmentMarker(image) + "\n")
+		}
 		md.WriteString("\n---\n\n")
 	}
 
 	return md.String()
+}
+
+func imageAttachmentMarker(image media.ImageAttachment) string {
+	return fmt.Sprintf("[Image attachment: %s (%s)]", image.Name, image.MIMEType)
 }
 
 // ExtractLastMessage extracts the last AI response

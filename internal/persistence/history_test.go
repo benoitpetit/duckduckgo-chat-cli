@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/intelligence"
+	"duckduckgo-chat-cli/internal/media"
 )
 
 func TestHistoryManagerUsesConfigurableRetention(t *testing.T) {
@@ -101,5 +102,29 @@ func TestListSessionSummariesAreNewestFirstWithPreviewOnly(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "secret transcript") {
 		t.Fatalf("summary output contains transcript content: %s", encoded)
+	}
+}
+
+func TestSessionRoundTripPreservesImageAttachments(t *testing.T) {
+	manager := NewHistoryManager(t.TempDir())
+	image := media.ImageAttachment{Name: "logo.png", MIMEType: "image/png", Data: []byte{1, 2, 3, 4}}
+	session := &ConversationSession{
+		ID: "session_with_image", StartTime: time.Now(), Model: "gpt-5.6-luna",
+		Messages: []intelligence.Message{{Role: "user", Content: "Describe this", Images: []media.ImageAttachment{image}}},
+	}
+	if err := manager.SaveSession(session); err != nil {
+		t.Fatalf("SaveSession() error = %v", err)
+	}
+
+	loaded, err := manager.LoadSession(session.ID)
+	if err != nil {
+		t.Fatalf("LoadSession() error = %v", err)
+	}
+	if len(loaded.Messages) != 1 || len(loaded.Messages[0].Images) != 1 {
+		t.Fatalf("loaded messages = %+v, want one image-bearing message", loaded.Messages)
+	}
+	got := loaded.Messages[0].Images[0]
+	if got.Name != image.Name || got.MIMEType != image.MIMEType || string(got.Data) != string(image.Data) {
+		t.Fatalf("loaded attachment = %+v, want original metadata and bytes", got)
 	}
 }

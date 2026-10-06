@@ -7,8 +7,8 @@ OUTPUT_PATH="${2:?usage: build_windows_binary.sh VERSION OUTPUT_PATH}"
 RESOURCE="$ROOT_DIR/cmd/duckchat/duckchat_windows_amd64.syso"
 RESOURCE_PREFIX="${RESOURCE%_windows_amd64.syso}"
 
-if [[ ! -f "$ROOT_DIR/logo.png" ]]; then
-  echo "Windows application icon source not found: $ROOT_DIR/logo.png" >&2
+if [[ ! -f "$ROOT_DIR/docs/images/logo.png" ]]; then
+  echo "Windows application icon source not found: $ROOT_DIR/docs/images/logo.png" >&2
   exit 1
 fi
 if [[ -e "$RESOURCE" ]]; then
@@ -25,7 +25,7 @@ trap cleanup EXIT
 # package-local COFF resource consumed by the Go linker.
 go run github.com/tc-hib/go-winres@v0.3.1 simply \
   --arch amd64 \
-  --icon "$ROOT_DIR/logo.png" \
+  --icon "$ROOT_DIR/docs/images/logo.png" \
   --out "$RESOURCE_PREFIX" \
   --file-description "DuckDuckGo Chat CLI" \
   --product-name "DuckDuckGo Chat CLI"

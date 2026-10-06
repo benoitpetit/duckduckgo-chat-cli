@@ -57,10 +57,12 @@ func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *ch
 		chainCtx.AddSearch(query, contextMsg)
 		color.Green("Added %d search results to the chain context", len(results))
 	} else {
+		message := fmt.Sprintf("[Search Context]\n%s", contextMsg)
 		c.Messages = append(c.Messages, Message{
 			Role:    "user",
-			Content: fmt.Sprintf("[Search Context]\n%s", contextMsg),
+			Content: message,
 		})
+		c.recordContextMessage(message)
 
 		if c.Analytics != nil {
 			c.Analytics.RecordSearchPerformed()

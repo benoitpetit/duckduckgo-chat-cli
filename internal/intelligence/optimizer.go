@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"duckduckgo-chat-cli/internal/media"
 )
 
 // ContextOptimizer handles intelligent context management
@@ -18,12 +20,13 @@ type ContextOptimizer struct {
 
 // Message represents a chat message for optimization
 type Message struct {
-	Content    string    `json:"content"`
-	Role       string    `json:"role"`
-	Timestamp  time.Time `json:"timestamp"`
-	Importance float64   `json:"importance"`
-	Hash       uint64    `json:"hash"`
-	Compressed bool      `json:"compressed"`
+	Content    string                  `json:"content"`
+	Role       string                  `json:"role"`
+	Images     []media.ImageAttachment `json:"images,omitempty"`
+	Timestamp  time.Time               `json:"timestamp"`
+	Importance float64                 `json:"importance"`
+	Hash       uint64                  `json:"hash"`
+	Compressed bool                    `json:"compressed"`
 }
 
 // ContextAnalysis provides insights about the current context
@@ -64,7 +67,7 @@ func (co *ContextOptimizer) AnalyzeContext(messages []Message) *ContextAnalysis 
 			importantCount++
 		}
 
-		hash := co.hashContent(msg.Role + "\x00" + msg.Content)
+		hash := co.hashMessage(msg)
 		duplicates[hash]++
 	}
 
@@ -173,7 +176,7 @@ func (co *ContextOptimizer) calculateImportanceScores(messages []Message) []Mess
 		}
 
 		scoredMessages[i].Importance = score
-		scoredMessages[i].Hash = co.hashContent(scoredMessages[i].Role + "\x00" + scoredMessages[i].Content)
+		scoredMessages[i].Hash = co.hashMessage(scoredMessages[i])
 	}
 
 	return scoredMessages
@@ -245,7 +248,7 @@ func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
 	result := []Message{}
 	currentSize := 0
 	for _, msg := range sortedMessages {
-		if currentSize+len(msg.Content) <= co.MaxContextSize {
+		if len(msg.Images) > 0 || currentSize+len(msg.Content) <= co.MaxContextSize {
 			result = append(result, msg)
 			currentSize += len(msg.Content)
 		}
@@ -444,7 +447,7 @@ func (co *ContextOptimizer) countDuplicates(messages []Message) int {
 	duplicates := 0
 
 	for _, msg := range messages {
-		hash := co.hashContent(msg.Content)
+		hash := co.hashMessage(msg)
 		if seen[hash] {
 			duplicates++
 		} else {
@@ -453,4 +456,21 @@ func (co *ContextOptimizer) countDuplicates(messages []Message) int {
 	}
 
 	return duplicates
+}
+
+func (co *ContextOptimizer) hashMessage(msg Message) uint64 {
+	h := fnv.New64a()
+	normalized := regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(msg.Content), " ")
+	h.Write([]byte(msg.Role))
+	h.Write([]byte{0})
+	h.Write([]byte(normalized))
+	for _, image := range msg.Images {
+		h.Write([]byte{0})
+		h.Write([]byte(image.Name))
+		h.Write([]byte{0})
+		h.Write([]byte(image.MIMEType))
+		h.Write([]byte{0})
+		h.Write(image.Data)
+	}
+	return h.Sum64()
 }

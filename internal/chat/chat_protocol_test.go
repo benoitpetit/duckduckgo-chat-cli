@@ -1,11 +1,189 @@
 package chat
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
 	"os"
+	"strings"
 	"testing"
 
+	"duckduckgo-chat-cli/internal/config"
+	"duckduckgo-chat-cli/internal/intelligence"
+	"duckduckgo-chat-cli/internal/media"
 	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/persistence"
+
+	"github.com/fatih/color"
 )
+
+func TestMessageMarshalJSONKeepsTextContentString(t *testing.T) {
+	data, err := json.Marshal(Message{Role: "user", Content: "describe this"})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	var content string
+	if err := json.Unmarshal(got["content"], &content); err != nil {
+		t.Fatalf("text-only content was not a JSON string: %s", got["content"])
+	}
+	if content != "describe this" {
+		t.Fatalf("content = %q, want %q", content, "describe this")
+	}
+}
+
+func TestMessageMarshalJSONUsesDuckAIMultimodalBlocks(t *testing.T) {
+	first := []byte{1, 2, 3}
+	second := []byte{4, 5}
+	data, err := json.Marshal(Message{
+		Role:    "user",
+		Content: "What is in these images?",
+		Images: []media.ImageAttachment{
+			{Name: "logo.png", MIMEType: "image/png", Data: first},
+			{Name: "other.webp", MIMEType: "image/webp", Data: second},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var got struct {
+		Content []map[string]string `json:"content"`
+		Role    string              `json:"role"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Role != "user" || len(got.Content) != 3 {
+		t.Fatalf("role/content = %q/%d, want user/3 blocks", got.Role, len(got.Content))
+	}
+	if got.Content[0]["type"] != "text" || got.Content[0]["text"] != "What is in these images?" {
+		t.Fatalf("first block = %#v, want prompt text block", got.Content[0])
+	}
+	for i, want := range []struct {
+		mime string
+		data []byte
+	}{{"image/png", first}, {"image/webp", second}} {
+		block := got.Content[i+1]
+		if len(block) != 3 || block["type"] != "image" || block["mimeType"] != want.mime {
+			t.Fatalf("image block %d = %#v, want only type/mimeType/image fields", i, block)
+		}
+		prefix := "data:" + want.mime + ";base64,"
+		if !strings.HasPrefix(block["image"], prefix) {
+			t.Fatalf("image block %d data URI = %q, want prefix %q", i, block["image"], prefix)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(block["image"], prefix))
+		if err != nil || string(decoded) != string(want.data) {
+			t.Fatalf("image block %d did not retain original bytes: decoded=%v err=%v", i, decoded, err)
+		}
+	}
+}
+
+func TestRestoreContextPreservesImageAttachmentsThroughOptimization(t *testing.T) {
+	original := intelligence.Message{Role: "user", Content: "What is in this picture?", Images: []media.ImageAttachment{{Name: "logo.png", MIMEType: "image/png", Data: []byte{1, 2, 3}}}}
+	chat := &Chat{}
+	chat.RestoreContext(&persistence.ConversationSession{ID: "session-1", Model: "gpt-5.6-luna", Messages: []intelligence.Message{original}})
+	if len(chat.Messages) != 1 || len(chat.Messages[0].Images) != 1 {
+		t.Fatalf("RestoreContext() messages = %+v, want restored image attachment", chat.Messages)
+	}
+	converted := chat.convertMessagesToIntelligence()
+	optimizer := intelligence.NewContextOptimizer()
+	optimized, _ := optimizer.OptimizeContext(converted)
+	restored := chat.convertFromIntelligenceMessages(optimized)
+	if len(restored) != 1 || len(restored[0].Images) != 1 {
+		t.Fatalf("restored messages = %+v, want one image-bearing message", restored)
+	}
+	got := restored[0].Images[0]
+	if got.Name != original.Images[0].Name || got.MIMEType != original.Images[0].MIMEType || string(got.Data) != string(original.Images[0].Data) {
+		t.Fatalf("restored attachment = %+v, want original metadata and bytes", got)
+	}
+	wire, err := json.Marshal(restored[0])
+	if err != nil {
+		t.Fatalf("marshal restored outgoing message: %v", err)
+	}
+	if !strings.Contains(string(wire), "data:image/png;base64,AQID") {
+		t.Fatalf("restored outgoing payload lost image bytes: %s", wire)
+	}
+}
+
+func TestHistoryAndExportShowImageMarkersOnly(t *testing.T) {
+	chat := &Chat{Model: "gpt-5.6-luna", Messages: []Message{{
+		Role: "user", Content: "What is in this picture?", Images: []media.ImageAttachment{{Name: "logo.png", MIMEType: "image/png", Data: []byte("private-image-bytes")}},
+	}, {Role: "assistant", Content: "A duck."}}}
+	const marker = "[Image attachment: logo.png (image/png)]"
+	markdown := chat.GetMarkdownContent()
+	if !strings.Contains(markdown, marker) || strings.Contains(markdown, "private-image-bytes") {
+		t.Fatalf("Markdown export does not safely identify attachment: %s", markdown)
+	}
+	_, searchExport := chat.Export("search_conversation", "picture")
+	if !strings.Contains(searchExport, marker) || strings.Contains(searchExport, "private-image-bytes") {
+		t.Fatalf("search export does not safely identify attachment: %s", searchExport)
+	}
+
+	previousStdout := os.Stdout
+	previousColorOutput := color.Output
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	color.Output = writer
+	PrintHistory(chat)
+	_ = writer.Close()
+	os.Stdout = previousStdout
+	color.Output = previousColorOutput
+	printed, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = reader.Close()
+	if !strings.Contains(string(printed), marker) || strings.Contains(string(printed), "private-image-bytes") {
+		t.Fatalf("printed history does not safely identify attachment: %s", printed)
+	}
+}
+
+func TestSearchExportIncludesFinalImageContextWithoutAssistantReply(t *testing.T) {
+	chat := &Chat{Messages: []Message{{
+		Role: "user", Content: "What is in this picture?", Images: []media.ImageAttachment{{Name: "logo.png", MIMEType: "image/png", Data: []byte("private-image-bytes")}},
+	}}}
+	_, exported := chat.Export("search_conversation", "picture")
+	if !strings.Contains(exported, "What is in this picture?") || !strings.Contains(exported, "[Image attachment: logo.png (image/png)]") {
+		t.Fatalf("search export omitted final image context: %s", exported)
+	}
+	if strings.Contains(exported, "private-image-bytes") {
+		t.Fatalf("search export exposed image bytes: %s", exported)
+	}
+}
+
+func TestDebugPayloadRedactsImageBytes(t *testing.T) {
+	payload := (&Chat{
+		Model: "gpt-5.6-luna",
+		Messages: []Message{{Role: "user", Content: "describe", Images: []media.ImageAttachment{{
+			Name: "logo.png", MIMEType: "image/png", Data: []byte("private-image-bytes"),
+		}}}},
+	}).buildPayload(&DurableStream{MessageID: "message", ConversationID: "conversation"})
+	debugPayload, err := marshalDebugPayload(payload)
+	if err != nil {
+		t.Fatalf("marshalDebugPayload() error = %v", err)
+	}
+	logged := string(debugPayload)
+	if strings.Contains(logged, "private-image-bytes") || strings.Contains(logged, "cHJpdmF0ZS1pbWFnZS1ieXRlcw==") || strings.Contains(logged, "data:image/") {
+		t.Fatalf("debug payload exposed image data: %s", logged)
+	}
+	if !strings.Contains(logged, "logo.png") || !strings.Contains(logged, "image/png") {
+		t.Fatalf("debug payload omitted safe image metadata: %s", logged)
+	}
+}
+
+func TestClearDiscardsPendingImageContext(t *testing.T) {
+	chat := &Chat{pendingImages: []media.ImageAttachment{{Name: "logo.png", MIMEType: "image/png", Data: []byte{1, 2, 3}}}}
+	chat.Clear(&config.Config{})
+	if len(chat.pendingImages) != 0 {
+		t.Fatalf("Clear() retained %d pending images", len(chat.pendingImages))
+	}
+}
 
 func TestNewDurableStreamBuildsDuckAIJWK(t *testing.T) {
 	stream, err := newDurableStream()

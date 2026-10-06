@@ -4,6 +4,10 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"duckduckgo-chat-cli/internal/intelligence"
+	"duckduckgo-chat-cli/internal/media"
+	"duckduckgo-chat-cli/internal/persistence"
 )
 
 var dashboardSessionID = regexp.MustCompile(`^session_[A-Za-z0-9_-]{1,80}$`)
@@ -60,5 +64,23 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, session)
+	writeJSON(w, http.StatusOK, sessionWithoutImageData(session))
+}
+
+func sessionWithoutImageData(session *persistence.ConversationSession) *persistence.ConversationSession {
+	copy := *session
+	copy.Messages = messagesWithoutImageData(session.Messages)
+	copy.OptimizedMessages = messagesWithoutImageData(session.OptimizedMessages)
+	return &copy
+}
+
+func messagesWithoutImageData(messages []intelligence.Message) []intelligence.Message {
+	copy := append([]intelligence.Message(nil), messages...)
+	for i := range copy {
+		copy[i].Images = append([]media.ImageAttachment(nil), messages[i].Images...)
+		for j := range copy[i].Images {
+			copy[i].Images[j].Data = nil
+		}
+	}
+	return copy
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -41,11 +42,16 @@ type ChatAnalytics struct {
 	HeaderRefreshCount int `json:"header_refresh_count"`
 
 	// Content Metrics
-	MessagesTotal       int `json:"messages_total"`
-	UserMessages        int `json:"user_messages"`
-	AssistantMessages   int `json:"assistant_messages"`
-	ContextMessages     int `json:"context_messages"`
-	TotalTokensEstimate int `json:"total_tokens_estimate"`
+	MessagesTotal              int            `json:"messages_total"`
+	UserMessages               int            `json:"user_messages"`
+	AssistantMessages          int            `json:"assistant_messages"`
+	ContextMessages            int            `json:"context_messages"`
+	TotalTokensEstimate        int            `json:"total_tokens_estimate"`
+	UserTokensEstimate         int            `json:"user_tokens_estimate"`
+	AssistantTokensEstimate    int            `json:"assistant_tokens_estimate"`
+	ContextTokensEstimate      int            `json:"context_tokens_estimate"`
+	DailyUserMessages          map[string]int `json:"daily_user_messages"`
+	DailyActivityAvailableFrom string         `json:"daily_activity_available_from"`
 
 	// Context Optimization
 	ContextOptimizations int   `json:"context_optimizations"`
@@ -65,17 +71,22 @@ type ChatAnalytics struct {
 	SearchesPerformed int `json:"searches_performed"`
 
 	byModel map[string]ModelMetrics
+	now     func() time.Time
 
 	mutex sync.RWMutex
 }
 
 // NewChatAnalytics creates a new analytics tracker
 func NewChatAnalytics() *ChatAnalytics {
+	startedAt := time.Now()
 	return &ChatAnalytics{
-		SessionStartTime: time.Now(),
-		CommandsUsed:     make(map[string]int),
-		byModel:          make(map[string]ModelMetrics),
-		mutex:            sync.RWMutex{},
+		SessionStartTime:           startedAt,
+		CommandsUsed:               make(map[string]int),
+		DailyUserMessages:          make(map[string]int),
+		DailyActivityAvailableFrom: localDateKey(startedAt),
+		byModel:                    make(map[string]ModelMetrics),
+		now:                        time.Now,
+		mutex:                      sync.RWMutex{},
 	}
 }
 
@@ -162,16 +173,58 @@ func (ca *ChatAnalytics) RecordMessage(role string, contentLength int) {
 	defer ca.mutex.Unlock()
 
 	ca.MessagesTotal++
-	ca.TotalTokensEstimate += estimateTokens(contentLength)
+	tokensEstimate := estimateTokens(contentLength)
+	ca.TotalTokensEstimate += tokensEstimate
 
 	switch role {
 	case "user":
 		ca.UserMessages++
+		ca.UserTokensEstimate += tokensEstimate
+		if ca.DailyUserMessages == nil {
+			ca.DailyUserMessages = make(map[string]int)
+		}
+		clock := ca.now
+		if clock == nil {
+			clock = time.Now
+		}
+		ca.DailyUserMessages[localDateKey(clock())]++
 	case "assistant":
 		ca.AssistantMessages++
+		ca.AssistantTokensEstimate += tokensEstimate
 	default:
 		ca.ContextMessages++
+		ca.ContextTokensEstimate += tokensEstimate
 	}
+}
+
+// RecordPromptWithContext tracks one submitted user message whose payload also
+// contains inserted context, keeping the content estimates split by source.
+func (ca *ChatAnalytics) RecordPromptWithContext(userContentLength, contextContentLength int) {
+	ca.mutex.Lock()
+	defer ca.mutex.Unlock()
+
+	ca.MessagesTotal++
+	ca.UserMessages++
+	userTokens := estimateTokens(userContentLength)
+	contextTokens := estimateTokens(contextContentLength)
+	ca.UserTokensEstimate += userTokens
+	ca.ContextTokensEstimate += contextTokens
+	ca.TotalTokensEstimate += userTokens + contextTokens
+	if contextContentLength > 0 {
+		ca.ContextMessages++
+	}
+	if ca.DailyUserMessages == nil {
+		ca.DailyUserMessages = make(map[string]int)
+	}
+	clock := ca.now
+	if clock == nil {
+		clock = time.Now
+	}
+	ca.DailyUserMessages[localDateKey(clock())]++
+}
+
+func localDateKey(at time.Time) string {
+	return at.In(time.Local).Format("2006-01-02")
 }
 
 // Command Usage Tracking
@@ -270,7 +323,18 @@ func (ca *ChatAnalytics) DisplayStatistics() {
 	ui.AIln("Session Overview:")
 	ui.Whiteln("  Duration: %s", formatDuration(ca.SessionDuration))
 	ui.Whiteln("  Messages: %d total (%d user, %d AI)", ca.MessagesTotal, ca.UserMessages, ca.AssistantMessages)
-	ui.Whiteln("  Estimated Tokens: ~%d", ca.TotalTokensEstimate)
+	ui.Whiteln("  Estimated Tokens: ~%d total (user ~%d, assistant ~%d, context ~%d)", ca.TotalTokensEstimate, ca.UserTokensEstimate, ca.AssistantTokensEstimate, ca.ContextTokensEstimate)
+	if len(ca.DailyUserMessages) > 0 {
+		ui.AIln("\nDaily User Activity:")
+		dates := make([]string, 0, len(ca.DailyUserMessages))
+		for date := range ca.DailyUserMessages {
+			dates = append(dates, date)
+		}
+		sort.Strings(dates)
+		for _, date := range dates {
+			ui.Whiteln("  %s: %d messages", date, ca.DailyUserMessages[date])
+		}
+	}
 
 	// Chat Performance (CLI interactions)
 	if ca.ChatInteractionsTotal > 0 {
@@ -318,8 +382,13 @@ func (ca *ChatAnalytics) DisplayStatistics() {
 	// Commands Usage
 	if len(ca.CommandsUsed) > 0 {
 		ui.AIln("\nCommands Used:")
-		for cmd, count := range ca.CommandsUsed {
-			ui.Whiteln("  %s: %d", cmd, count)
+		commands := make([]string, 0, len(ca.CommandsUsed))
+		for command := range ca.CommandsUsed {
+			commands = append(commands, command)
+		}
+		sort.Strings(commands)
+		for _, command := range commands {
+			ui.Whiteln("  %s: %d", command, ca.CommandsUsed[command])
 		}
 	}
 
@@ -330,7 +399,26 @@ func (ca *ChatAnalytics) DisplayStatistics() {
 			ui.Whiteln("  Changes: %d", ca.ModelChanges)
 		}
 	}
-
+	if len(ca.byModel) > 0 {
+		ui.AIln("\nModel Performance:")
+		models := make([]string, 0, len(ca.byModel))
+		for model := range ca.byModel {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		for _, model := range models {
+			metrics := ca.byModel[model]
+			successRate := float64(0)
+			if metrics.Interactions > 0 {
+				successRate = float64(metrics.Successful) * 100 / float64(metrics.Interactions)
+			}
+			ui.Whiteln("  %s: %d requests, %.1f%% success, average %s", model, metrics.Interactions, successRate, formatDuration(metrics.AverageResponseTime))
+		}
+	}
+	if ca.VQDRefreshCount > 0 || ca.HeaderRefreshCount > 0 {
+		ui.AIln("\nConnection Recovery:")
+		ui.Whiteln("  VQD refreshes: %d | Header refreshes: %d", ca.VQDRefreshCount, ca.HeaderRefreshCount)
+	}
 	// Performance Summary
 	ui.AIln("\nPerformance Score: %.1f%% | Messages/min: %.1f", ca.getEfficiencyScore(), ca.getMessagesPerMinute())
 

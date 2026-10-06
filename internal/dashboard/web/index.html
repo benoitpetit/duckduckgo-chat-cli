@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <title>DuckChat · Usage Dashboard</title>
+    <link rel="icon" type="image/png" href="/favicon.ico">
     <link rel="stylesheet" href="/assets/style.css">
     <script src="/assets/app.js" defer></script>
   </head>
@@ -12,81 +13,105 @@
     <div class="shell">
       <aside class="sidebar">
         <a class="brand" href="#overview" aria-label="DuckChat Dashboard">
-          <span class="brand-mark">D</span>
+          <img class="brand-logo" src="/assets/logo.png" alt="">
           <span><strong>DuckChat</strong><small>LOCAL DASHBOARD</small></span>
         </a>
-        <nav class="navigation" aria-label="Navigation principale">
-          <button class="nav-item active" data-page="overview"><span class="nav-icon">◫</span> Vue d’ensemble</button>
+        <nav class="navigation" aria-label="Main navigation">
+          <button class="nav-item active" data-page="overview"><span class="nav-icon">◫</span> Overview</button>
           <button class="nav-item" data-page="sessions" id="sessionsNav" hidden><span class="nav-icon">◷</span> Conversations</button>
-          <button class="nav-item" data-page="commands"><span class="nav-icon">⌘</span> Commandes</button>
+          <button class="nav-item" data-page="commands"><span class="nav-icon">⌘</span> Commands</button>
+          <button class="nav-item" data-page="activity"><span class="nav-icon">≋</span> Activity</button>
         </nav>
         <div class="sidebar-bottom">
-          <span class="local-badge"><i></i> Stockage local</span>
-          <p>Les statistiques restent sur cette machine.</p>
+          <span class="local-badge"><i></i> Stored locally</span>
+          <p>Your usage data stays on this machine.</p>
         </div>
       </aside>
 
       <main class="main-content">
         <header class="topbar">
-          <div><div class="eyebrow">DUCKDUCKGO CHAT CLI</div><h1 id="pageTitle">Vue d’ensemble</h1></div>
-          <div class="live-state"><span class="pulse"></span><span>En direct</span><span class="divider"></span><span id="updatedAt">En attente des données…</span></div>
+          <div class="page-identity"><img class="page-logo" src="/assets/logo.png" alt=""><div><div class="eyebrow">DUCKDUCKGO CHAT CLI</div><h1 id="pageTitle">Overview</h1></div></div>
+          <div class="live-state"><span class="pulse"></span><span>Live</span><span class="divider"></span><span id="updatedAt">Waiting for data…</span><button class="button secondary" id="logoutButton" type="button">Sign out</button></div>
         </header>
 
         <section class="page active" id="page-overview">
-          <div class="section-heading"><div><h2>Activité de la session</h2><p>Mesures observées depuis le lancement de la CLI.</p></div><span class="subtle-label">ACTUALISATION AUTOMATIQUE</span></div>
+          <div class="welcome-panel"><div><span class="welcome-kicker">YOUR LOCAL WORKSPACE</span><h2>Your usage, at a glance.</h2><p>DuckChat activity, updated throughout your session.</p><span class="welcome-live"><i></i> Data stays on this machine</span></div><img src="/assets/logo.png" alt="DuckChat mascot" class="welcome-logo"></div>
+          <div class="section-heading"><div><h2>Usage statistics</h2><p id="statsScopeDescription">Combined metrics across retained sessions, including the current session.</p></div><div class="section-actions"><div class="scope-switch" role="group" aria-label="Statistics session range"><button type="button" data-stats-scope="current" aria-pressed="false">Current session</button><button type="button" data-stats-scope="all" aria-pressed="true">All sessions</button></div><span class="subtle-label">AUTO-REFRESH</span></div></div>
           <div class="metric-grid" id="metricGrid">
-            <article class="metric-card"><span>Interactions</span><strong id="metricInteractions">—</strong><small>requêtes envoyées</small></article>
-            <article class="metric-card"><span>Taux de réussite</span><strong id="metricSuccess">—</strong><small>réponses reçues</small></article>
-            <article class="metric-card"><span>Latence moyenne</span><strong id="metricLatency">—</strong><small>temps de réponse</small></article>
-            <article class="metric-card"><span>Messages</span><strong id="metricMessages">—</strong><small>dans cette session</small></article>
-            <article class="metric-card"><span>Tokens estimés</span><strong id="metricTokens">—</strong><small>approximation locale</small></article>
-            <article class="metric-card"><span>Contexte optimisé</span><strong id="metricOptimizations">—</strong><small id="metricBytes">économies de contexte</small></article>
-            <article class="metric-card"><span>Erreurs</span><strong id="metricErrors">—</strong><small id="metricErrorRate">échecs de requêtes</small></article>
-            <article class="metric-card"><span>Recherche</span><strong id="metricSearches">—</strong><small>recherches effectuées</small></article>
-            <article class="metric-card"><span>Fichiers</span><strong id="metricFiles">—</strong><small>fichiers traités</small></article>
-            <article class="metric-card"><span>URL</span><strong id="metricURLs">—</strong><small>pages ajoutées au contexte</small></article>
+            <article class="metric-card"><span>Interactions</span><strong id="metricInteractions">—</strong><small>requests sent</small><div class="metric-sparkline" id="chartInteractions"></div></article>
+            <article class="metric-card"><span>Success rate</span><strong id="metricSuccess">—</strong><small>responses received</small><div class="metric-sparkline" id="chartSuccess"></div></article>
+            <article class="metric-card"><span>Average latency</span><strong id="metricLatency">—</strong><small>response time</small><div class="metric-sparkline" id="chartLatency"></div></article>
+            <article class="metric-card"><span>Messages</span><strong id="metricMessages">—</strong><small>in this session</small><div class="metric-sparkline" id="chartMessages"></div></article>
+            <article class="metric-card"><span>Estimated tokens</span><strong id="metricTokens">—</strong><small>local estimate</small><div class="metric-sparkline" id="chartTokens"></div></article>
+            <article class="metric-card"><span>Context optimizations</span><strong id="metricOptimizations">—</strong><small id="metricBytes">context saved</small><div class="metric-sparkline" id="chartOptimizations"></div></article>
+            <article class="metric-card"><span>Errors</span><strong id="metricErrors">—</strong><small id="metricErrorRate">failed requests</small><div class="metric-sparkline" id="chartErrors"></div></article>
+            <article class="metric-card"><span>Searches</span><strong id="metricSearches">—</strong><small>searches performed</small><div class="metric-sparkline" id="chartSearches"></div></article>
+            <article class="metric-card"><span>Files</span><strong id="metricFiles">—</strong><small>files processed</small><div class="metric-sparkline" id="chartFiles"></div></article>
+            <article class="metric-card"><span>URLs</span><strong id="metricURLs">—</strong><small>pages added to context</small><div class="metric-sparkline" id="chartURLs"></div></article>
           </div>
 
           <div class="content-grid">
             <article class="panel wide-panel">
-              <div class="panel-heading"><div><h3>Historique des sessions</h3><p>Volume de messages par session enregistrée.</p></div><span class="panel-icon">↗</span></div>
-              <div class="history-chart" id="historyChart"><div class="empty-state">Les tendances apparaîtront après l’enregistrement d’une session.</div></div>
+              <div class="panel-heading"><div><h3>Session history</h3><p>Message volume across recorded sessions.</p></div><span class="panel-icon">↗</span></div>
+              <div class="history-chart" id="historyChart"><div class="empty-state">Trends will appear after a session is recorded.</div></div>
             </article>
             <article class="panel">
-              <div class="panel-heading"><div><h3>Commandes fréquentes</h3><p>Utilisation dans la session active.</p></div><span class="panel-icon">⌘</span></div>
-              <div class="rank-list" id="commandStats"><div class="empty-state">Aucune commande enregistrée pour le moment.</div></div>
+              <div class="panel-heading"><div><h3>Frequent commands</h3><p id="commandScopeDescription">Most used in retained sessions.</p></div><span class="panel-icon">⌘</span></div>
+              <div class="rank-list" id="commandStats"><div class="empty-state">No commands recorded yet.</div></div>
             </article>
           </div>
 
+          <article class="panel contribution-panel">
+            <div class="panel-heading"><div><h3>Usage activity</h3><p>Daily user messages in the retained local history.</p></div><span class="subtle-label" id="activityGridWindow">LAST 90 DAYS</span></div>
+            <div class="activity-grid-scroll"><table class="activity-grid-table" id="contributionGrid" aria-label="Daily user message activity over the retained history"></table></div>
+            <div class="activity-grid-legend"><span>Less</span><i data-level="0"></i><i data-level="1"></i><i data-level="2"></i><i data-level="3"></i><i data-level="4"></i><span>More</span><span class="unavailable-key"><i></i> Not tracked</span></div>
+          </article>
+
+          <div class="detail-grid">
+            <article class="panel"><div class="panel-heading"><div><h3>Estimated token mix</h3><p>Approximate local message sizes by role.</p></div></div><div id="tokenComposition" class="stat-chart-list"></div></article>
+            <article class="panel"><div class="panel-heading"><div><h3>Model comparison</h3><p>Requests and observed success rate.</p></div></div><div id="modelComparison" class="stat-chart-list"></div></article>
+            <article class="panel"><div class="panel-heading"><div><h3>Recovery activity</h3><p>Failures and automatic request recovery.</p></div></div><div id="recoveryChart" class="stat-chart-list"></div></article>
+          </div>
+
           <article class="panel model-panel">
-            <div class="panel-heading"><div><h3>Performance par modèle</h3><p>Comparaison basée sur les réponses réellement observées.</p></div><span class="subtle-label">AUCUN COÛT ESTIMÉ</span></div>
-            <div class="table-wrap"><table><thead><tr><th>Modèle</th><th>Requêtes</th><th>Réussite</th><th>Latence moyenne</th></tr></thead><tbody id="modelStats"><tr><td colspan="4" class="empty-state">Les données par modèle apparaîtront après une requête.</td></tr></tbody></table></div>
+            <div class="panel-heading"><div><h3>Model performance</h3><p id="modelScopeDescription">Based on responses observed across retained sessions.</p></div><span class="subtle-label">NO COST ESTIMATES</span></div>
+            <div class="table-wrap"><table><thead><tr><th>Model</th><th>Requests</th><th>Success</th><th>Average latency</th></tr></thead><tbody id="modelStats"><tr><td colspan="4" class="empty-state">Per-model data will appear after a request.</td></tr></tbody></table></div>
           </article>
 
           <article class="panel analysis-panel">
-            <div class="panel-heading"><div><div class="eyebrow">AIDE À LA DÉCISION</div><h3>Analyse par IA</h3><p>À lancer à la demande avec un modèle de la CLI.</p></div><span class="ai-mark">✳</span></div>
-            <div class="analysis-controls"><label for="analysisModel">Modèle</label><select id="analysisModel" aria-label="Modèle pour l’analyse"></select><button class="button primary" id="metricsAnalysis">Analyser les statistiques <span>→</span></button></div>
+            <div class="panel-heading"><div><div class="eyebrow">DECISION SUPPORT</div><h3>AI analysis</h3><p>Run on demand with a CLI model.</p></div><img src="/assets/logo.png" alt="" class="ai-mark"></div>
+            <div class="analysis-controls"><label for="analysisModel">Model</label><select id="analysisModel" aria-label="Analysis model"></select><button class="button primary" id="metricsAnalysis">Analyze usage <span>→</span></button></div>
             <div class="analysis-result" id="metricsResult" hidden></div>
             <div class="conversation-analysis" id="conversationAnalysis" hidden>
-              <div><strong>Rapport personnalisé</strong><p>Des extraits de conversations archivées seront inclus après confirmation. Le contenu transmis est envoyé à Duck.ai.</p></div>
-              <div class="analysis-controls"><button class="button secondary" id="previewReport">Préparer l’estimation</button></div>
-              <div class="preview-box" id="reportPreview" hidden><span id="reportEstimate"></span><button class="button primary" id="runReport">Envoyer les extraits pour analyse <span>→</span></button></div>
+              <div><strong>Personalized report</strong><p>Archived conversation excerpts are included only after confirmation. Selected content is sent to Duck.ai.</p></div>
+              <div class="analysis-controls"><button class="button secondary" id="previewReport">Estimate report</button></div>
+              <div class="preview-box" id="reportPreview" hidden><span id="reportEstimate"></span><button class="button primary" id="runReport">Analyze selected excerpts <span>→</span></button></div>
               <div class="analysis-result" id="conversationResult" hidden></div>
             </div>
           </article>
         </section>
 
         <section class="page" id="page-sessions">
-          <div class="section-heading"><div><h2>Conversations archivées</h2><p>Rechercher, consulter et reprendre une session dans le terminal.</p></div><label class="search-box"><span>⌕</span><input id="sessionSearch" type="search" placeholder="Rechercher une session…" autocomplete="off"></label></div>
-          <div class="sessions-layout"><div class="session-list panel" id="sessionList"><div class="empty-state">Chargement des sessions…</div></div><article class="session-detail panel" id="sessionDetail"><div class="empty-state">Choisissez une conversation pour voir son contenu.</div></article></div>
+          <div class="section-heading"><div><h2>Archived conversations</h2><p>Search, review, and resume a session in the terminal.</p></div><label class="search-box"><span>⌕</span><input id="sessionSearch" type="search" placeholder="Search sessions…" autocomplete="off"></label></div>
+          <div class="sessions-layout"><div class="session-list panel" id="sessionList"><div class="empty-state">Loading sessions…</div></div><article class="session-detail panel" id="sessionDetail"><div class="empty-state">Select a conversation to view its contents.</div></article></div>
         </section>
 
         <section class="page" id="page-commands">
-          <div class="section-heading"><div><h2>Référence des commandes</h2><p>Les commandes se lancent dans le terminal de la CLI.</p></div><span class="subtle-label">AIDE WEB</span></div>
-          <div class="command-groups" id="commandDocs"><div class="empty-state">Chargement des commandes…</div></div>
+          <div class="section-heading"><div><h2>Command reference</h2><p>Run these commands in the CLI terminal.</p></div><span class="subtle-label">WEB HELP</span></div>
+          <div class="command-groups" id="commandDocs"><div class="empty-state">Loading commands…</div></div>
         </section>
 
-        <footer><span>DuckChat Dashboard</span><span>Accessible uniquement depuis cette machine · <code>127.0.0.1</code></span></footer>
+        <section class="page" id="page-activity">
+          <div class="section-heading"><div><h2>Live activity</h2><p>Structured events from the current CLI session.</p></div><span class="subtle-label">IN MEMORY · LAST 200 EVENTS</span></div>
+          <article class="panel activity-status-panel">
+            <div><span class="subtle-label">CURRENT OPERATION</span><strong id="activityCurrent">Idle</strong></div>
+            <div class="activity-connection"><i id="activityConnectionDot"></i><span id="activityConnection">Connecting…</span></div>
+          </article>
+          <div class="activity-toolbar"><span id="activityCount">Waiting for CLI activity</span><button class="button secondary" id="activityLatest" type="button" hidden>Jump to latest</button></div>
+          <div class="activity-console" id="activityConsole" role="log" aria-live="off" aria-label="Live CLI activity"><div class="empty-state">Activity events will appear here.</div></div>
+        </section>
+
+        <footer><span>DuckChat Dashboard</span><span>Available only on this machine · <code>127.0.0.1</code></span></footer>
       </main>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"duckduckgo-chat-cli/internal/activity"
 	"duckduckgo-chat-cli/internal/analytics"
 	"duckduckgo-chat-cli/internal/api"
 	"duckduckgo-chat-cli/internal/chat"
@@ -34,6 +35,7 @@ var chatSession *chat.Chat
 var cfg *config.Config
 var dashboardServer *dashboard.Server
 var dashboardHistory *dashboard.HistoryStore
+var dashboardActivity *activity.Hub
 var cliShutdown func()
 var executorMu sync.Mutex
 
@@ -149,6 +151,9 @@ func handleDashboardCommand(action string) {
 			ui.Errorln("Could not start local dashboard: %v", err)
 			return
 		}
+		if dashboardActivity != nil {
+			dashboardActivity.Publish(activity.Event{Category: "dashboard", Status: "info", Summary: "Local dashboard started"})
+		}
 		ui.AIln("Local dashboard: %s", address)
 	case "off":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -156,6 +161,9 @@ func handleDashboardCommand(action string) {
 		if err := dashboardServer.Stop(ctx); err != nil {
 			ui.Errorln("Could not stop local dashboard: %v", err)
 			return
+		}
+		if dashboardActivity != nil {
+			dashboardActivity.Publish(activity.Event{Category: "dashboard", Status: "info", Summary: "Local dashboard stopped"})
 		}
 		ui.AIln("Local dashboard stopped.")
 	case "status":
@@ -233,7 +241,11 @@ func main() {
 		return
 	}
 
+	dashboardActivity = activity.NewHub()
+	dashboardActivity.SetConversationContentEnabled(cfg.Dashboard.ShowConversationContent)
 	chatSession = chat.InitializeSession(cfg)
+	chatSession.Activity = dashboardActivity
+	dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session started", Model: string(chatSession.Model)})
 	dashboardHistory = dashboard.NewHistoryStore(config.DashboardHistoryPath(), cfg.Dashboard.RetentionDays)
 	if err := dashboardHistory.SetRetentionDays(cfg.Dashboard.RetentionDays); err != nil {
 		ui.Warningln("Could not apply dashboard history retention: %v", err)
@@ -254,6 +266,7 @@ func main() {
 		Commands:  command.GetCommandRegistry,
 		Config:    cfg.Dashboard,
 		Analyze:   chat.NewDashboardAnalyzer(cfg).Analyze,
+		Activity:  dashboardActivity,
 	})
 	cliShutdown = newShutdownFinalizer(
 		stopSnapshots,
@@ -270,6 +283,7 @@ func main() {
 		if address, err := dashboardServer.Start(); err != nil {
 			ui.Warningln("Local dashboard could not start: %v", err)
 		} else {
+			dashboardActivity.Publish(activity.Event{Category: "dashboard", Status: "info", Summary: "Local dashboard started"})
 			ui.AIln("Local dashboard: %s", address)
 		}
 	}
@@ -302,6 +316,9 @@ func main() {
 			if chatSession != nil {
 				chatSession.ShowSessionStats()
 			}
+			if dashboardActivity != nil {
+				dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session stopping"})
+			}
 			if cliShutdown != nil {
 				cliShutdown()
 			}
@@ -327,6 +344,9 @@ func main() {
 		prompt.OptionPreviewSuggestionBGColor(prompt.DarkGray),
 	)
 	p.Run()
+	if dashboardActivity != nil {
+		dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session stopping"})
+	}
 	if cliShutdown != nil {
 		cliShutdown()
 	}
@@ -339,8 +359,21 @@ func executor(input string) {
 	if input == "" {
 		return
 	}
+	var commandActivity activity.Event
+	commandName := ""
+	if dashboardActivity != nil && strings.HasPrefix(strings.TrimSpace(input), "/") {
+		commandName = strings.Fields(strings.TrimSpace(input))[0]
+		commandActivity = dashboardActivity.Publish(activity.Event{Category: "command", Status: "started", Summary: "Command " + commandName + " started"})
+		defer func() {
+			dashboardActivity.Publish(activity.Event{Category: "command", Status: "completed", Summary: "Command " + commandName + " completed", OperationID: commandActivity.OperationID})
+		}()
+	}
 	if input == "/exit" {
 		ui.Warningln("\nExiting chat. Goodbye!")
+		if dashboardActivity != nil {
+			dashboardActivity.Publish(activity.Event{Category: "command", Status: "completed", Summary: "Command /exit completed", OperationID: commandActivity.OperationID})
+			dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session stopping"})
+		}
 
 		// Show session statistics before exiting
 		if chatSession != nil {
@@ -395,16 +428,37 @@ func executor(input string) {
 }
 
 func handleCommandChain(chatSession *chat.Chat, cfg *config.Config, chainedCmd *command.ChainedCommand) {
+	handleCommandChainWithRoleProcessor(chatSession, cfg, chainedCmd, chat.ProcessInputWithContext)
+}
+
+func handleCommandChainWithProcessor(chatSession *chat.Chat, cfg *config.Config, chainedCmd *command.ChainedCommand, process func(*chat.Chat, string, *config.Config)) {
+	handleCommandChainWithRoleProcessor(chatSession, cfg, chainedCmd, func(session *chat.Chat, contextContent, prompt string, configured *config.Config) {
+		input := contextContent
+		if prompt != "" {
+			if input != "" {
+				input += "\n\n"
+			}
+			input += prompt
+		}
+		process(session, input, configured)
+	})
+}
+
+func handleCommandChainWithRoleProcessor(chatSession *chat.Chat, cfg *config.Config, chainedCmd *command.ChainedCommand, process func(*chat.Chat, string, string, *config.Config)) {
 	chainCtx := chatcontext.New()
 
 	for _, cmd := range chainedCmd.Commands {
 		switch cmd.Type {
 		case "/file":
-			chat.HandleFileCommand(chatSession, cmd.Raw, cfg, chainCtx)
+			var fileErr error
+			trackActivity("file", "File operation", func() { fileErr = chat.HandleFileCommand(chatSession, cmd.Raw, cfg, chainCtx) })
+			if fileErr != nil {
+				return
+			}
 		case "/url":
-			chat.HandleURLCommand(chatSession, cmd.Raw, cfg, chainCtx)
+			trackActivity("url", "URL operation", func() { chat.HandleURLCommand(chatSession, cmd.Raw, cfg, chainCtx) })
 		case "/search":
-			chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, chainCtx)
+			trackActivity("search", "Search operation", func() { chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, chainCtx) })
 		default:
 			ui.Errorln("Command '%s' is not supported in a command chain.", cmd.Type)
 			return
@@ -414,19 +468,19 @@ func handleCommandChain(chatSession *chat.Chat, cfg *config.Config, chainedCmd *
 	if chainCtx.IsEmpty() {
 		if chainedCmd.Prompt != "" {
 			// This case is for when the user just types "-- some prompt"
-			chat.ProcessInput(chatSession, chainedCmd.Prompt, cfg)
+			process(chatSession, "", chainedCmd.Prompt, cfg)
 		}
 		return
 	}
 
 	// We have context. Now check for a prompt.
-	finalInput := chainCtx.String()
+	contextContent := chainCtx.String()
 	if chainedCmd.Prompt != "" {
-		finalInput += "\n\n" + chainedCmd.Prompt
-		chat.ProcessInput(chatSession, finalInput, cfg)
+		chatSession.QueueImageAttachments(chainCtx.ImageAttachments())
+		process(chatSession, contextContent, chainedCmd.Prompt, cfg)
 	} else {
 		// Context loaded, but no prompt. Add to session and notify user.
-		chatSession.AddContextMessage(finalInput)
+		chatSession.AddContextMessageWithImages(contextContent, chainCtx.ImageAttachments())
 		ui.AIln("Context from the command chain has been added. You can now ask questions about it.")
 	}
 }
@@ -443,13 +497,13 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 	case cmd.Type == "/history":
 		chat.PrintHistory(chatSession)
 	case cmd.Type == "/search":
-		chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, nil)
+		trackActivity("search", "Search operation", func() { chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, nil) })
 	case cmd.Type == "/file":
-		chat.HandleFileCommand(chatSession, cmd.Raw, cfg, nil)
+		trackActivity("file", "File operation", func() { chat.HandleFileCommand(chatSession, cmd.Raw, cfg, nil) })
 	case cmd.Type == "/library":
-		chat.HandleLibraryCommand(chatSession, cmd.Raw, cfg)
+		trackActivity("library", "Library operation", func() { chat.HandleLibraryCommand(chatSession, cmd.Raw, cfg) })
 	case cmd.Type == "/url":
-		chat.HandleURLCommand(chatSession, cmd.Raw, cfg, nil)
+		trackActivity("url", "URL operation", func() { chat.HandleURLCommand(chatSession, cmd.Raw, cfg, nil) })
 	case cmd.Type == "/export":
 		chat.HandleExportCommand(chatSession, cfg)
 	case cmd.Type == "/copy":
@@ -461,6 +515,9 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		newModel := models.HandleModelChange(chatSession, cmd.Args)
 		if newModel != "" {
 			chatSession.ChangeModel(models.GetModel(string(newModel)))
+			if dashboardActivity != nil {
+				dashboardActivity.Publish(activity.Event{Category: "model", Status: "changed", Summary: "Active model changed", Model: string(chatSession.Model)})
+			}
 			cfg.DefaultModel = string(newModel)
 			if err := config.SaveConfig(cfg); err != nil {
 				ui.Errorln("Failed to save config: %v", err)
@@ -532,6 +589,16 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		}
 		chat.ProcessInput(chatSession, cmd.Raw, cfg)
 	}
+}
+
+func trackActivity(category, summary string, run func()) {
+	if dashboardActivity == nil {
+		run()
+		return
+	}
+	started := dashboardActivity.Publish(activity.Event{Category: category, Status: "started", Summary: summary + " started"})
+	defer dashboardActivity.Publish(activity.Event{Category: category, Status: "completed", Summary: summary + " completed", OperationID: started.OperationID})
+	run()
 }
 
 // shouldConfirmLongInput determines if input should be confirmed before sending

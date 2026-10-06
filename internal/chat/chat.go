@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,11 +23,13 @@ import (
 	"sync"
 	"time"
 
+	"duckduckgo-chat-cli/internal/activity"
 	"duckduckgo-chat-cli/internal/analytics"
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/intelligence"
+	"duckduckgo-chat-cli/internal/media"
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/persistence"
 	"duckduckgo-chat-cli/internal/scrape"
@@ -37,17 +40,19 @@ import (
 )
 
 type Chat struct {
-	OldVqd     string
-	NewVqd     string
-	VqdHash1   string // x-vqd-hash-1 header (full VQD hash)
-	FeSignals  string // x-fe-signals header
-	FeVersion  string // x-fe-version header
-	Model      models.Model
-	Messages   []Message
-	Client     *http.Client
-	CookieJar  *cookiejar.Jar
-	LastHash   string
-	RetryCount int
+	Activity      *activity.Hub
+	OldVqd        string
+	NewVqd        string
+	VqdHash1      string // x-vqd-hash-1 header (full VQD hash)
+	FeSignals     string // x-fe-signals header
+	FeVersion     string // x-fe-version header
+	Model         models.Model
+	Messages      []Message
+	pendingImages []media.ImageAttachment
+	Client        *http.Client
+	CookieJar     *cookiejar.Jar
+	LastHash      string
+	RetryCount    int
 
 	// New intelligent features
 	Analytics                  *analytics.ChatAnalytics
@@ -68,8 +73,37 @@ type Chat struct {
 }
 
 type Message struct {
-	Content string `json:"content"`
-	Role    string `json:"role"`
+	Content string                  `json:"content"`
+	Role    string                  `json:"role"`
+	Images  []media.ImageAttachment `json:"-"`
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	if len(m.Images) == 0 {
+		type textMessage Message
+		return json.Marshal(textMessage(m))
+	}
+
+	type contentBlock struct {
+		Type     string `json:"type"`
+		Text     string `json:"text,omitempty"`
+		MIMEType string `json:"mimeType,omitempty"`
+		Image    string `json:"image,omitempty"`
+	}
+	type multimodalMessage struct {
+		Role    string         `json:"role"`
+		Content []contentBlock `json:"content"`
+	}
+	blocks := make([]contentBlock, 0, len(m.Images)+1)
+	blocks = append(blocks, contentBlock{Type: "text", Text: m.Content})
+	for _, attachment := range m.Images {
+		blocks = append(blocks, contentBlock{
+			Type:     "image",
+			MIMEType: attachment.MIMEType,
+			Image:    "data:" + attachment.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(attachment.Data),
+		})
+	}
+	return json.Marshal(multimodalMessage{Role: m.Role, Content: blocks})
 }
 
 type ToolChoice struct {
@@ -300,6 +334,7 @@ func (c *Chat) Clear(cfg *config.Config) {
 	} else {
 		ui.Warningln("Chat is already empty")
 	}
+	c.pendingImages = nil
 
 	if cfg.ShowMenu {
 		PrintWelcomeMessage()
@@ -321,14 +356,31 @@ func clearTerminal() {
 }
 
 func ProcessInput(c *Chat, input string, cfg *config.Config) {
+	processInputWithRoleLengths(c, input, cfg, len(input), 0)
+}
+
+// ProcessInputWithContext submits command-chain context and the user's prompt
+// as one Duck.ai message while keeping their analytics roles separate.
+func ProcessInputWithContext(c *Chat, contextContent, prompt string, cfg *config.Config) {
+	input := contextContent
+	if prompt != "" {
+		if input != "" {
+			input += "\n\n"
+		}
+		input += prompt
+	}
+	processInputWithRoleLengths(c, input, cfg, len(prompt), len(contextContent))
+}
+
+func processInputWithRoleLengths(c *Chat, input string, cfg *config.Config, userContentLength, contextContentLength int) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.setRequestCancel(cancel)
 	defer c.clearRequestCancel()
 	spinner := ui.StartSpinner("Connecting to Duck.ai")
-	_, err := processInput(ctx, c, input, cfg, func(stream <-chan string) string {
+	_, err := processInputWithTokenRoles(ctx, c, input, cfg, func(stream <-chan string) string {
 		spinner.Stop()
 		return RenderStream(stream, shortenModelName(string(c.Model)))
-	})
+	}, userContentLength, contextContentLength)
 	spinner.Stop()
 	if err != nil {
 		ui.Errorln("Error: %v", err)
@@ -347,6 +399,20 @@ func (c *Chat) clearRequestCancel() {
 	if c.requestCancel != nil {
 		c.requestCancel = nil
 	}
+}
+
+// QueueImageAttachments keeps local image attachments for the next prompt.
+func (c *Chat) QueueImageAttachments(images []media.ImageAttachment) {
+	c.pendingImages = append(c.pendingImages, cloneImageAttachments(images)...)
+}
+
+func cloneImageAttachments(images []media.ImageAttachment) []media.ImageAttachment {
+	cloned := make([]media.ImageAttachment, len(images))
+	for i, image := range images {
+		cloned[i] = image
+		cloned[i].Data = append([]byte(nil), image.Data...)
+	}
+	return cloned
 }
 
 // CancelCurrentRequest interrupts the active browser bootstrap or chat stream.
@@ -411,11 +477,42 @@ func ProcessInputContext(ctx context.Context, c *Chat, input string, cfg *config
 }
 
 func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string) (string, error) {
+	return processInputWithStreamFetcher(ctx, c, input, cfg, render, c.FetchStreamWithErrors)
+}
+
+func processInputWithTokenRoles(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, userContentLength, contextContentLength int) (string, error) {
+	return processInputWithStreamFetcherAndTokenRoles(ctx, c, input, cfg, render, c.FetchStreamWithErrors, userContentLength, contextContentLength)
+}
+
+func processInputWithFetcher(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, error)) (string, error) {
+	return processInputWithStreamFetcher(ctx, c, input, cfg, render, func(ctx context.Context, content string) (<-chan string, <-chan error, error) {
+		stream, err := fetch(ctx, content)
+		return stream, nil, err
+	})
+}
+
+func processInputWithFetcherAndTokenRoles(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, error), userContentLength, contextContentLength int) (string, error) {
+	return processInputWithStreamFetcherAndTokenRoles(ctx, c, input, cfg, render, func(ctx context.Context, content string) (<-chan string, <-chan error, error) {
+		stream, err := fetch(ctx, content)
+		return stream, nil, err
+	}, userContentLength, contextContentLength)
+}
+
+func processInputWithStreamFetcher(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, <-chan error, error)) (string, error) {
+	return processInputWithStreamFetcherAndTokenRoles(ctx, c, input, cfg, render, fetch, len(input), 0)
+}
+
+func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, <-chan error, error), userContentLength, contextContentLength int) (string, error) {
 	if strings.TrimSpace(input) == "" {
 		return "", nil
 	}
+	if c.Activity != nil {
+		c.Activity.Publish(activity.Event{Category: "conversation", Status: "prompt", Summary: "User prompt submitted", Prompt: input})
+	}
 
 	originalMessages := append([]Message(nil), c.Messages...)
+	originalPendingImages := c.pendingImages
+	c.pendingImages = nil
 	originalMessageCount := len(originalMessages)
 	isFirstMessage := originalMessageCount == 0
 	actualMessage := input
@@ -423,12 +520,19 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 		actualMessage = cfg.GlobalPrompt + "\n\n" + input
 	}
 	if c.Analytics != nil {
-		c.Analytics.RecordMessage("user", len(input))
+		if userContentLength > 0 && contextContentLength > 0 {
+			c.Analytics.RecordPromptWithContext(userContentLength, contextContentLength)
+		} else if userContentLength > 0 {
+			c.Analytics.RecordMessage("user", userContentLength)
+		} else if contextContentLength > 0 {
+			c.Analytics.RecordMessage("context", contextContentLength)
+		}
 	}
 
 	c.Messages = append(c.Messages, Message{
 		Role:    "user",
 		Content: actualMessage,
+		Images:  originalPendingImages,
 	})
 
 	if c.ContextOptimizer != nil && c.ContextOptimizer.IsOptimizationNeeded(c.convertMessagesToIntelligence()) {
@@ -439,11 +543,33 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 		}
 	}
 
+	requestedModel := c.Model
+	if hasImageAttachments(c.Messages) {
+		imageModel := models.ImageInputModel(requestedModel)
+		if imageModel != requestedModel {
+			ui.Warningln("%s cannot receive images through Duck.ai. Using %s for this image conversation.", models.DisplayName(requestedModel), models.DisplayName(imageModel))
+			c.Model = imageModel
+			defer func() { c.Model = requestedModel }()
+		}
+	}
+
 	startTime := time.Now()
 	usedModel := string(c.Model)
-	stream, err := c.FetchStreamContext(ctx, actualMessage)
+	var requestActivity activity.Event
+	if c.Activity != nil {
+		requestActivity = c.Activity.Publish(activity.Event{Category: "request", Status: "started", Summary: "Chat request in progress", Model: usedModel})
+	}
+	stream, streamErrors, err := fetch(ctx, actualMessage)
 	if err != nil {
+		if c.Activity != nil {
+			status, summary := "failed", "Chat request failed"
+			if ctx.Err() != nil {
+				status, summary = "cancelled", "Chat request cancelled"
+			}
+			c.Activity.Publish(activity.Event{Category: "request", Status: status, Summary: summary, Model: usedModel, OperationID: requestActivity.OperationID})
+		}
 		c.Messages = originalMessages
+		c.pendingImages = originalPendingImages
 		if c.Analytics != nil {
 			duration := time.Since(startTime)
 			c.Analytics.RecordChatInteraction(duration, false, "unknown")
@@ -453,9 +579,38 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 	}
 
 	finalResponse := render(stream)
-	if err := ctx.Err(); err != nil {
+	var streamErr error
+	if streamErrors != nil {
+		for err := range streamErrors {
+			if err != nil {
+				streamErr = err
+			}
+		}
+	}
+	if streamErr != nil {
+		if c.Activity != nil {
+			c.Activity.Publish(activity.Event{Category: "request", Status: "failed", Summary: "Chat response stream failed", Model: usedModel, OperationID: requestActivity.OperationID})
+		}
 		c.Messages = originalMessages
+		c.pendingImages = originalPendingImages
+		if c.Analytics != nil {
+			duration := time.Since(startTime)
+			c.Analytics.RecordChatInteraction(duration, false, "stream_error")
+			c.Analytics.RecordModelInteraction(usedModel, duration, false, "stream_error")
+		}
+		return "", fmt.Errorf("error reading response stream: %w", streamErr)
+	}
+	if err := ctx.Err(); err != nil {
+		if c.Activity != nil {
+			c.Activity.Publish(activity.Event{Category: "request", Status: "cancelled", Summary: "Chat request cancelled", Model: usedModel, OperationID: requestActivity.OperationID})
+		}
+		c.Messages = originalMessages
+		c.pendingImages = originalPendingImages
 		return "", err
+	}
+	if c.Activity != nil {
+		c.Activity.Publish(activity.Event{Category: "request", Status: "completed", Summary: "Chat response received", Model: usedModel, OperationID: requestActivity.OperationID})
+		c.Activity.Publish(activity.Event{Category: "conversation", Status: "response", Summary: "Assistant response received", Model: usedModel, Response: finalResponse})
 	}
 	if c.Analytics != nil {
 		duration := time.Since(startTime)
@@ -473,6 +628,15 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 	return finalResponse, nil
 }
 
+func hasImageAttachments(messages []Message) bool {
+	for _, message := range messages {
+		if len(message.Images) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func shortenModelName(model string) string {
 	if resolved, ok := models.ResolveModel(model); ok {
 		return models.DisplayName(resolved)
@@ -485,17 +649,26 @@ func (c *Chat) FetchStream(content string) (<-chan string, error) {
 }
 
 func (c *Chat) FetchStreamContext(ctx context.Context, content string) (<-chan string, error) {
+	stream, _, err := c.FetchStreamWithErrors(ctx, content)
+	return stream, err
+}
+
+func (c *Chat) FetchStreamWithErrors(ctx context.Context, content string) (<-chan string, <-chan error, error) {
 	events, err := c.FetchEventStreamContext(ctx, content)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	stream := make(chan string)
+	streamErrors := make(chan error, 1)
 	go func() {
 		defer close(stream)
+		defer close(streamErrors)
 		var latestImage *StreamEvent
 		for event := range events {
 			switch event.Type {
+			case "error":
+				streamErrors <- errors.New(event.Message)
 			case "message":
 				if event.Message != "" {
 					select {
@@ -543,7 +716,7 @@ func (c *Chat) FetchStreamContext(ctx context.Context, content string) (<-chan s
 		}
 	}()
 
-	return stream, nil
+	return stream, streamErrors, nil
 }
 
 func formatSourceEvent(event StreamEvent) string {
@@ -779,7 +952,12 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 	}
 
 	if shouldLogRequestDetails(c) {
-		color.Cyan("Payload: %s", string(jsonPayload))
+		debugPayload, debugErr := marshalDebugPayload(payload)
+		if debugErr != nil {
+			color.Yellow("Could not marshal redacted debug payload: %v", debugErr)
+		} else {
+			color.Cyan("Payload: %s", string(debugPayload))
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", models.ChatURL, bytes.NewBuffer(jsonPayload))
@@ -863,6 +1041,9 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 
 			if c.RetryCount < 2 {
 				c.RetryCount++
+				if c.Activity != nil {
+					c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Chat request retrying", Model: string(c.Model)})
+				}
 				ui.Warningln("Retrying request (attempt %d/3)...", c.RetryCount)
 				return c.FetchContext(ctx, content)
 			}
@@ -915,6 +1096,22 @@ func shouldLogRequestDetails(c *Chat) bool {
 	return os.Getenv("DEBUG") == "true" && (c == nil || !c.suppressSensitiveDebugLogs)
 }
 
+func marshalDebugPayload(payload ChatPayload) ([]byte, error) {
+	redacted := payload
+	redacted.Messages = append([]Message(nil), payload.Messages...)
+	for i := range redacted.Messages {
+		message := &redacted.Messages[i]
+		if len(message.Images) == 0 {
+			continue
+		}
+		for _, image := range message.Images {
+			message.Content += fmt.Sprintf("\n[Image attachment: %s (%s); bytes redacted]", image.Name, image.MIMEType)
+		}
+		message.Images = nil
+	}
+	return json.Marshal(redacted)
+}
+
 func (c *Chat) AddURLContext(url string) error {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		url = "https://" + url
@@ -931,10 +1128,12 @@ func (c *Chat) AddURLContext(url string) error {
 		ui.AIln("Retrieved %d characters of content", contentLength)
 	}
 
+	message := fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content.Content)
 	c.Messages = append(c.Messages, Message{
 		Role:    "user",
-		Content: fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content.Content),
+		Content: message,
 	})
+	c.recordContextMessage(message)
 
 	if c.Analytics != nil {
 		c.Analytics.RecordURLProcessed()
@@ -1069,10 +1268,12 @@ func (c *Chat) addURLContext(url string, content string) {
 		ui.AIln("Adding %d characters from URL", contentLength)
 	}
 
+	message := fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content)
 	c.Messages = append(c.Messages, Message{
 		Role:    "user",
-		Content: fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content),
+		Content: message,
 	})
+	c.recordContextMessage(message)
 }
 
 func HandleExportCommand(c *Chat, cfg *config.Config) {
@@ -1212,6 +1413,23 @@ func (c *Chat) AddContextMessage(content string) {
 		Role:    "user",
 		Content: content,
 	})
+	c.recordContextMessage(content)
+}
+
+// AddContextMessageWithImages stores command-chain context and its attachments.
+func (c *Chat) AddContextMessageWithImages(content string, images []media.ImageAttachment) {
+	c.Messages = append(c.Messages, Message{
+		Role:    "user",
+		Content: content,
+		Images:  cloneImageAttachments(images),
+	})
+	c.recordContextMessage(content)
+}
+
+func (c *Chat) recordContextMessage(content string) {
+	if c.Analytics != nil {
+		c.Analytics.RecordMessage("context", len(content))
+	}
 }
 
 // RestoreContext restores the chat context from a given conversation session.
@@ -1222,6 +1440,7 @@ func (c *Chat) RestoreContext(session *persistence.ConversationSession) {
 		c.Messages[i] = Message{
 			Content: msg.Content,
 			Role:    msg.Role,
+			Images:  cloneImageAttachments(msg.Images),
 		}
 	}
 	c.SessionID = session.ID
@@ -1240,6 +1459,7 @@ func (c *Chat) convertMessagesToIntelligence() []intelligence.Message {
 		result[i] = intelligence.Message{
 			Content: msg.Content,
 			Role:    msg.Role,
+			Images:  cloneImageAttachments(msg.Images),
 			// Preserve conversation order when the optimizer sorts messages by
 			// importance and later restores chronological order.
 			Timestamp: baseTime.Add(time.Duration(i) * time.Nanosecond),
@@ -1255,6 +1475,7 @@ func (c *Chat) convertFromIntelligenceMessages(messages []intelligence.Message) 
 		result[i] = Message{
 			Content: msg.Content,
 			Role:    msg.Role,
+			Images:  cloneImageAttachments(msg.Images),
 		}
 	}
 	return result

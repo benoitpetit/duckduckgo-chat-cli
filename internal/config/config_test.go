@@ -123,3 +123,29 @@ func TestDashboardHistoryPathIsSeparateFromExports(t *testing.T) {
 		t.Fatalf("dashboard history path overlaps export directory: %q", path)
 	}
 }
+
+func TestDashboardPasswordConfigOmitsEmptyFields(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"dashboard":{"password_salt":"salt-value","password_hash":"hash-value"}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dashboard.PasswordSalt != "salt-value" || cfg.Dashboard.PasswordHash != "hash-value" {
+		t.Fatalf("password verifier config did not round trip: %+v", cfg.Dashboard)
+	}
+
+	data, err := json.Marshal(Config{Dashboard: DashboardConfig{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded struct {
+		Dashboard map[string]json.RawMessage `json:"dashboard"`
+	}
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"password_salt", "password_hash"} {
+		if _, exists := encoded.Dashboard[key]; exists {
+			t.Errorf("empty dashboard config unexpectedly serialized %q", key)
+		}
+	}
+}

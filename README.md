@@ -1,12 +1,12 @@
 # DuckDuckGo AI Chat CLI
 
-<p align="center">
-  <img src="logobig.png" width="800" alt="DuckDuckGo AI Chat CLI Logo">
+<div align="center">
+  <img src="./docs/images/logobig.png" width="1000" alt="DuckDuckGo AI Chat CLI Logo">
   <br>
   <strong>A powerful CLI tool to interact with DuckDuckGo's AI</strong><br>
-  <em>Advanced context integration, multi-models and enhanced productivity</em><br>
-  <em>Local usage dashboard, intelligent analytics, context optimization & persistent history</em>
-</p>
+  <em>Advanced context integration, multi-models and enhanced productivity <br>
+Local usage dashboard, intelligent analytics, context optimization & persistent history</em>
+</div>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go Version">
@@ -24,134 +24,53 @@
 
 <p align="center">
   <a href="#key-features">Features</a> •
-  <a href="#installation">Installation</a> •
+  <a href="#available-models">Models</a> •
+  <a href="#installation">Install</a> •
   <a href="#usage">Usage</a> •
   <a href="#configuration">Configuration</a> •
-  <a href="#intelligent-features-deep-dive">Intelligent Features</a> •
-  <a href="reverse/README.md">Reverse Engineering</a>
+  <a href="#local-usage-dashboard">Dashboard</a> •
+  <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
----
+## Discover
+
+<p align="center">
+  <a href="https://github.com/benoitpetit/voie" target="_blank">
+    <img src="./docs/images/voie.gif" alt="Voie: free model API" width="70%">
+ </a>
+</p>
 
 ## Key Features
 
-### Chat Experience
+- **Chat and models:** Stream responses in the terminal, switch between the available AI models, and cancel an active request with Ctrl-C.
+- **Context:** Add local text or image files, URLs, and web search results. Chain `/file`, `/url`, and `/search` with `&&` before a final prompt.
+- **Sessions and usage:** Review session statistics with `/stats`, search and restore local conversation history, and export or copy responses.
+- **Context management:** Optimize long conversations automatically and keep searchable local session archives.
+- **Local dashboard:** View usage charts, live activity, session history, and CLI command documentation in a browser. Conversation visibility and AI reports are configurable.
+- **Libraries:** Organize local text files into collections and search or load selected content into a conversation.
+- **API:** Run the optional HTTP API on `127.0.0.1` for local integrations; an API key is required before binding beyond the local machine.
+- **Terminal workflow:** Use command menus, autocompletion, saved prompts, and formatted output on Linux, Windows, and macOS.
+- **Duck.ai tools:** Optionally enable native web search with citations and image generation.
 
-- **Real-time streaming** - Live response display with smooth markdown formatting
-- **Multiple AI models** - GPT-5.6 Luna, GPT-5.4 Nano and Mini, Claude Haiku 4.5, Mistral Small 4 & more
-- **Terminal-native** - Optimized for command-line workflows with interactive menus
-- **Smart autocompletion** - Interactive command menus and context-aware suggestions
-- **Auto-authentication** - Seamless session management with dynamic header refresh
-- **Model switching** - Interactive model selection during conversations
+## New Dashboard Features
 
-### Intelligent Features **NEW**
+The dashboard runs locally and shows your own usage data. These screenshots use representative sample metrics. Click an image to open it full size.
 
-- **Smart Analytics** - Local session statistics with response performance, errors, estimated tokens, and context usage
-- **Context Optimization** - Automatic context compression and importance scoring to maintain conversation quality
-- **Persistent History** - Intelligent session management with compression, recovery, and searchable archive
-- **Performance Tracking** - Monitor success rates, error patterns, token usage, and optimization effectiveness
-
-### Context Integration
-
-- **Web search** - Integrate DuckDuckGo search results into conversations
-- **Native Duck.ai tools** - Optional native Web Search with source citations and image generation, with a loading indicator during browser authentication
-- **File processing** - Add bounded local text files (Go, Python, JS, TS, JSON, Markdown, and similar formats)
-- **URL scraping** - Extract and analyze webpage content with Chrome-based scraping
-- **Session persistence** - Maintain conversation history across sessions
-- **Library management** - Organize and search through document collections
-- **Command Chaining** - Chain multiple commands (e.g., `/url`, `/file`, `/search`) using `&&` to build a combined context before sending a final prompt with `--`.
-
-### Productivity Tools
-
-- **Smart clipboard** - Copy responses, code blocks, or full conversations with interactive selection
-- **Advanced export** - Save conversations in multiple formats with search-based filtering
-- **History management** - Browse your conversation history with intelligent search
-- **Content search** - Search within conversations and document libraries
-- **Interactive config** - Visual configuration menus for all settings
-- **Rich formatting** - Colored output with markdown rendering
-- **Performance** - Efficient memory usage, bounded network operations, and fast response times
-- **Cancellation** - Press Ctrl-C once to cancel an active request without closing the CLI
-
-### API Server
-
-- **REST API** - Built-in HTTP server for external integrations
-- **Real-time endpoints** - Chat, history, and status endpoints
-- **Request logging** - Configurable API request/response logging
-- **Auto-documentation** - Interactive API documentation at root endpoint
-- **Safe local default** - Listens on `127.0.0.1`; configure an API key before exposing it beyond the local machine
-
-### Library System
-
-- **Document collections** - Organize files into searchable libraries
-- **Advanced search** - Search across all libraries with pattern matching
-- **Library stats** - File counts, sizes, and modification dates
-- **Selective loading** - Load specific libraries or files into context
-- **Text-file support** - Bounded, validated local text files with clear binary-file errors
-
-### Advanced Features
-
-- **Dynamic headers** - Automatic browser session management
-- **Cross-platform** - Linux, Windows, macOS support
-
-### Command Chaining
-
-- **Chain multiple commands** - Execute a series of commands in a single line using `&&`
-- **Context accumulation** - Combine context from files, URLs, and web searches
-- **Final prompt** - Use `--` to add a final prompt to the accumulated context for the AI to process
-
-```bash
-# Chain multiple commands to build a rich context before asking a question
-You: /url https://devbyben.fr/about && /search devbyben.fr twitter account && /file ~/Documents/my_notes.md -- Based on all this, write a summary.
-```
-
-## Intelligent Features Deep Dive
-
-### Session Analytics & Statistics
-
-The CLI now tracks comprehensive real-time metrics:
-
-- **Performance Metrics**: Chat response timing, success/failure rates, and per-model observations
-- **Content Analysis**: Message counts, token estimation, context optimization savings
-- **Error Tracking**: 418/429 error monitoring, VQD refresh rates, header refresh frequency
-- **Usage Patterns**: Command usage statistics, model changes, file/URL processing
-- **Session Duration**: Total time spent in the session, average response times
-
-**Commands:**
-
-- `/stats` - View current session analytics anytime
-- Automatic display on `/exit` with detailed session summary
-
-### Smart Context Optimization
-
-Automatically manages conversation context for optimal performance:
-
-- **Intelligent Compression**: Compresses old context when approaching token limits
-- **Importance Scoring**: Preserves critical information while removing redundant content
-- **Memory Efficiency**: Reduces token usage by up to 40% while maintaining quality
-- **Configurable Thresholds**: Customize optimization triggers and compression ratios
-- **Automatic Context Management**: Automatically compresses and optimizes context as needed
-
-### Persistent History Management
-
-Never lose important conversations:
-
-- **Session Persistence**: Automatically saves conversations with metadata
-- **Compression Storage**: Efficient gzip compression reduces storage by 70%
-- **Intelligent Indexing**: Fast search and retrieval of historical conversations
-- **Searchable Archive**: Use `/history` to browse and search past conversations
-- **Session Loading**: Load previous sessions interactively or by ID with `/load`
+|                                                                                                Overview                                                                                                 |                                                                                     Live activity                                                                                     |                                                                    CLI command reference                                                                    |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <a href="docs/images/dashboard-overview.png"><img src="docs/images/dashboard-overview.png" alt="DuckChat dashboard overview with session statistics, usage activity, and model charts" width="320"></a> | <a href="docs/images/dashboard-activity.png"><img src="docs/images/dashboard-activity.png" alt="DuckChat dashboard live activity page showing prompts and responses" width="320"></a> | <a href="docs/images/dashboard-commands.png"><img src="docs/images/dashboard-commands.png" alt="DuckChat dashboard command reference page" width="320"></a> |
 
 ## Available Models
 
-| Model Name           | Integration ID   | Alias            | Strength             | Best For                 | Characteristics                     |
-| :------------------- | :--------------- | :--------------- | :------------------- | :----------------------- | :---------------------------------- |
-| **GPT-5.6 Luna**     | gpt-5.6-luna     | gpt-5.6-luna     | General purpose      | Everyday questions       | • Fast<br>• Well-balanced           |
-| **GPT-5.4 Nano**     | gpt-5.4-nano     | gpt-5.4-nano     | Lightweight tasks    | Quick answers            | • Fast<br>• Efficient               |
-| **GPT-5.4 Mini**     | gpt-5.4-mini     | gpt-5.4-mini     | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
-| **Claude Haiku 4.5** | claude-haiku-4-5 | claude-haiku-4-5 | Creative writing     | Explanations & summaries | • Clear responses<br>• Concise      |
-| **Mistral Small 4**  | mistral-small-2603 | mistral-small-4  | Knowledge & analysis | Complex topics           | • Reasoning<br>• Logic-focused      |
+| Model Name           | Integration ID       | Alias            | Strength             | Best For                 | Characteristics                     |
+| :------------------- | :------------------- | :--------------- | :------------------- | :----------------------- | :---------------------------------- |
+| **GPT-5.6 Luna**     | gpt-5.6-luna         | gpt-5.6-luna     | General purpose      | Everyday questions       | • Fast<br>• Well-balanced           |
+| **GPT-5.4 Nano**     | gpt-5.4-nano         | gpt-5.4-nano     | Lightweight tasks    | Quick answers            | • Fast<br>• Efficient               |
+| **GPT-5.4 Mini**     | gpt-5.4-mini         | gpt-5.4-mini     | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
+| **Claude Haiku 4.5** | claude-haiku-4-5     | claude-haiku-4-5 | Creative writing     | Explanations & summaries | • Clear responses<br>• Concise      |
+| **Mistral Small 4**  | mistral-small-2603   | mistral-small-4  | Knowledge & analysis | Complex topics           | • Reasoning<br>• Logic-focused      |
 | **GPT OSS 120B**     | tinfoil/gpt-oss-120b | gpt-oss-120b     | Programming          | Code-related tasks       | • Technical precision<br>• Detailed |
-| **Gemma 4 31B**      | tinfoil/gemma4-31b | gemma-4-31b      | Lightweight tasks    | Short answers            | • Efficient<br>• Compact responses  |
+| **Gemma 4 31B**      | tinfoil/gemma4-31b   | gemma-4-31b      | Lightweight tasks    | Short answers            | • Efficient<br>• Compact responses  |
 
 ## Installation
 
@@ -293,7 +212,7 @@ You: /load session_12345
 | Command                                       | Example                                                    | Description                                                                                           |
 | --------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `/search <query> [-- prompt]`                 | `/search machine learning -- What are the best practices?` | Add search results as context and optionally process them with a prompt                               |
-| `/file <path> [-- prompt]`                    | `/file src/main.go -- Explain this code`                   | Import file content as context and optionally analyze it with a prompt                                |
+| `/file <path> [-- prompt]`                    | `/file src/main.go -- Explain this code`                   | Import text or attach an image to the next prompt, or analyze it immediately                          |
 | `/library [command] [args]`                   | `/library add /path/to/docs`                               | Manage library directories for bulk file operations                                                   |
 | `/url <link> [-- prompt]`                     | `/url github.com/golang -- Summarize this page`            | Add webpage content as context and optionally process it with a prompt                                |
 | `/prompt` or `/prompt add <name> -- <prompt>` | `/prompt` or `/prompt add myprompt -- This is my prompt`   | Manage and load custom prompts. `/prompt` opens the interactive menu; subcommands are also available. |
@@ -339,15 +258,17 @@ You: /load session_12345
 Open `/config` → **Dashboard Settings**. Defaults are shown below; conversation
 viewing and conversation analysis are separate opt-in settings.
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `Autostart` | `false` | Start the loopback dashboard with the CLI |
-| `Port` | `8765` | Local dashboard port; the service binds only to `127.0.0.1` |
-| `RefreshIntervalSeconds` | `3` | Browser refresh period (1–60 seconds) |
-| `RetentionDays` | `90` | Retention for usage snapshots and conversation archives (1–3650 days) |
-| `ShowConversations` | `false` | Show archived conversations in the dashboard |
-| `AllowConversationAnalysis` | `false` | Permit an explicitly submitted AI report to use selected excerpts |
-| `AnalysisTokenBudget` | `8000` | Approximate input-token ceiling for the conversation report |
+| Option                      | Default | Description                                                                                                                                                     |
+| --------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Autostart`                 | `false` | Start the loopback dashboard with the CLI                                                                                                                       |
+| `Port`                      | `8765`  | Local dashboard port; the service binds only to `127.0.0.1`                                                                                                     |
+| `RefreshIntervalSeconds`    | `3`     | Browser refresh period (1–60 seconds)                                                                                                                           |
+| `RetentionDays`             | `90`    | Retention for usage snapshots and conversation archives (1–3650 days)                                                                                           |
+| `ShowConversations`         | `false` | Show archived conversations in the dashboard                                                                                                                    |
+| Dashboard password          | Not set | Set or remove it from this menu; when set, a browser sign-in is required                                                                                        |
+| `ShowConversationContent`   | `false` | Show prompt and assistant response text in the live Activity page; common absolute paths and labelled secrets are masked, and disabling it clears retained text |
+| `AllowConversationAnalysis` | `false` | Permit an explicitly submitted AI report to use selected excerpts                                                                                               |
+| `AnalysisTokenBudget`       | `8000`  | Approximate input-token ceiling for the conversation report                                                                                                     |
 
 ### Native Duck.ai Tools
 
@@ -373,11 +294,16 @@ needs live web results.
 
 ### File and image support
 
-`/file` and `/library` currently import local text and source files into the
-conversation context. Individual files are limited to 10 MiB and a library
-load contributes at most 2 MiB to one request. They do not yet upload PDF or
-image attachments through Duck.ai's native attachment protocol. Native image
-generation is supported separately as described above.
+`/file` imports local text files and can attach PNG, JPEG, or WebP images to a
+prompt. Image files must be at most 10 MiB and have a matching extension and
+file signature. Use `/file path/to/image.png` to attach an image to your next
+prompt, or `/file path/to/image.png -- Describe this image` to send it with an
+immediate prompt. Images are stored in local conversation archives so resumed
+sessions retain their context. `/library` continues to load text and source
+files only. Duck.ai does not accept image uploads for every model. If the
+selected model cannot process images, the CLI routes that image conversation
+through GPT-5.4 mini and tells you when it does so. Native image generation is
+supported separately as described above.
 
 ### Dictation
 
@@ -465,7 +391,16 @@ The CLI can serve a private usage dashboard from the same process. It listens on
 
 Usage snapshots and conversation archives are stored locally. Their shared retention defaults to 90 days (up to 100 conversation archives are kept). The conversation list is disabled by default. When it is enabled, the dashboard can search archives, display transcripts, and copy `/load <session_id>` to resume one in the terminal.
 
+The overview shows a GitHub-style activity grid for the retained window (90 days by default, configurable from `/config`), approximate token totals split by user, assistant, and context, per-model request and success comparisons, and failed-request and automatic-refresh counts. Token values are estimates based on local text sizes, not provider billing totals. Context estimates include inserted file, URL, and search text, along with image labels; binary image payload sizes are not converted to tokens. Dates before local daily tracking began are marked as untracked.
+
 The dashboard includes a web reference for CLI commands, session and per-model statistics, and optional AI reports. Metrics reports use aggregate statistics only. Conversation analysis is independent from transcript viewing: **Allow conversation analysis** can authorize an explicit report without turning on the conversation page. Before sending selected excerpts to Duck.ai, the dashboard shows the included session count and estimated input tokens; the default configurable budget is 8,000 estimated tokens. The provider's actual token count can differ.
+
+The **Activity** page streams structured CLI events in real time. It keeps at most
+200 recent events in memory and does not write an activity log to disk. Prompt
+and response text stay hidden unless **Show prompt and response content** is
+enabled in `/config`; turning it off clears retained conversation text.
+
+To require a password, open `/config` → **Dashboard Settings** → **Set/change dashboard password**. The password is stored as a salted verifier in the local configuration, and the browser session ends when the dashboard server stops. Choose **Remove dashboard password** to turn sign-in off.
 
 ## Development & Contributing
 
@@ -473,11 +408,11 @@ The dashboard includes a web reference for CLI commands, session and per-model s
 
 Build and verification use the same scripts locally and in GitHub Actions:
 
-- **Local build:** `./scripts/build.sh 1.6.1`
+- **Local build:** `./scripts/build.sh 1.7.1`
 - **Pre-release checks:** `./scripts/pre-release-check.sh`
-- **GitHub release:** Run **Actions → Build and Release → Run workflow** and provide a version such as `1.6.1`
-- **CLI release dispatch:** After pushing a clean `master`, run `./scripts/release.sh 1.6.1` with an authenticated GitHub CLI.
-- **Windows icon:** The Windows `.exe` embeds `logo.png`; Linux and macOS command-line binaries do not carry an application icon.
+- **GitHub release:** Run **Actions → Build and Release → Run workflow** and provide a version such as `1.7.1`
+- **CLI release dispatch:** After pushing a clean `master`, run `./scripts/release.sh 1.7.1` with an authenticated GitHub CLI.
+- **Windows icon:** The Windows `.exe` embeds `docs/images/logo.png`; Linux and macOS command-line binaries do not carry an application icon.
 
 ### Development Documentation
 
@@ -508,6 +443,12 @@ DEBUG=true ./duckduckgo-chat-cli_linux_amd64
 If a request is taking too long, press Ctrl-C once to cancel that request and
 continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 
+## Project Links
+
+- [Support the project](https://devbyben.fr/don)
+- [Voie: free model API](https://github.com/benoitpetit/voie)
+- [Protocol notes](reverse/README.md)
+
 ## License & Ethics
 
 ### Privacy & Responsibility
@@ -520,14 +461,17 @@ continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 
 - This is an unofficial client and not affiliated with or endorsed by DuckDuckGo\*
 
-<p align="center">
+<div align="center">
   <table width="100%">
     <tr>
       <td align="center" style="border: 1px solid #d0954c; padding: 20px;">
         <strong>Made for the community</strong>
         <br>
-        <img src="logo.png" width="200" alt="DuckDuckGo AI Chat CLI Logo">
+        <img src="./docs/images/logo.png" width="200" alt="DuckDuckGo AI Chat CLI Logo">
       </td>
     </tr>
   </table>
-</p>
+
+<p>If you find this project useful, consider <a href="https://devbyben.fr/don">supporting its maintenance and development</a>.</p>
+
+</div>

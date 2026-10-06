@@ -6,10 +6,10 @@ cd "$ROOT_DIR"
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
-  read -r -p "Release version (e.g. 1.6.1): " VERSION
+  read -r -p "Release version (e.g. 1.7.1): " VERSION
 fi
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Invalid version. Use X.Y.Z, for example 1.6.1." >&2
+  echo "Invalid version. Use X.Y.Z, for example 1.7.1." >&2
   exit 1
 fi
 if ! command -v gh >/dev/null 2>&1; then

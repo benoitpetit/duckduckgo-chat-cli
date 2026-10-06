@@ -11,6 +11,7 @@ import (
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
+	"duckduckgo-chat-cli/internal/media"
 	"duckduckgo-chat-cli/internal/ui"
 )
 
@@ -19,7 +20,11 @@ const maxTextFileSize = 10 << 20
 // Keep bulk library imports bounded even when every individual file is valid.
 const maxLibraryContextSize = 2 << 20
 
-func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) {
+func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) error {
+	return handleFileCommand(c, input, cfg, chainCtx, ProcessInput)
+}
+
+func handleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context, process func(*Chat, string, *config.Config)) error {
 	var path, userRequest string
 	var err error
 
@@ -27,14 +32,17 @@ func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chat
 	parsed, parseErr := command.Parse(input)
 	if parseErr != nil || len(parsed.Commands) != 1 {
 		ui.Errorln("Invalid file command: %v", parseErr)
-		return
+		if parseErr != nil {
+			return fmt.Errorf("invalid file command: %w", parseErr)
+		}
+		return fmt.Errorf("invalid file command")
 	}
 
 	if strings.TrimSpace(parsed.Commands[0].Args) == "" {
 		path, err = ui.SelectFile()
 		if err != nil {
 			ui.Errorln("Error selecting file: %v", err)
-			return
+			return err
 		}
 	} else {
 		path = strings.TrimSpace(parsed.Commands[0].Args)
@@ -44,13 +52,40 @@ func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chat
 	// If no path was selected or provided, exit the command.
 	if path == "" {
 		ui.Warningln("No file selected or specified.")
-		return
+		return fmt.Errorf("no file selected or specified")
+	}
+
+	if isSupportedImageExtension(path) {
+		image, err := media.ReadImage(path)
+		if err != nil {
+			ui.Errorln("File error: %v", err)
+			return err
+		}
+		if chainCtx != nil {
+			chainCtx.AddImage(path, image)
+			ui.AIln("Successfully added image to chain context: %s", path)
+			return nil
+		}
+
+		c.QueueImageAttachments([]media.ImageAttachment{image})
+		if c.Analytics != nil {
+			c.Analytics.RecordFileProcessed()
+		}
+		ui.Warningln("Adding image: %s", path)
+		ui.AIln("Successfully added image: %s", path)
+		if userRequest != "" {
+			ui.Systemln("Processing your request about the image...")
+			process(c, userRequest, cfg)
+		} else {
+			ui.Warningln("Image added to context. Your next prompt will include it.")
+		}
+		return nil
 	}
 
 	content, err := readTextContextFile(path)
 	if err != nil {
 		ui.Errorln("File error: %v", err)
-		return
+		return err
 	}
 
 	if chainCtx != nil {
@@ -63,10 +98,20 @@ func HandleFileCommand(c *Chat, input string, cfg *config.Config, chainCtx *chat
 		// If user provided a specific request, process it with the file context
 		if userRequest != "" {
 			ui.Systemln("Processing your request about the file...")
-			ProcessInput(c, userRequest, cfg)
+			process(c, userRequest, cfg)
 		} else {
 			ui.Warningln("File content added to context. You can now ask questions about it.")
 		}
+	}
+	return nil
+}
+
+func isSupportedImageExtension(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".webp":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -97,10 +142,12 @@ func (c *Chat) addFileContext(path string, content []byte) {
 		ui.AIln("Adding %d characters from file", contentLength)
 	}
 
+	message := fmt.Sprintf("[File Context]\nFile: %s\n\n%s", filepath.Base(path), string(content))
 	c.Messages = append(c.Messages, Message{
 		Role:    "user",
-		Content: fmt.Sprintf("[File Context]\nFile: %s\n\n%s", filepath.Base(path), string(content)),
+		Content: message,
 	})
+	c.recordContextMessage(message)
 
 	if c.Analytics != nil {
 		c.Analytics.RecordFileProcessed()

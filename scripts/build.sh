@@ -34,7 +34,7 @@ LDFLAGS="-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Curre
 echo "📦 Building Linux AMD64..."
 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64" ./cmd/duckchat
 
-echo "📦 Building Windows AMD64 with logo.png application icon..."
+echo "📦 Building Windows AMD64 with docs/images/logo.png application icon..."
 "$ROOT_DIR/scripts/build_windows_binary.sh" "$VERSION" "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe"
 
 echo "📦 Building Darwin ARM64..."

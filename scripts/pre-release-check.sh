@@ -50,14 +50,14 @@ GOOS=linux GOARCH=amd64 go build -o "$TEMP_DIR/duckchat-linux-amd64" ./cmd/duckc
 GOOS=darwin GOARCH=arm64 go build -o "$TEMP_DIR/duckchat-darwin-arm64" ./cmd/duckchat
 GOOS=darwin GOARCH=amd64 go build -o "$TEMP_DIR/duckchat-darwin-amd64" ./cmd/duckchat
 
-echo "🪟 Building Windows executable with the logo.png icon..."
+echo "🪟 Building Windows executable with docs/images/logo.png..."
 "$ROOT_DIR/scripts/build_windows_binary.sh" verify "$TEMP_DIR/duckchat-windows-amd64.exe"
 test -s "$TEMP_DIR/duckchat-windows-amd64.exe" || fail "Windows executable was not produced"
 if command -v file >/dev/null 2>&1; then
   file "$TEMP_DIR/duckchat-windows-amd64.exe" | grep -q 'PE32+' || fail "Windows output is not a PE32+ executable"
 fi
 
-for required_file in README.md docs/BUILD.md go.mod scripts/build.sh scripts/build_windows_binary.sh .github/workflows/release.yml logo.png; do
+for required_file in README.md docs/BUILD.md go.mod scripts/build.sh scripts/build_windows_binary.sh .github/workflows/release.yml docs/images/logo.png; do
   [[ -s "$required_file" ]] || fail "Required project file is missing or empty: $required_file"
 done
 

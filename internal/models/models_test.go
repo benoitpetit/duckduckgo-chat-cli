@@ -64,3 +64,22 @@ func TestResolveModelRejectsUnknownModel(t *testing.T) {
 		t.Fatalf("ResolveModel returned (%q, %t)", got, ok)
 	}
 }
+
+func TestImageInputModelRoutesUnsupportedDuckAIModels(t *testing.T) {
+	for _, model := range []Model{MistralSmall, GPTOSS120B, Gemma431B} {
+		if SupportsImageInput(model) {
+			t.Errorf("SupportsImageInput(%q) = true, want unsupported", model)
+		}
+		if got := ImageInputModel(model); got != GPT54Mini {
+			t.Errorf("ImageInputModel(%q) = %q, want %q", model, got, GPT54Mini)
+		}
+	}
+	for _, model := range []Model{GPT5Luna, GPT54Nano, GPT54Mini, ClaudeHaiku} {
+		if !SupportsImageInput(model) {
+			t.Errorf("SupportsImageInput(%q) = false, want supported", model)
+		}
+		if got := ImageInputModel(model); got != model {
+			t.Errorf("ImageInputModel(%q) = %q, want to keep supported model", model, got)
+		}
+	}
+}

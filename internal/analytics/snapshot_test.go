@@ -1,6 +1,8 @@
 package analytics
 
 import (
+	"encoding/json"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +34,32 @@ func TestSnapshotCopiesSessionAndModelMetrics(t *testing.T) {
 	snapshot.ByModel["model-a"] = ModelMetrics{}
 	if got := tracker.Snapshot(); got.CommandsUsed["/help"] != 1 || got.ByModel["model-a"].Interactions != 2 {
 		t.Fatalf("snapshot exposed mutable tracker maps: %+v", got)
+	}
+}
+
+func TestSnapshotCopiesDailyActivityMap(t *testing.T) {
+	tracker := NewChatAnalytics()
+	tracker.RecordMessage("user", 12)
+	snapshot := tracker.Snapshot()
+	snapshot.DailyUserMessages[time.Now().In(time.Local).Format("2006-01-02")] = 99
+	if got := tracker.Snapshot().DailyUserMessages[time.Now().In(time.Local).Format("2006-01-02")]; got != 1 {
+		t.Fatalf("tracker daily messages = %d after snapshot mutation, want 1", got)
+	}
+}
+
+func TestOldSnapshotJSONDefaultsNewFields(t *testing.T) {
+	var snapshot Snapshot
+	if err := json.Unmarshal([]byte(`{"messages_total":2,"total_tokens_estimate":3}`), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.MessagesTotal != 2 || snapshot.TotalTokensEstimate != 3 {
+		t.Fatalf("old snapshot counters changed: %+v", snapshot)
+	}
+	value := reflect.ValueOf(snapshot)
+	for _, name := range []string{"UserTokensEstimate", "AssistantTokensEstimate", "ContextTokensEstimate", "DailyActivityAvailableFrom"} {
+		if field := value.FieldByName(name); !field.IsValid() || !field.IsZero() {
+			t.Errorf("old snapshot field %s should default to zero value", name)
+		}
 	}
 }
 

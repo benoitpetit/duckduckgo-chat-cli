@@ -74,6 +74,25 @@ func TestInitializeAddsDashboardDefaultsToLegacyConfig(t *testing.T) {
 	}
 }
 
+func TestInitializePreservesAvailableLegacyModel(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"default_model":"gpt-5.6-luna"}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Initialize()
+	if cfg.DefaultModel != "gpt-5.6-luna" {
+		t.Fatalf("DefaultModel = %q, want configured available model gpt-5.6-luna", cfg.DefaultModel)
+	}
+}
+
 func TestDashboardConfigJSONRoundTrip(t *testing.T) {
 	want := DashboardConfig{
 		Autostart: true, Port: 4321, RefreshIntervalSeconds: 7, RetentionDays: 45,
@@ -147,5 +166,133 @@ func TestDashboardPasswordConfigOmitsEmptyFields(t *testing.T) {
 		if _, exists := encoded.Dashboard[key]; exists {
 			t.Errorf("empty dashboard config unexpectedly serialized %q", key)
 		}
+	}
+}
+
+func TestInitializeAddsSpeakWindowDefaultsToLegacyConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"default_model":"gpt-5.6-luna"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().Speak
+	want := SpeakConfig{WindowWidth: 480, WindowHeight: 500, SchemaVersion: 3}
+	if got != want {
+		t.Fatalf("Speak config = %+v, want %+v", got, want)
+	}
+}
+
+func TestInitializeNormalizesSpeakWindowSizeAndPreservesChoices(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"speak":{"window_width":319,"window_height":1401,"center_on_start":false,"resizable":false}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().Speak
+	want := SpeakConfig{WindowWidth: 480, WindowHeight: 500, SchemaVersion: 3}
+	if got != want {
+		t.Fatalf("Speak config = %+v, want %+v", got, want)
+	}
+}
+
+func TestSpeakConfigJSONRoundTrip(t *testing.T) {
+	want := SpeakConfig{WindowWidth: 720, WindowHeight: 640}
+	data, err := json.Marshal(Config{Speak: want})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Config
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Speak != want {
+		t.Fatalf("Speak config round trip = %+v, want %+v", got.Speak, want)
+	}
+}
+
+func TestInitializeAddsRateLimitDefaultsToLegacyConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"default_model":"gpt-5.6-luna"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().RateLimit
+	want := RateLimitConfig{OpenBrowser: true, CooldownMinutes: 10}
+	if got != want {
+		t.Fatalf("RateLimit config = %+v, want %+v", got, want)
+	}
+}
+
+func TestInitializeKeepsRateLimitBrowserFallbackDisabled(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"rate_limit":{"open_browser":false,"cooldown_minutes":25}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().RateLimit
+	want := RateLimitConfig{OpenBrowser: false, CooldownMinutes: 25}
+	if got != want {
+		t.Fatalf("RateLimit config = %+v, want %+v", got, want)
+	}
+}
+
+func TestInitializeReplacesOutOfRangeRateLimitCooldown(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"rate_limit":{"open_browser":true,"cooldown_minutes":-5}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().RateLimit
+	want := RateLimitConfig{OpenBrowser: true, CooldownMinutes: 10}
+	if got != want {
+		t.Fatalf("RateLimit config = %+v, want %+v", got, want)
+	}
+}
+
+func TestRateLimitConfigJSONRoundTrip(t *testing.T) {
+	want := RateLimitConfig{OpenBrowser: false, CooldownMinutes: 3}
+	data, err := json.Marshal(Config{RateLimit: want})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Config
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.RateLimit != want {
+		t.Fatalf("RateLimit config round trip = %+v, want %+v", got.RateLimit, want)
 	}
 }

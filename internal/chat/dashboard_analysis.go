@@ -7,6 +7,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"duckduckgo-chat-cli/internal/analytics"
 	"duckduckgo-chat-cli/internal/config"
@@ -16,6 +17,24 @@ import (
 // DashboardAnalyzer makes one isolated Duck.ai request without sharing CLI chat state.
 type DashboardAnalyzer struct {
 	config config.Config
+}
+
+func truncateUTF8(text string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	text = text[:maxBytes]
+	for len(text) > 0 && !utf8.ValidString(text) {
+		_, size := utf8.DecodeLastRuneInString(text)
+		if size == 0 {
+			break
+		}
+		text = text[:len(text)-size]
+	}
+	return text
 }
 
 func NewDashboardAnalyzer(cfg *config.Config) *DashboardAnalyzer {
@@ -60,7 +79,7 @@ func (a *DashboardAnalyzer) Analyze(ctx context.Context, model models.Model, pro
 		return "", err
 	}
 	if len(response) > 24000 {
-		response = response[:24000]
+		response = truncateUTF8(response, 24000)
 	}
 	return response, nil
 }

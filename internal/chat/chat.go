@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,12 +71,44 @@ type Chat struct {
 	GeneratedImageDir     string
 	requestMu             sync.Mutex
 	requestCancel         context.CancelFunc
+	rateLimitFallbackOpen time.Time
+	durableStreamMu       sync.Mutex
+	durableConversation   *DurableStream
 }
 
 type Message struct {
-	Content string                  `json:"content"`
-	Role    string                  `json:"role"`
-	Images  []media.ImageAttachment `json:"-"`
+	Content   string                  `json:"content"`
+	Role      string                  `json:"role"`
+	Images    []media.ImageAttachment `json:"-"`
+	Timestamp time.Time               `json:"-"`
+}
+
+var ErrRateLimited = errors.New("Duck.ai rate limit reached (429). No retry was sent. Try again later or check your usage limits. If this seems unexpected on a shared VPN or network, try changing your network/IP to troubleshoot.")
+
+// RateLimitError keeps safe, actionable information from a 429 response while
+// remaining compatible with callers that check errors.Is(err, ErrRateLimited).
+type RateLimitError struct {
+	Code       string
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	message := ErrRateLimited.Error()
+	if e.Code != "" {
+		message += " Duck.ai error code: " + e.Code + "."
+	}
+	if e.RetryAfter > 0 {
+		seconds := int64(e.RetryAfter / time.Second)
+		if e.RetryAfter%time.Second != 0 {
+			seconds++
+		}
+		message += fmt.Sprintf(" Retry after about %d seconds.", seconds)
+	}
+	return message
+}
+
+func (e *RateLimitError) Is(target error) bool {
+	return target == ErrRateLimited
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
@@ -140,7 +173,7 @@ type ChatPayload struct {
 	Metadata                   *Metadata      `json:"metadata,omitempty"`
 	Messages                   []Message      `json:"messages"`
 	CanUseTools                bool           `json:"canUseTools"`
-	CanUseApproxLocation       bool           `json:"canUseApproxLocation"`
+	CanUseApproxLocation       *bool          `json:"canUseApproxLocation"`
 	CanDelegateImageGeneration *bool          `json:"canDelegateImageGeneration,omitempty"`
 	ReasoningEffort            string         `json:"reasoningEffort"`
 	DurableStream              *DurableStream `json:"durableStream"`
@@ -153,6 +186,8 @@ type ChatPayload struct {
 type StreamEvent struct {
 	Type        string
 	Message     string
+	State       string
+	Status      string
 	ToolName    string
 	ToolCallID  string
 	ToolArgs    string
@@ -212,7 +247,7 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	}
 
 	// Use all headers like the real web browser
-	ui.AIln("🔍 Using VQD with all required headers like web browser")
+	ui.AIln("Using VQD with all required headers like web browser")
 
 	chat := &Chat{
 		OldVqd:    vqd,       // x-vqd-4 value
@@ -245,19 +280,25 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	// Record initial model
 	analytics.RecordModelChange(string(model))
 
-	ui.AIln("🧠 Intelligent features enabled: Analytics, Context Optimization, History Management")
+	ui.AIln("Intelligent features enabled: Analytics, Context Optimization, History Management")
 
 	return chat
 }
 
 func newDurableStream() (*DurableStream, error) {
+	return generateDurableStream(randomRequestID(), randomRequestID())
+}
+
+func newDurableConversation() (*DurableStream, error) {
+	return generateDurableStream("", randomRequestID())
+}
+
+func generateDurableStream(messageID, conversationID string) (*DurableStream, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
 
-	messageID := randomRequestID()
-	conversationID := randomRequestID()
 	publicKey := &privateKey.PublicKey
 	return &DurableStream{
 		MessageID:      messageID,
@@ -272,6 +313,33 @@ func newDurableStream() (*DurableStream, error) {
 			Use:    "enc",
 		},
 	}, nil
+}
+
+// durableStreamForRequest keeps the conversation ID and encryption key stable
+// for this local conversation while assigning each HTTP request its own ID.
+func (c *Chat) durableStreamForRequest() (*DurableStream, error) {
+	c.durableStreamMu.Lock()
+	defer c.durableStreamMu.Unlock()
+
+	if c.durableConversation == nil {
+		conversation, err := newDurableConversation()
+		if err != nil {
+			return nil, err
+		}
+		c.durableConversation = conversation
+	}
+
+	return &DurableStream{
+		MessageID:      randomRequestID(),
+		ConversationID: c.durableConversation.ConversationID,
+		PublicKey:      c.durableConversation.PublicKey,
+	}, nil
+}
+
+func (c *Chat) resetDurableConversation() {
+	c.durableStreamMu.Lock()
+	c.durableConversation = nil
+	c.durableStreamMu.Unlock()
 }
 
 func randomRequestID() string {
@@ -296,34 +364,24 @@ func GetVQD() (string, string, string, string) {
 
 }
 
-func (c *Chat) Clear(cfg *config.Config) {
+func (c *Chat) Clear(cfg *config.Config) error {
 	// Save current session before clearing if it has content
 	if len(c.Messages) > 0 {
 		if err := c.SaveCurrentSession(); err != nil {
 			ui.Warningln("Failed to save session before clearing: %v", err)
-			return
+			return err
 		}
 	}
 
 	clearTerminal()
 
 	if len(c.Messages) > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		newHeaders, err := getCurrentDuckAIHeaders(ctx)
-		cancel()
-		if err != nil {
-			ui.Errorln("Error refreshing Duck.ai chat proof: %v", err)
-			return
-		}
-		// Commit the clear only after the new proof is available. A failed
-		// browser bootstrap must not leave the session half-cleared.
 		c.Messages = []Message{}
 		c.NewVqd = ""
 		c.OldVqd = ""
-		c.VqdHash1 = newHeaders.VqdHash1
-		c.FeSignals = newHeaders.FeSignals
-		c.FeVersion = newHeaders.FeVersion
-		// Hash will be refreshed on next request if needed
+		c.VqdHash1 = ""
+		c.FeSignals = ""
+		c.FeVersion = ""
 		c.RetryCount = 0
 
 		// Generate new session ID for the fresh start
@@ -334,6 +392,7 @@ func (c *Chat) Clear(cfg *config.Config) {
 	} else {
 		ui.Warningln("Chat is already empty")
 	}
+	c.resetDurableConversation()
 	c.pendingImages = nil
 
 	if cfg.ShowMenu {
@@ -341,6 +400,7 @@ func (c *Chat) Clear(cfg *config.Config) {
 	} else {
 		PrintCommands()
 	}
+	return nil
 }
 
 func clearTerminal() {
@@ -376,14 +436,23 @@ func processInputWithRoleLengths(c *Chat, input string, cfg *config.Config, user
 	ctx, cancel := context.WithCancel(context.Background())
 	c.setRequestCancel(cancel)
 	defer c.clearRequestCancel()
-	spinner := ui.StartSpinner("Connecting to Duck.ai")
+	modelLabel := func() string { return shortenModelName(string(c.Model)) }
+	modelPrefix := ui.AccentColor.Sprint(modelLabel() + ":")
+	withModel := func(label string) string {
+		return modelPrefix + " " + label
+	}
+	spinner := ui.StartSpinner(withModel("Connecting to Duck.ai"))
+	fetch := func(ctx context.Context, content string) (<-chan string, <-chan error, error) {
+		return c.FetchStreamWithErrorsAndProgress(ctx, content, func(label string) {
+			spinner.SetLabel(withModel(label))
+		})
+	}
 	_, err := processInputWithTokenRoles(ctx, c, input, cfg, func(stream <-chan string) string {
-		spinner.Stop()
-		return RenderStream(stream, shortenModelName(string(c.Model)))
-	}, userContentLength, contextContentLength)
+		return RenderStream(stream, shortenModelName(string(c.Model)), spinner)
+	}, fetch, userContentLength, contextContentLength)
 	spinner.Stop()
 	if err != nil {
-		ui.Errorln("Error: %v", err)
+		c.reportChatFailure(cfg, err, time.Now(), openDefaultBrowser)
 	}
 }
 
@@ -480,8 +549,8 @@ func processInput(ctx context.Context, c *Chat, input string, cfg *config.Config
 	return processInputWithStreamFetcher(ctx, c, input, cfg, render, c.FetchStreamWithErrors)
 }
 
-func processInputWithTokenRoles(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, userContentLength, contextContentLength int) (string, error) {
-	return processInputWithStreamFetcherAndTokenRoles(ctx, c, input, cfg, render, c.FetchStreamWithErrors, userContentLength, contextContentLength)
+func processInputWithTokenRoles(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, <-chan error, error), userContentLength, contextContentLength int) (string, error) {
+	return processInputWithStreamFetcherAndTokenRoles(ctx, c, input, cfg, render, fetch, userContentLength, contextContentLength)
 }
 
 func processInputWithFetcher(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, error)) (string, error) {
@@ -530,9 +599,10 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 	}
 
 	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: actualMessage,
-		Images:  originalPendingImages,
+		Role:      "user",
+		Content:   actualMessage,
+		Images:    originalPendingImages,
+		Timestamp: time.Now(),
 	})
 
 	if c.ContextOptimizer != nil && c.ContextOptimizer.IsOptimizationNeeded(c.convertMessagesToIntelligence()) {
@@ -540,6 +610,12 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 		c.Messages = c.convertFromIntelligenceMessages(optimizedMessages)
 		if c.Analytics != nil {
 			c.Analytics.RecordContextOptimization(bytesSaved)
+			for _, message := range optimizedMessages {
+				if message.Compressed {
+					c.Analytics.RecordContextCompression()
+					break
+				}
+			}
 		}
 	}
 
@@ -574,6 +650,9 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 			duration := time.Since(startTime)
 			c.Analytics.RecordChatInteraction(duration, false, "unknown")
 			c.Analytics.RecordModelInteraction(usedModel, duration, false, "unknown")
+		}
+		if errors.Is(err, ErrRateLimited) {
+			return "", err
 		}
 		return "", fmt.Errorf("error fetching stream: %w", err)
 	}
@@ -621,8 +700,9 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 
 	// Add the assistant's response to the message history
 	c.Messages = append(c.Messages, Message{
-		Role:    "assistant",
-		Content: finalResponse,
+		Role:      "assistant",
+		Content:   finalResponse,
+		Timestamp: time.Now(),
 	})
 
 	return finalResponse, nil
@@ -654,9 +734,18 @@ func (c *Chat) FetchStreamContext(ctx context.Context, content string) (<-chan s
 }
 
 func (c *Chat) FetchStreamWithErrors(ctx context.Context, content string) (<-chan string, <-chan error, error) {
+	return c.FetchStreamWithErrorsAndProgress(ctx, content, nil)
+}
+
+// FetchStreamWithErrorsAndProgress also reports Duck.ai tool and status events
+// to an optional terminal progress callback while preserving response text.
+func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content string, onProgress func(string)) (<-chan string, <-chan error, error) {
 	events, err := c.FetchEventStreamContext(ctx, content)
 	if err != nil {
 		return nil, nil, err
+	}
+	if onProgress != nil {
+		onProgress("Preparing response")
 	}
 
 	stream := make(chan string)
@@ -667,6 +756,12 @@ func (c *Chat) FetchStreamWithErrors(ctx context.Context, content string) (<-cha
 		var latestImage *StreamEvent
 		for event := range events {
 			switch event.Type {
+			case "status", "tool":
+				if onProgress != nil {
+					if label := streamProgressLabel(event); label != "" {
+						onProgress(label)
+					}
+				}
 			case "error":
 				streamErrors <- errors.New(event.Message)
 			case "message":
@@ -686,6 +781,9 @@ func (c *Chat) FetchStreamWithErrors(ctx context.Context, content string) (<-cha
 					}
 				}
 			case "image":
+				if onProgress != nil && (event.ImageBase64 != "" || strings.Contains(strings.ToLower(event.ToolName), "image")) {
+					onProgress("Generating image")
+				}
 				if event.ImageBase64 != "" {
 					imageCopy := event
 					latestImage = &imageCopy
@@ -719,6 +817,30 @@ func (c *Chat) FetchStreamWithErrors(ctx context.Context, content string) (<-cha
 	return stream, streamErrors, nil
 }
 
+func streamProgressLabel(event StreamEvent) string {
+	if event.Type == "status" {
+		return event.Status
+	}
+	name := strings.ToLower(event.ToolName)
+	state := strings.ToLower(event.State)
+	if strings.Contains(name, "search") || strings.Contains(name, "web") {
+		if state == "result" || state == "complete" || state == "completed" {
+			return "Writing response"
+		}
+		return "Searching the web"
+	}
+	if strings.Contains(name, "image") {
+		return "Generating image"
+	}
+	if state == "result" || state == "complete" || state == "completed" {
+		return "Writing response"
+	}
+	if event.ToolName != "" && (state == "call" || state == "partial-call" || state == "calling") {
+		return "Using " + event.ToolName
+	}
+	return ""
+}
+
 func formatSourceEvent(event StreamEvent) string {
 	title := event.SourceTitle
 	if title == "" {
@@ -747,10 +869,23 @@ func (c *Chat) FetchEventStreamContext(ctx context.Context, content string) (<-c
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+		eventName := ""
 		for scanner.Scan() {
-			event, ok := parseSSEEventLine(scanner.Text())
+			line := scanner.Text()
+			if strings.TrimSpace(line) == "" {
+				eventName = ""
+				continue
+			}
+			if strings.HasPrefix(line, "event:") {
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				continue
+			}
+			event, ok := parseSSEEventLine(line)
 			if !ok {
 				continue
+			}
+			if status := normalizeStreamStatus(eventName, ""); status != "" && (event.Type == "meta" || event.Type == "raw") {
+				event = StreamEvent{Type: "status", Status: status}
 			}
 			select {
 			case stream <- event:
@@ -804,6 +939,7 @@ func parseSSEEventLine(line string) (StreamEvent, bool) {
 		Name          string          `json:"name"`
 		Message       string          `json:"message"`
 		State         string          `json:"state"`
+		Status        string          `json:"status"`
 		ToolName      string          `json:"toolName"`
 		ToolCallID    string          `json:"toolCallId"`
 		ToolArguments json.RawMessage `json:"toolArguments"`
@@ -824,11 +960,16 @@ func parseSSEEventLine(line string) (StreamEvent, bool) {
 	if message.Role == "assistant" && message.Message != "" {
 		return StreamEvent{Type: "message", Message: message.Message}, true
 	}
+	if strings.EqualFold(message.Role, "assistant") || strings.EqualFold(message.Role, "status") {
+		if status := normalizeStreamStatus(message.State, message.Status); status != "" {
+			return StreamEvent{Type: "status", State: message.State, Status: status}, true
+		}
+	}
 	if message.Role == "source" && message.Source != nil {
 		return StreamEvent{Type: "source", SourceURL: message.Source.URL, SourceTitle: message.Source.Title}, true
 	}
 	if message.Role == "tool-invocation" {
-		event := StreamEvent{Type: "tool", ToolName: message.ToolName, ToolCallID: message.ToolCallID, Raw: payload}
+		event := StreamEvent{Type: "tool", State: message.State, ToolName: message.ToolName, ToolCallID: message.ToolCallID, Raw: payload}
 		if len(message.ToolArguments) > 0 && string(message.ToolArguments) != "null" {
 			event.ToolArgs = string(message.ToolArguments)
 		}
@@ -867,6 +1008,20 @@ func parseSSEEventLine(line string) (StreamEvent, bool) {
 	}
 
 	return StreamEvent{Type: "meta", Raw: payload}, true
+}
+
+func normalizeStreamStatus(state, status string) string {
+	value := strings.ToLower(strings.TrimSpace(status + " " + state))
+	switch {
+	case strings.Contains(value, "search"):
+		return "Searching the web"
+	case strings.Contains(value, "think") || strings.Contains(value, "reason"):
+		return "Thinking"
+	case strings.Contains(value, "generat") || strings.Contains(value, "respond"):
+		return "Writing response"
+	default:
+		return ""
+	}
 }
 
 func (c *Chat) saveGeneratedImage(event StreamEvent) (string, error) {
@@ -923,6 +1078,11 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 }
 
 func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response, error) {
+	c.RetryCount = 0
+	return c.fetchContext(ctx, content, 0)
+}
+
+func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*http.Response, error) {
 	startTime := time.Now()
 	// Duck.ai's proof is generated by its frontend and must be captured from
 	// a real browser request. It is rotated frequently, so refresh it for
@@ -939,7 +1099,7 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 		return nil, fmt.Errorf("Duck.ai returned an empty X-Vqd-Hash-1 proof")
 	}
 
-	durableStream, err := newDurableStream()
+	durableStream, err := c.durableStreamForRequest()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Duck.ai durable stream: %w", err)
 	}
@@ -965,14 +1125,24 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
 
-	// Set ALL required headers EXACTLY like the real web browser request
+	// Use the browser values captured with this request's rotating proof.
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	if headers.AcceptLanguage != "" {
+		req.Header.Set("Accept-Language", headers.AcceptLanguage)
+	} else {
+		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://duck.ai")
 	req.Header.Set("Referer", "https://duck.ai/")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
+	if headers.UserAgent != "" {
+		req.Header.Set("User-Agent", headers.UserAgent)
+	} else {
+		req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
+	}
+	for name, value := range headers.BrowserHeaders {
+		req.Header.Set(name, value)
+	}
 
 	// Current Duck.ai request headers.
 	if c.FeSignals != "" {
@@ -984,7 +1154,9 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 	if c.VqdHash1 != "" {
 		req.Header.Set("X-Vqd-Hash-1", c.VqdHash1)
 	}
-	req.Header.Set("x-ddg-journey-id", durableStream.ConversationID)
+	if headers.JourneyID != "" {
+		req.Header.Set("x-ddg-journey-id", headers.JourneyID)
+	}
 
 	resp, err := c.Client.Do(req)
 	if err != nil {
@@ -996,58 +1168,60 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 		resp.Body.Close()
 
 		if shouldLogRequestDetails(c) {
-			color.Red("Request Headers: %+v", req.Header)
-			color.Red("Response Headers: %+v", resp.Header)
+			color.Red("Request Headers: %+v", redactDebugHeaders(req.Header))
+			color.Red("Response Headers: %+v", redactDebugHeaders(resp.Header))
 			color.Red("Response Status: %d", resp.StatusCode)
-			color.Red("Response Body: %s", string(body))
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if code := rateLimitErrorCode(body); code != "" {
+					color.Red("Rate limit error code: %s", code)
+				}
+			} else {
+				color.Red("Response Body: %s", string(body))
+			}
 		}
 
-		// Handle various error conditions including 418 (I'm a teapot)
 		bodyText := string(body)
-		if resp.StatusCode == 400 || resp.StatusCode == 418 || resp.StatusCode == 429 || strings.Contains(bodyText, "ERR_INVALID_VQD") || strings.Contains(bodyText, "ERR_CHALLENGE") {
-			// Track specific error types
+		retryableProofFailure := resp.StatusCode == http.StatusTeapot ||
+			strings.Contains(bodyText, "ERR_INVALID_VQD") ||
+			strings.Contains(bodyText, "ERR_CHALLENGE")
+		if c.Analytics != nil && (retryableProofFailure || resp.StatusCode == http.StatusTooManyRequests) {
 			errorType := "unknown"
-			switch resp.StatusCode {
-			case 418:
+			if resp.StatusCode == http.StatusTeapot || strings.Contains(bodyText, "ERR_CHALLENGE") {
 				errorType = "418"
-			case 429:
+			} else if resp.StatusCode == http.StatusTooManyRequests {
 				errorType = "429"
 			}
-			if c.Analytics != nil {
-				duration := time.Since(startTime)
-				c.Analytics.RecordChatInteraction(duration, false, errorType)
-				c.Analytics.RecordModelInteraction(string(c.Model), duration, false, errorType)
+			duration := time.Since(startTime)
+			c.Analytics.RecordChatInteraction(duration, false, errorType)
+			c.Analytics.RecordModelInteraction(string(c.Model), duration, false, errorType)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			c.RetryCount = 0
+			return nil, &RateLimitError{
+				Code:       rateLimitErrorCode(body),
+				RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 			}
+		}
 
-			select {
-			case <-time.After(2 * time.Second):
-			case <-ctx.Done():
-				return nil, ctx.Err()
+		// Only retry when Duck.ai explicitly rejected the rotating proof or
+		// returned its challenge status. A generic 400 can indicate a bad
+		// payload (for example an unsupported image format), and a 429 is a
+		// rate limit; refreshing proof and replaying either request is harmful.
+		if retryableProofFailure && retries < 1 {
+			c.RetryCount = retries + 1
+			if c.Activity != nil {
+				c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Duck.ai proof rejected; refreshing and retrying once", Model: string(c.Model)})
 			}
-
-			// Refresh ONLY VQD on errors, like the PowerShell script
-			ui.Warningln("🔄 Error %d detected, refreshing VQD...", resp.StatusCode)
-			newHeaders, refreshErr := getCurrentDuckAIHeaders(ctx)
-			if refreshErr == nil && newHeaders.VqdHash1 != "" {
-				c.NewVqd = ""
-				c.VqdHash1 = newHeaders.VqdHash1
-				c.FeSignals = newHeaders.FeSignals
-				c.FeVersion = newHeaders.FeVersion
-				ui.AIln("✅ Refreshed Duck.ai chat proof")
-			}
+			ui.Warningln("Duck.ai rejected the request proof (HTTP %d); retrying once with a fresh proof...", resp.StatusCode)
 			if c.Analytics != nil {
 				c.Analytics.RecordVQDRefresh()
 			}
-
-			if c.RetryCount < 2 {
-				c.RetryCount++
-				if c.Activity != nil {
-					c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Chat request retrying", Model: string(c.Model)})
-				}
-				ui.Warningln("Retrying request (attempt %d/3)...", c.RetryCount)
-				return c.FetchContext(ctx, content)
-			}
+			// FetchContext captures a fresh proof at the start of every attempt.
+			// Do not perform a separate capture here, which would waste a proof
+			// and add another browser bootstrap before the actual retry.
+			return c.fetchContext(ctx, content, retries+1)
 		}
+		c.RetryCount = 0
 		return nil, fmt.Errorf("%d: Failed to send message. %s. Body: %s", resp.StatusCode, resp.Status, string(body))
 	}
 
@@ -1056,6 +1230,7 @@ func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response
 		c.OldVqd = c.NewVqd
 		c.NewVqd = newVqd
 	}
+	c.RetryCount = 0
 
 	return resp, nil
 }
@@ -1066,12 +1241,11 @@ func (c *Chat) buildPayload(durableStream *DurableStream) ChatPayload {
 		reasoningEffort = "low"
 	}
 	payload := ChatPayload{
-		Model:                c.Model,
-		Messages:             c.Messages,
-		CanUseTools:          c.NativeToolsEnabled && (c.NativeWebSearch || c.NativeImageGeneration),
-		CanUseApproxLocation: true,
-		ReasoningEffort:      reasoningEffort,
-		DurableStream:        durableStream,
+		Model:           c.Model,
+		Messages:        c.Messages,
+		CanUseTools:     c.NativeToolsEnabled && (c.NativeWebSearch || c.NativeImageGeneration),
+		ReasoningEffort: reasoningEffort,
+		DurableStream:   durableStream,
 	}
 	if payload.CanUseTools {
 		payload.Metadata = &Metadata{ToolChoice: ToolChoice{
@@ -1090,6 +1264,67 @@ func (c *Chat) SetNativeTools(enabled, webSearch, imageGeneration bool) {
 	c.NativeToolsEnabled = enabled
 	c.NativeWebSearch = webSearch
 	c.NativeImageGeneration = imageGeneration
+}
+
+func redactDebugHeaders(headers http.Header) http.Header {
+	redacted := headers.Clone()
+	for _, name := range []string{
+		"Authorization", "Cookie", "Set-Cookie", "X-Vqd-4", "X-Vqd-Hash-1", "X-Fe-Signals",
+	} {
+		if _, exists := redacted[http.CanonicalHeaderKey(name)]; exists {
+			redacted.Set(name, "[REDACTED]")
+		}
+	}
+	return redacted
+}
+
+func rateLimitErrorCode(body []byte) string {
+	var fields map[string]any
+	if json.Unmarshal(body, &fields) == nil {
+		for _, key := range []string{"type", "code", "error"} {
+			if value, ok := fields[key].(string); ok {
+				if safe := safeErrorCode(value); safe != "" {
+					return safe
+				}
+			}
+		}
+	}
+	return safeErrorCode(strings.TrimSpace(string(body)))
+}
+
+func safeErrorCode(value string) string {
+	if value == "" || len(value) > 80 {
+		return ""
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '_' && char != '-' && char != '.' {
+			return ""
+		}
+	}
+	return value
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		maxSeconds := int64((time.Duration(1<<63 - 1)) / time.Second)
+		if seconds > maxSeconds {
+			return time.Duration(1<<63 - 1)
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	when, err := http.ParseTime(value)
+	if err != nil || !when.After(now) {
+		return 0
+	}
+	return when.Sub(now)
 }
 
 func shouldLogRequestDetails(c *Chat) bool {
@@ -1130,8 +1365,9 @@ func (c *Chat) AddURLContext(url string) error {
 
 	message := fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content.Content)
 	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: message,
+		Role:      "user",
+		Content:   message,
+		Timestamp: time.Now(),
 	})
 	c.recordContextMessage(message)
 
@@ -1153,8 +1389,18 @@ type CommandHelp struct {
 }
 
 func PrintWelcomeMessage() {
-	ui.Systemln("\nDuckDuckGo AI Chat CLI - Help")
-	ui.Mutedln("---------------------------------")
+	// A no-op unless stdout is a color-capable terminal, so redirected help
+	// output stays plain text. It ends with its own blank separator line.
+	_ = ui.PrintLogo(color.Output)
+	terminalWidth := getTerminalWidthSafe()
+	for _, line := range wrapHelpText("DuckDuckGo AI Chat CLI - Help", terminalWidth) {
+		ui.Systemln("%s", line)
+	}
+	separatorWidth := terminalWidth
+	if separatorWidth > 33 {
+		separatorWidth = 33
+	}
+	ui.Mutedln("%s", strings.Repeat("-", separatorWidth))
 
 	// Get commands from centralized registry
 	commandsByCategory := command.GetCommandsByCategory()
@@ -1162,8 +1408,12 @@ func PrintWelcomeMessage() {
 	// Core commands
 	coreCommands := []CommandHelp{}
 	for _, cmd := range commandsByCategory["core"] {
+		usage := cmd.Usage
+		if usage == "" {
+			usage = cmd.Name
+		}
 		coreCommands = append(coreCommands, CommandHelp{
-			Command:     cmd.Name,
+			Command:     usage,
 			Description: cmd.Description,
 		})
 	}
@@ -1184,8 +1434,12 @@ func PrintWelcomeMessage() {
 	// Productivity commands
 	productivityCommands := []CommandHelp{}
 	for _, cmd := range commandsByCategory["productivity"] {
+		usage := cmd.Usage
+		if usage == "" {
+			usage = cmd.Name
+		}
 		productivityCommands = append(productivityCommands, CommandHelp{
-			Command:     cmd.Name,
+			Command:     usage,
 			Description: cmd.Description,
 		})
 	}
@@ -1209,12 +1463,15 @@ func PrintWelcomeMessage() {
 	ui.AIln("\nAPI Documentation:")
 	printCommandsTable(apiCommands)
 
-	ui.Warningln("\nNote: You can add '-- <your request>' after /search, /file, or /url to make an immediate request about the context.")
+	ui.Warningln("")
+	for _, line := range wrapHelpText("Note: You can add '-- <your request>' after /search, /file, /url, or /library load to make an immediate request about the context.", terminalWidth) {
+		ui.Warningln("%s", line)
+	}
 }
 
 // printCommandsTable formats and prints a list of commands.
 func printCommandsTable(commands []CommandHelp) {
-	// Find the longest command to align descriptions
+	terminalWidth := getTerminalWidthSafe()
 	maxLength := 0
 	for _, cmd := range commands {
 		if len(cmd.Command) > maxLength {
@@ -1222,10 +1479,73 @@ func printCommandsTable(commands []CommandHelp) {
 		}
 	}
 
-	for _, cmd := range commands {
-		ui.SystemColor.Printf("  %-*s", maxLength+4, cmd.Command)
-		ui.WhiteColor.Printf("- %s\n", cmd.Description)
+	const indent = 2
+	const columnGap = 2
+	descriptionWidth := terminalWidth - indent - maxLength - columnGap
+	stacked := descriptionWidth < 24
+	if stacked {
+		descriptionWidth = terminalWidth - indent - 2
 	}
+	for _, cmd := range commands {
+		if stacked {
+			for _, line := range wrapHelpText(cmd.Command, terminalWidth-indent) {
+				ui.AccentColor.Printf("  %s\n", line)
+			}
+			for _, line := range wrapHelpText(cmd.Description, descriptionWidth) {
+				fmt.Printf("    ")
+				ui.WhiteColor.Printf("%s\n", line)
+			}
+			continue
+		}
+
+		lines := wrapHelpText(cmd.Description, descriptionWidth)
+		if len(lines) == 0 {
+			lines = []string{""}
+		}
+		ui.AccentColor.Printf("  %-*s", maxLength, cmd.Command)
+		fmt.Printf("  ")
+		ui.WhiteColor.Printf("%s\n", lines[0])
+		for _, line := range lines[1:] {
+			fmt.Printf("%s", strings.Repeat(" ", indent+maxLength+columnGap))
+			ui.WhiteColor.Printf("%s\n", line)
+		}
+	}
+}
+
+func wrapHelpText(text string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, 1)
+	line := ""
+	for _, word := range words {
+		wordRunes := []rune(word)
+		for len(wordRunes) > width {
+			if line != "" {
+				lines = append(lines, line)
+				line = ""
+			}
+			lines = append(lines, string(wordRunes[:width]))
+			wordRunes = wordRunes[width:]
+		}
+		word = string(wordRunes)
+		if line == "" {
+			line = word
+			continue
+		}
+		if len([]rune(line))+1+len([]rune(word)) <= width {
+			line += " " + word
+			continue
+		}
+		lines = append(lines, line)
+		line = word
+	}
+	lines = append(lines, line)
+	return lines
 }
 
 func HandleURLCommand(c *Chat, input string, cfg *config.Config, chainCtx *chatcontext.Context) {
@@ -1270,8 +1590,9 @@ func (c *Chat) addURLContext(url string, content string) {
 
 	message := fmt.Sprintf("[URL Context]\nURL: %s\n\n%s", url, content)
 	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: message,
+		Role:      "user",
+		Content:   message,
+		Timestamp: time.Now(),
 	})
 	c.recordContextMessage(message)
 }
@@ -1317,7 +1638,7 @@ func HandleExportCommand(c *Chat, cfg *config.Config) {
 		}
 		filename, content = c.Export("search_conversation", searchText)
 	default:
-		ui.Warningln("💡 Export canceled.")
+		ui.Warningln("Export canceled.")
 		return
 	}
 
@@ -1356,7 +1677,7 @@ func HandleLoadCommand(c *Chat, args string) {
 
 		options := make([]string, len(sessions))
 		for i, s := range sessions {
-			options[i] = fmt.Sprintf("%s (Started: %s, Messages: %d)", s.ID, s.StartTime.Format("2006-01-02 15:04"), len(s.Messages))
+			options[i] = fmt.Sprintf("%s (Started: %s, Messages: %d)", s.ID, s.StartTime.Format("2006-01-02 15:04"), s.Analytics.MessageCount)
 		}
 
 		var selectedOption string
@@ -1410,8 +1731,9 @@ func (c *Chat) ChangeModel(model models.Model) {
 
 func (c *Chat) AddContextMessage(content string) {
 	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: content,
+		Role:      "user",
+		Content:   content,
+		Timestamp: time.Now(),
 	})
 	c.recordContextMessage(content)
 }
@@ -1419,9 +1741,10 @@ func (c *Chat) AddContextMessage(content string) {
 // AddContextMessageWithImages stores command-chain context and its attachments.
 func (c *Chat) AddContextMessageWithImages(content string, images []media.ImageAttachment) {
 	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: content,
-		Images:  cloneImageAttachments(images),
+		Role:      "user",
+		Content:   content,
+		Images:    cloneImageAttachments(images),
+		Timestamp: time.Now(),
 	})
 	c.recordContextMessage(content)
 }
@@ -1434,13 +1757,25 @@ func (c *Chat) recordContextMessage(content string) {
 
 // RestoreContext restores the chat context from a given conversation session.
 func (c *Chat) RestoreContext(session *persistence.ConversationSession) {
+	// Saved CLI history is restored locally. Start a fresh Duck.ai durable
+	// conversation identity and send this transcript on the next chat request.
+	c.resetDurableConversation()
+	messages := session.Messages
+	if len(session.OptimizedMessages) > 0 {
+		messages = session.OptimizedMessages
+	}
 	// Convert persistence.Message to chat.Message
-	c.Messages = make([]Message, len(session.Messages))
-	for i, msg := range session.Messages {
+	c.Messages = make([]Message, len(messages))
+	for i, msg := range messages {
+		timestamp := time.Time{}
+		if session.Version == persistence.SessionFormatVersion {
+			timestamp = msg.Timestamp
+		}
 		c.Messages[i] = Message{
-			Content: msg.Content,
-			Role:    msg.Role,
-			Images:  cloneImageAttachments(msg.Images),
+			Content:   msg.Content,
+			Role:      msg.Role,
+			Images:    cloneImageAttachments(msg.Images),
+			Timestamp: timestamp,
 		}
 	}
 	c.SessionID = session.ID
@@ -1454,15 +1789,12 @@ func (c *Chat) RestoreContext(session *persistence.ConversationSession) {
 // convertMessagesToIntelligence converts Chat messages to intelligence.Message format
 func (c *Chat) convertMessagesToIntelligence() []intelligence.Message {
 	result := make([]intelligence.Message, len(c.Messages))
-	baseTime := time.Now()
 	for i, msg := range c.Messages {
 		result[i] = intelligence.Message{
-			Content: msg.Content,
-			Role:    msg.Role,
-			Images:  cloneImageAttachments(msg.Images),
-			// Preserve conversation order when the optimizer sorts messages by
-			// importance and later restores chronological order.
-			Timestamp: baseTime.Add(time.Duration(i) * time.Nanosecond),
+			Content:   msg.Content,
+			Role:      msg.Role,
+			Images:    cloneImageAttachments(msg.Images),
+			Timestamp: msg.Timestamp,
 		}
 	}
 	return result
@@ -1473,9 +1805,10 @@ func (c *Chat) convertFromIntelligenceMessages(messages []intelligence.Message) 
 	result := make([]Message, len(messages))
 	for i, msg := range messages {
 		result[i] = Message{
-			Content: msg.Content,
-			Role:    msg.Role,
-			Images:  cloneImageAttachments(msg.Images),
+			Content:   msg.Content,
+			Role:      msg.Role,
+			Images:    cloneImageAttachments(msg.Images),
+			Timestamp: msg.Timestamp,
 		}
 	}
 	return result

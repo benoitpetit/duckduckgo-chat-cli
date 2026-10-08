@@ -39,7 +39,7 @@ func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *ch
 		return
 	}
 
-	color.Yellow("🔍 Searching for: %s (this may take a few seconds...)", query)
+	color.Yellow("Searching for: %s (this may take a few seconds...)", query)
 	results, err := performSearch(query, cfg.Search.MaxResults, cfg.Search.MaxRetries, cfg.Search.RetryDelay)
 	if err != nil {
 		color.Red("Search error: %v", err)
@@ -59,8 +59,9 @@ func HandleSearchCommand(c *Chat, input string, cfg *config.Config, chainCtx *ch
 	} else {
 		message := fmt.Sprintf("[Search Context]\n%s", contextMsg)
 		c.Messages = append(c.Messages, Message{
-			Role:    "user",
-			Content: message,
+			Role:      "user",
+			Content:   message,
+			Timestamp: time.Now(),
 		})
 		c.recordContextMessage(message)
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/command"
@@ -144,8 +145,9 @@ func (c *Chat) addFileContext(path string, content []byte) {
 
 	message := fmt.Sprintf("[File Context]\nFile: %s\n\n%s", filepath.Base(path), string(content))
 	c.Messages = append(c.Messages, Message{
-		Role:    "user",
-		Content: message,
+		Role:      "user",
+		Content:   message,
+		Timestamp: time.Now(),
 	})
 	c.recordContextMessage(message)
 

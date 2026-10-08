@@ -18,12 +18,15 @@ func TestShutdownFinalizesSessionBeforeExit(t *testing.T) {
 		func() { calls = append(calls, "stop-snapshots") },
 		func() error { calls = append(calls, "save-conversation"); return nil },
 		func() error { calls = append(calls, "save-analytics"); return nil },
+		func() error { calls = append(calls, "stop-api"); return nil },
 		func() error { calls = append(calls, "stop-dashboard"); return nil },
+		func() error { calls = append(calls, "stop-voice"); return nil },
+		func() error { calls = append(calls, "shutdown-browser"); return nil },
 		func() error { calls = append(calls, "restore-terminal"); return nil },
 	)
 	finalize()
 	finalize()
-	want := []string{"stop-snapshots", "save-conversation", "save-analytics", "stop-dashboard", "restore-terminal"}
+	want := []string{"stop-snapshots", "stop-api", "stop-dashboard", "stop-voice", "save-conversation", "save-analytics", "shutdown-browser", "restore-terminal"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("shutdown order = %v, want %v", calls, want)
 	}

@@ -7,8 +7,7 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 )
 
-// Session serializes access to one conversation. The CLI and HTTP server may
-// use the same chat instance, so the lock protects concurrent handler access.
+// Session serializes access to the conversation owned by the HTTP API server.
 type Session struct {
 	mu   sync.RWMutex
 	chat *chat.Chat

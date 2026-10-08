@@ -24,9 +24,23 @@ check_go_version() {
   echo "✅ Go $current meets go.mod minimum $required"
 }
 
+check_ci_go_versions() {
+  local workflow setup_go_steps go_version_files hardcoded_go_versions
+  for workflow in .github/workflows/test.yml .github/workflows/release.yml; do
+    setup_go_steps="$(grep -c 'uses: actions/setup-go@' "$workflow" || true)"
+    go_version_files="$(grep -cE '^[[:space:]]*go-version-file:[[:space:]]*go\.mod[[:space:]]*$' "$workflow" || true)"
+    hardcoded_go_versions="$(grep -cE '^[[:space:]]*go-version:' "$workflow" || true)"
+    if [[ "$setup_go_steps" -eq 0 || "$setup_go_steps" -ne "$go_version_files" || "$hardcoded_go_versions" -ne 0 ]]; then
+      fail "$workflow must select its Go toolchain from go.mod"
+    fi
+  done
+  echo "✅ GitHub Actions use the Go version declared in go.mod"
+}
+
 echo "🔍 Pre-release checks for DuckDuckGo Chat CLI"
 go version >/dev/null
 check_go_version
+check_ci_go_versions
 
 printf '\n🔐 Verifying Go modules...\n'
 go mod verify
@@ -45,10 +59,9 @@ go vet ./...
 echo "🧪 Running all Go tests..."
 go test ./...
 
-echo "📦 Cross-compiling Linux and macOS targets..."
+echo "📦 Building the Linux target..."
 GOOS=linux GOARCH=amd64 go build -o "$TEMP_DIR/duckchat-linux-amd64" ./cmd/duckchat
-GOOS=darwin GOARCH=arm64 go build -o "$TEMP_DIR/duckchat-darwin-arm64" ./cmd/duckchat
-GOOS=darwin GOARCH=amd64 go build -o "$TEMP_DIR/duckchat-darwin-amd64" ./cmd/duckchat
+echo "ℹ️ macOS binaries require native macOS runners and are built in the release workflow."
 
 echo "🪟 Building Windows executable with docs/images/logo.png..."
 "$ROOT_DIR/scripts/build_windows_binary.sh" verify "$TEMP_DIR/duckchat-windows-amd64.exe"

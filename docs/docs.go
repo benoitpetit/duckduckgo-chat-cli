@@ -218,6 +218,24 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/APIResponse"
                         }
+                    },
+                    "500": {
+                        "description": "Unable to archive the current conversation",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
                     }
                 }
             }
@@ -411,7 +429,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "gpt-5.6-luna"
+                    "example": "gpt-6-luna"
                 }
             }
         },
@@ -428,7 +446,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "gpt-5.6-luna"
+                    "example": "gpt-6-luna"
                 },
                 "response": {
                     "type": "string",
@@ -476,7 +494,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "gpt-5.6-luna"
+                    "example": "gpt-6-luna"
                 },
                 "session_id": {
                     "type": "string",
@@ -519,7 +537,7 @@ const docTemplate = `{
             "properties": {
                 "model": {
                     "type": "string",
-                    "example": "gpt-5.6-luna"
+                    "example": "gpt-6-luna"
                 }
             }
         },
@@ -533,7 +551,7 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string",
-                    "example": "gpt-5.6-luna"
+                    "example": "gpt-6-luna"
                 },
                 "is_default": {
                     "type": "boolean",
@@ -541,7 +559,7 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string",
-                    "example": "GPT-5.6 Luna"
+                    "example": "GPT-6 Luna"
                 }
             }
         },
@@ -551,7 +569,7 @@ const docTemplate = `{
             "properties": {
                 "current_model": {
                     "type": "string",
-                    "example": "gpt-5.6-luna"
+                    "example": "gpt-6-luna"
                 },
                 "models": {
                     "type": "array",
@@ -561,7 +579,7 @@ const docTemplate = `{
                 },
                 "total_models": {
                     "type": "integer",
-                    "example": 7
+                    "example": 8
                 }
             }
         }

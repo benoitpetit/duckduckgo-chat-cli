@@ -2,8 +2,9 @@ package command
 
 import (
 	"fmt"
-	"regexp"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -39,6 +40,12 @@ func GetCommandRegistry() *CommandRegistry {
 				Usage:       "/exit",
 				Category:    "core",
 			},
+			"/speak": {
+				Name:        "/speak",
+				Description: "Start a live Duck.ai voice conversation",
+				Usage:       "/speak",
+				Category:    "core",
+			},
 			"/clear": {
 				Name:        "/clear",
 				Description: "Clear the chat history",
@@ -71,7 +78,7 @@ func GetCommandRegistry() *CommandRegistry {
 				Name:         "/library",
 				Description:  "Chat with your library",
 				Usage:        "/library [command] [args] [-- prompt]",
-				IsChainable:  true,
+				IsChainable:  false,
 				RequiresArgs: false,
 				Category:     "context",
 			},
@@ -127,8 +134,8 @@ func GetCommandRegistry() *CommandRegistry {
 			},
 			"/dashboard": {
 				Name:        "/dashboard",
-				Description: "Start, stop, or check the local usage dashboard",
-				Usage:       "/dashboard <on|off|status>",
+				Description: "Open, start, stop, or check the local usage dashboard",
+				Usage:       "/dashboard <on|off|open|status>",
 				Category:    "core",
 			},
 			"/update": {
@@ -153,15 +160,15 @@ func GetCommandRegistry() *CommandRegistry {
 		},
 	}
 	for name, examples := range map[string][]string{
-		"/help": {"/help"}, "/exit": {"/exit"}, "/clear": {"/clear"}, "/history": {"/history"},
+		"/help": {"/help"}, "/exit": {"/exit"}, "/speak": {"/speak"}, "/clear": {"/clear"}, "/history": {"/history"},
 		"/search":  {"/search Go concurrency", "/search Go concurrency -- Summarize the results"},
 		"/file":    {"/file ./README.md", "/file ./main.go -- Explain this code"},
 		"/library": {"/library", "/library add ./docs"},
 		"/url":     {"/url https://example.com", "/url https://example.com -- Summarize this page"},
 		"/export":  {"/export"}, "/copy": {"/copy"}, "/config": {"/config"},
-		"/model": {"/model", "/model gpt-5.6-luna"}, "/version": {"/version"},
+		"/model": {"/model", "/model gpt-6-luna"}, "/version": {"/version"},
 		"/api": {"/api", "/api 8080"}, "/stats": {"/stats"},
-		"/dashboard": {"/dashboard on", "/dashboard off", "/dashboard status"},
+		"/dashboard": {"/dashboard on", "/dashboard open", "/dashboard off", "/dashboard status"},
 		"/update":    {"/update", "/update --force"}, "/load": {"/load", "/load session_123"},
 		"/prompt": {"/prompt", "/prompt list", "/prompt add concise -- Answer briefly"},
 	} {
@@ -281,9 +288,13 @@ func ValidateCommand(cmd *Command) error {
 		if cmd.Args == "" {
 			return fmt.Errorf("/url command requires a URL")
 		}
-		// Basic URL validation
-		urlPattern := regexp.MustCompile(`^https?://|^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-		if !urlPattern.MatchString(cmd.Args) {
+		rawURL := strings.TrimSpace(cmd.Args)
+		if !strings.Contains(rawURL, "://") {
+			// WebContent accepts a bare host by adding HTTPS before navigation.
+			rawURL = "https://" + rawURL
+		}
+		parsedURL, err := url.ParseRequestURI(rawURL)
+		if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.User != nil {
 			return fmt.Errorf("invalid URL format: %s", cmd.Args)
 		}
 
@@ -296,15 +307,30 @@ func ValidateCommand(cmd *Command) error {
 		// Model validation can be added here if needed
 
 	case "/api":
-		// Port validation can be added here if needed
+		if cmd.Args != "" {
+			port, err := strconv.Atoi(strings.TrimSpace(cmd.Args))
+			if err != nil || port < 1 || port > 65535 {
+				return fmt.Errorf("invalid API port %q: must be an integer from 1 to 65535", cmd.Args)
+			}
+		}
+
+	case "/exit":
+		if strings.TrimSpace(cmd.Args) != "" {
+			return fmt.Errorf("/exit does not accept arguments")
+		}
+
+	case "/speak":
+		if strings.TrimSpace(cmd.Args) != "" {
+			return fmt.Errorf("/speak does not accept arguments")
+		}
 
 	case "/stats":
 		// Stats command doesn't need validation
 		break
 
 	case "/dashboard":
-		if cmd.Args != "" && cmd.Args != "on" && cmd.Args != "off" && cmd.Args != "status" {
-			return fmt.Errorf("invalid /dashboard usage: /dashboard on|off|status")
+		if cmd.Args != "" && cmd.Args != "on" && cmd.Args != "off" && cmd.Args != "open" && cmd.Args != "status" {
+			return fmt.Errorf("invalid /dashboard usage: /dashboard on|off|open|status")
 		}
 
 	case "/update":
@@ -312,6 +338,30 @@ func ValidateCommand(cmd *Command) error {
 		break
 	}
 
+	return nil
+}
+
+// ValidateChainedCommand rejects commands that cannot participate in context
+// aggregation before the CLI performs any file, URL, or search operation.
+func ValidateChainedCommand(chained *ChainedCommand) error {
+	if chained == nil {
+		return nil
+	}
+	if chained.Prompt != "" {
+		for _, cmd := range chained.Commands {
+			if cmd.Type == "/speak" {
+				return fmt.Errorf("command %q cannot be used with -- prompt", cmd.Type)
+			}
+		}
+	}
+	if len(chained.Commands) < 2 {
+		return nil
+	}
+	for _, cmd := range chained.Commands {
+		if !IsChainableCommand(cmd.Type) {
+			return fmt.Errorf("command %q cannot be used with &&", cmd.Type)
+		}
+	}
 	return nil
 }
 

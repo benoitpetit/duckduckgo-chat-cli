@@ -46,27 +46,27 @@ func (c *Chat) formatConversation(metadata ExportMetadata) string {
 	var sb strings.Builder
 	writeMetadataHeader(&sb, metadata)
 
-	for i, msg := range c.Messages {
-		timestamp := time.Now().Add(time.Duration(-len(c.Messages)+i) * time.Minute).Format("15:04")
+	for _, msg := range c.Messages {
+		timestamp := formatMessageTimestamp(msg.Timestamp)
 
 		switch {
 		case strings.Contains(msg.Content, "[Search Context]"):
-			writeSection(&sb, "🔍 Search Results", timestamp,
+			writeSection(&sb, "Search Results", timestamp,
 				strings.TrimPrefix(msg.Content, "[Search Context]\n"))
 		case strings.Contains(msg.Content, "[File Context]"):
-			writeSection(&sb, "📄 File Content", timestamp,
+			writeSection(&sb, "File Content", timestamp,
 				strings.TrimPrefix(msg.Content, "[File Context]\n"))
 		case strings.Contains(msg.Content, "[URL Context]"):
-			writeSection(&sb, "🌐 Web Content", timestamp,
+			writeSection(&sb, "Web Content", timestamp,
 				strings.TrimPrefix(msg.Content, "[URL Context]\n"))
 		case msg.Role == "user":
-			writeSection(&sb, "🧑 User Query", timestamp, msg.Content)
+			writeSection(&sb, "User Query", timestamp, msg.Content)
 		case msg.Role == "assistant":
-			title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
+			title := fmt.Sprintf("%s Response", formatModelName(string(c.Model)))
 			writeSection(&sb, title, timestamp, msg.Content)
 		}
 		for _, image := range msg.Images {
-			writeSection(&sb, "📷 Image Attachment", timestamp, imageAttachmentMarker(image))
+			writeSection(&sb, "Image Attachment", timestamp, imageAttachmentMarker(image))
 		}
 	}
 
@@ -80,8 +80,8 @@ func (c *Chat) formatLastResponse(metadata ExportMetadata) string {
 
 	lastMsg := findLastAssistantMessage(c.Messages)
 	if lastMsg != nil {
-		title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
-		writeSection(&sb, title, time.Now().Format("15:04"), lastMsg.Content)
+		title := fmt.Sprintf("%s Response", formatModelName(string(c.Model)))
+		writeSection(&sb, title, formatMessageTimestamp(lastMsg.Timestamp), lastMsg.Content)
 	}
 
 	return sb.String()
@@ -93,7 +93,11 @@ func (c *Chat) formatCodeBlock(metadata ExportMetadata) string {
 	writeMetadataHeader(&sb, metadata)
 
 	if code, err := c.copyLargestCodeBlock(); err == nil {
-		writeSection(&sb, "💻 Code Block", time.Now().Format("15:04"),
+		timestamp := "unknown"
+		if message := findLastAssistantMessage(c.Messages); message != nil {
+			timestamp = formatMessageTimestamp(message.Timestamp)
+		}
+		writeSection(&sb, "Code Block", timestamp,
 			fmt.Sprintf("```\n%s\n```", code))
 	}
 
@@ -105,11 +109,11 @@ func (c *Chat) formatSearchResults(metadata ExportMetadata, query string) string
 	metadata.Type = "Search Results"
 	writeMetadataHeader(&sb, metadata)
 
-	writeSection(&sb, "🔍 Search Query", time.Now().Format("15:04"), query)
+	writeSection(&sb, "Search Query", time.Now().Format("15:04"), query)
 
 	for _, msg := range c.Messages {
 		if strings.Contains(msg.Content, "[Search Context]") {
-			writeSection(&sb, "📊 Results", time.Now().Format("15:04"),
+			writeSection(&sb, "Results", formatMessageTimestamp(msg.Timestamp),
 				strings.TrimPrefix(msg.Content, "[Search Context]\n"))
 			break
 		}
@@ -123,7 +127,7 @@ func (c *Chat) formatSearchInConversation(metadata ExportMetadata, searchText st
 	metadata.Type = "Search Results"
 	writeMetadataHeader(&sb, metadata)
 
-	writeSection(&sb, "🔍 Search Query", time.Now().Format("15:04"), searchText)
+	writeSection(&sb, "Search Query", time.Now().Format("15:04"), searchText)
 
 	// search for the text in the conversation
 	foundResults := false
@@ -134,15 +138,15 @@ func (c *Chat) formatSearchInConversation(metadata ExportMetadata, searchText st
 
 			// Ajouter le contexte (question et réponse)
 			if msg.Role == "user" {
-				writeSection(&sb, "🧑 User Message", time.Now().Format("15:04"), exportMessageContent(msg))
+				writeSection(&sb, "User Message", formatMessageTimestamp(msg.Timestamp), exportMessageContent(msg))
 				if i+1 < len(c.Messages) && c.Messages[i+1].Role == "assistant" {
-					title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
-					writeSection(&sb, title, time.Now().Format("15:04"), c.Messages[i+1].Content)
+					title := fmt.Sprintf("%s Response", formatModelName(string(c.Model)))
+					writeSection(&sb, title, formatMessageTimestamp(c.Messages[i+1].Timestamp), c.Messages[i+1].Content)
 				}
 			} else if msg.Role == "assistant" && i > 0 {
-				writeSection(&sb, "🧑 User Message", time.Now().Format("15:04"), exportMessageContent(c.Messages[i-1]))
-				title := fmt.Sprintf("🤖 %s Response", formatModelName(string(c.Model)))
-				writeSection(&sb, title, time.Now().Format("15:04"), msg.Content)
+				writeSection(&sb, "User Message", formatMessageTimestamp(c.Messages[i-1].Timestamp), exportMessageContent(c.Messages[i-1]))
+				title := fmt.Sprintf("%s Response", formatModelName(string(c.Model)))
+				writeSection(&sb, title, formatMessageTimestamp(msg.Timestamp), msg.Content)
 			}
 		}
 	}
@@ -178,6 +182,13 @@ func writeSection(sb *strings.Builder, title, timestamp, content string) {
 	sb.WriteString(fmt.Sprintf("## %s (%s)\n\n", title, timestamp))
 	sb.WriteString(content)
 	sb.WriteString("\n\n---\n\n")
+}
+
+func formatMessageTimestamp(timestamp time.Time) string {
+	if timestamp.IsZero() {
+		return "unknown"
+	}
+	return timestamp.Local().Format("2006-01-02 15:04:05")
 }
 
 func findLastAssistantMessage(messages []Message) *Message {

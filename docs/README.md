@@ -7,7 +7,6 @@ This directory contains the automatically generated API documentation for the Du
 - **`docs.go`** - Generated Go code containing the Swagger specification
 - **`swagger.json`** - JSON format of the API specification
 - **`swagger.yaml`** - YAML format of the API specification (human-readable)
-- **`COMMAND_CONSISTENCY.md`** - Documentation about command consistency system
 
 ## Automatic Generation
 
@@ -28,6 +27,9 @@ The source of truth for API documentation is **`internal/api/docs.go`** which co
 - API metadata (title, version, contact, etc.)
 - Endpoint definitions via Go annotations
 - Response models and examples
+
+CLI command metadata lives in **`internal/command/command.go`** and powers the
+interactive help and dashboard command reference.
 
 ## Accessing Documentation
 

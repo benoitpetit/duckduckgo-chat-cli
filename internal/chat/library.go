@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
@@ -152,7 +153,7 @@ func listLibraries(cfg *config.Config) {
 		return
 	}
 
-	color.Yellow("📚 Configured Libraries:")
+	color.Yellow("Configured Libraries:")
 
 	if len(cfg.Library.Directories) == 0 {
 		color.Yellow("No libraries configured. Use '/library add <path>' to add one.")
@@ -323,7 +324,7 @@ func handleLibrarySearch(cfg *config.Config, argument string) {
 		targetLibrary = strings.ToLower(parts[1])
 	}
 
-	color.Yellow("🔍 Searching for files matching: %s", pattern)
+	color.Yellow("Searching for files matching: %s", pattern)
 	if targetLibrary != "" {
 		color.Yellow("   In library: %s", targetLibrary)
 	}
@@ -442,8 +443,9 @@ func handleLibraryLoad(c *Chat, cfg *config.Config, argument string, userRequest
 		}
 		message := fmt.Sprintf("[File Context]\nFile: %s\n\n%s", file, string(content))
 		c.Messages = append(c.Messages, Message{
-			Role:    "user",
-			Content: message,
+			Role:      "user",
+			Content:   message,
+			Timestamp: time.Now(),
 		})
 		c.recordContextMessage(message)
 		totalChars += len(content)

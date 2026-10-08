@@ -92,7 +92,7 @@ func GetBinaryName(version, osName, arch string) string {
 
 // CheckForUpdates checks if there's a new version available
 func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
-	color.Yellow("🔄 Checking for updates...")
+	color.Yellow("Checking for updates...")
 
 	// Get latest release info
 	release, err := fetchLatestRelease()
@@ -162,7 +162,7 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 	updateInfo.SHA256URL = sha256URL
 	updateInfo.BinaryName = binaryName
 
-	color.Yellow("🆕 New version available: %s (current: %s)", cleanLatestVersion, cleanCurrentVersion)
+	color.Yellow("New version available: %s (current: %s)", cleanLatestVersion, cleanCurrentVersion)
 
 	return updateInfo, nil
 }
@@ -240,7 +240,7 @@ func compareVersions(left, right string) (int, error) {
 // DownloadAndVerify downloads the new binary and verifies its SHA256
 // The returned path is in a temporary directory that will be cleaned up by the caller
 func DownloadAndVerify(updateInfo *UpdateInfo) (string, error) {
-	color.Yellow("📥 Downloading update...")
+	color.Yellow("Downloading update...")
 
 	// Create temporary directory
 	tempDir, err := os.MkdirTemp("", "duckduckgo-chat-cli-update")
@@ -262,7 +262,7 @@ func DownloadAndVerify(updateInfo *UpdateInfo) (string, error) {
 		os.RemoveAll(tempDir)
 		return "", fmt.Errorf("release does not provide a SHA256 checksum")
 	}
-	color.Yellow("🔐 Verifying SHA256...")
+	color.Yellow("Verifying SHA256...")
 
 	sha256Path := filepath.Join(tempDir, updateInfo.BinaryName+".sha256")
 	if err := downloadFile(updateInfo.SHA256URL, sha256Path); err != nil {
@@ -349,7 +349,7 @@ func verifySHA256(filePath, sha256Path string) error {
 
 // PerformUpdate replaces the current binary with the new one
 func PerformUpdate(newBinaryPath string) error {
-	color.Yellow("🔄 Installing update...")
+	color.Yellow("Installing update...")
 
 	// Verify the new binary exists
 	if _, err := os.Stat(newBinaryPath); os.IsNotExist(err) {
@@ -401,7 +401,7 @@ func PerformUpdate(newBinaryPath string) error {
 	}
 
 	// Test the new binary by getting its version
-	color.Yellow("🔍 Validating new binary...")
+	color.Yellow("Validating new binary...")
 	if err := validateNewBinary(currentExec); err != nil {
 		recovery()
 		return fmt.Errorf("new binary validation failed: %w", err)
@@ -468,7 +468,7 @@ func validateNewBinary(binaryPath string) error {
 func HandleUpdateCommand(currentVersion string, force bool) error {
 	if !force {
 		color.Yellow("⚠️  This will update the CLI to the latest version.")
-		color.Yellow("📍 Current location: %s", getCurrentExecutableDir())
+		color.Yellow("Current location: %s", getCurrentExecutableDir())
 
 		var confirm bool
 		prompt := &survey.Confirm{
@@ -515,10 +515,10 @@ func HandleUpdateCommand(currentVersion string, force bool) error {
 	}
 
 	// Show success message
-	color.Green("\n🎉 Update successful!")
-	color.Green("📍 Updated to version: %s", updateInfo.LatestVersion)
+	color.Green("\nUpdate successful!")
+	color.Green("Updated to version: %s", updateInfo.LatestVersion)
 	color.Yellow("⚠️  Please restart the CLI to use the new version.")
-	color.Cyan("💡 Run the same command again to continue using the CLI.")
+	color.Cyan("Run the same command again to continue using the CLI.")
 
 	return nil
 }
@@ -576,10 +576,10 @@ func CheckForUpdatesAtStartup(currentVersion string) {
 	UpdateLastCheckTime()
 
 	if updateInfo.NeedsUpdate {
-		color.Yellow("\n🆕 A new version is available!")
+		color.Yellow("\nA new version is available!")
 		color.Yellow("   Current: %s", updateInfo.CurrentVersion)
 		color.Yellow("   Latest:  %s", updateInfo.LatestVersion)
-		color.Cyan("💡 Run '/update' to update to the latest version.")
+		color.Cyan("Run '/update' to update to the latest version.")
 		ui.Mutedln("   Or use '/update --force' to update without confirmation.")
 		ui.Systemln("")
 	}

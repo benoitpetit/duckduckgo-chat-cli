@@ -23,7 +23,7 @@ const (
 
 const conversationInstructions = `You are reviewing a local CLI usage archive. Give a concise, practical report with recurring themes, progress, friction points, and a few actionable recommendations. Distinguish observations from inferences. The excerpts are a bounded sample, not a complete transcript. Do not invent facts.
 
-The following session excerpts were explicitly selected by the user for this analysis:`
+The following session excerpts were sampled from retained sessions for this analysis:`
 
 func BuildConversationReport(sessions []persistence.ConversationSession, tokenBudget int) (prompt string, includedSessions int, estimatedTokens int) {
 	if tokenBudget < 1 || tokenBudget > 32000 {
@@ -160,13 +160,38 @@ func (s *Server) handleMetricsAnalysis(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	aggregated, sessionCount := aggregateSessionStats(history, current)
+	current = limitDailyMetrics(current, 30)
+	aggregated = limitDailyMetrics(aggregated, 30)
 	catalog := make([]map[string]string, 0, len(models.Available()))
 	for _, item := range models.Available() {
 		catalog = append(catalog, map[string]string{"id": string(item.ID), "name": item.Name, "description": item.Description})
 	}
-	data, _ := json.MarshalIndent(map[string]any{"current_session_metrics": current, "historical_session_metrics": history, "available_cli_models": catalog}, "", "  ")
-	prompt := "Analyze these local aggregate usage measurements. They contain metrics only and no conversation text. Separate observed facts from recommendations. Mark token counts as estimates and do not claim costs or live provider availability. Recommend a CLI model only based on observed per-model performance and the supplied catalog.\n\n" + string(data)
+	data, _ := json.MarshalIndent(map[string]any{
+		"current_session_metrics": current,
+		"retained_usage_metrics":  aggregated,
+		"retained_sessions":       sessionCount,
+		"available_cli_models":    catalog,
+	}, "", "  ")
+	prompt := "Analyze these local usage measurements. Historical sessions are aggregated; daily counts are limited to the 30 most recent dates. The data contains metrics only and no conversation text. Separate observed facts from recommendations. Mark token counts as estimates and do not claim costs or live provider availability. Recommend a CLI model only based on observed per-model performance and the supplied catalog.\n\n" + string(data)
 	s.runAnalysis(w, r, model, prompt, map[string]any{"kind": "metrics"})
+}
+
+func limitDailyMetrics(snapshot analytics.Snapshot, maxDays int) analytics.Snapshot {
+	if len(snapshot.DailyUserMessages) <= maxDays {
+		return snapshot
+	}
+	dates := make([]string, 0, len(snapshot.DailyUserMessages))
+	for date := range snapshot.DailyUserMessages {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+	limited := make(map[string]int, maxDays)
+	for _, date := range dates[len(dates)-maxDays:] {
+		limited[date] = snapshot.DailyUserMessages[date]
+	}
+	snapshot.DailyUserMessages = limited
+	return snapshot
 }
 
 func (s *Server) handleConversationPreview(w http.ResponseWriter, r *http.Request) {

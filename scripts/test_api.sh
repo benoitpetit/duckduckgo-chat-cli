@@ -8,7 +8,7 @@ BASE_URL="http://localhost:$PORT"
 check_server() {
     if ! curl -s "$BASE_URL" > /dev/null; then
         echo "API server is not running on port $PORT. Please start it first."
-        echo "You can run it with: go run cmd/duckchat/main.go"
+        echo "You can run it with: ./scripts/run.sh"
         exit 1
     fi
 }
@@ -48,4 +48,4 @@ test_documentation
 test_chat
 test_history
 
-echo "API tests completed." 
+echo "API tests completed."

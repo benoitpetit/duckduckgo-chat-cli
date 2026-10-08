@@ -8,16 +8,63 @@ on:
         required: true
         type: string
 
-env:
-  GO_VERSION: '1.24'
-
 permissions:
   contents: write
   actions: read
 
 jobs:
+  build-macos:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Validate version
+      env:
+        VERSION: ${{ github.event.inputs.version }}
+      run: |
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid version: $VERSION"
+          exit 1
+        fi
+
+    - name: Build macOS binary
+      env:
+        VERSION: ${{ github.event.inputs.version }}
+        GOOS: darwin
+        GOARCH: ${{ matrix.arch }}
+      run: go build -ldflags "-X main.Version=v${VERSION} -X duckduckgo-chat-cli/internal/version.Current=${VERSION}" -o "duckduckgo-chat-cli_v${VERSION}_darwin_${GOARCH}" ./cmd/duckchat
+
+    - name: Upload macOS CLI
+      uses: actions/upload-artifact@v4
+      with:
+        name: duckchat-darwin-${{ matrix.arch }}
+        path: |
+          duckduckgo-chat-cli_v${{ github.event.inputs.version }}_darwin_${{ matrix.arch }}
+        if-no-files-found: error
+        retention-days: 1
+
   build-and-release:
     if: github.event_name == 'workflow_dispatch'
+    needs: build-macos
     runs-on: ubuntu-latest
     
     steps:
@@ -29,7 +76,7 @@ jobs:
     - name: 🐹 Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: ${{ env.GO_VERSION }}
+        go-version-file: go.mod
 
     - name: ⬇️ Download dependencies
       run: go mod download
@@ -65,6 +112,35 @@ jobs:
 
     - name: 📦 Build release binaries
       run: ./scripts/build.sh "${{ steps.version.outputs.VERSION }}"
+
+    - name: Download native macOS binaries
+      uses: actions/download-artifact@v4
+      with:
+        pattern: duckchat-darwin-*
+        path: build
+        merge-multiple: true
+
+    - name: Add macOS checksums and update release ZIP
+      run: |
+        VERSION="${{ steps.version.outputs.VERSION }}"
+        BUILD_DIR="build"
+        for arch in arm64 amd64; do
+          binary="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_${arch}"
+          test -s "$binary" || { echo "Missing native macOS artifact: $binary"; exit 1; }
+          sha256sum "$binary" > "$binary.sha256"
+        done
+        (
+          cd "$BUILD_DIR"
+          zip -r -FS "duckduckgo-chat-cli_v${VERSION}_release.zip" \
+            "duckduckgo-chat-cli_v${VERSION}_linux_amd64" \
+            "duckduckgo-chat-cli_v${VERSION}_darwin_arm64" \
+            "duckduckgo-chat-cli_v${VERSION}_darwin_amd64" \
+            "duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe" \
+            "duckduckgo-chat-cli_v${VERSION}_linux_amd64.sha256" \
+            "duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256" \
+            "duckduckgo-chat-cli_v${VERSION}_darwin_amd64.sha256" \
+            "duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256"
+        )
 
     - name: 🧪 Verify release artifacts
       run: |
@@ -197,13 +273,15 @@ jobs:
           
           ## Installation
           
-          ### Linux/macOS
+          ### Linux
           ```bash
           # Download and install
           curl -L https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64 -o duckduckgo-chat-cli
           chmod +x duckduckgo-chat-cli
           sudo mv duckduckgo-chat-cli /usr/local/bin/
           ```
+
+          On macOS, install Google Chrome or Chromium to use `/speak` and allow microphone access when prompted by the browser.
           
           ### Windows
           Download the `.exe` file and add it to your PATH.

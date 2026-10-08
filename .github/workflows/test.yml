@@ -6,9 +6,6 @@ on:
   push:
     branches: [ master ]
 
-env:
-  GO_VERSION: '1.24'
-
 permissions:
   contents: read
   security-events: write
@@ -25,7 +22,7 @@ jobs:
     - name: 🐹 Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: ${{ env.GO_VERSION }}
+        go-version-file: go.mod
 
     - name: ⬇️ Download dependencies
       run: go mod download
@@ -119,7 +116,7 @@ jobs:
     - name: 🏗️ Test build
       run: |
         echo "🏗️ Testing build process..."
-        go build -o test_binary ./cmd/duckchat/main.go
+        go build -o test_binary ./cmd/duckchat
         
         if [ -f "test_binary" ]; then
           chmod +x test_binary
@@ -135,7 +132,7 @@ jobs:
         echo "🎯 Testing cross-compilation..."
         
         # Test Linux build
-        GOOS=linux GOARCH=amd64 go build -o test_linux ./cmd/duckchat/main.go
+        GOOS=linux GOARCH=amd64 go build -o test_linux ./cmd/duckchat
         if [ -f "test_linux" ]; then
           echo "✅ Linux AMD64 build successful"
           rm test_linux
@@ -145,7 +142,7 @@ jobs:
         fi
         
         # Test Windows build
-        GOOS=windows GOARCH=amd64 go build -o test_windows.exe ./cmd/duckchat/main.go
+        GOOS=windows GOARCH=amd64 go build -o test_windows.exe ./cmd/duckchat
         if [ -f "test_windows.exe" ]; then
           echo "✅ Windows AMD64 build successful"
           rm test_windows.exe
@@ -156,7 +153,7 @@ jobs:
         
         # Test macOS build
         # Test macOS ARM build
-        GOOS=darwin GOARCH=arm64 go build -o test_darwin ./cmd/duckchat/main.go
+        GOOS=darwin GOARCH=arm64 go build -o test_darwin ./cmd/duckchat
         if [ -f "test_darwin" ]; then
           echo "✅ Darwin ARM64 build successful"
           rm test_darwin
@@ -166,7 +163,7 @@ jobs:
         fi
         
         # Test macOS Intel build
-        GOOS=darwin GOARCH=amd64 go build -o test_darwin_amd64 ./cmd/duckchat/main.go
+        GOOS=darwin GOARCH=amd64 go build -o test_darwin_amd64 ./cmd/duckchat
         if [ -f "test_darwin_amd64" ]; then
           echo "✅ Darwin AMD64 build successful"
           rm test_darwin_amd64

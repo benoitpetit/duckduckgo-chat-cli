@@ -1,20 +1,84 @@
 package ui
 
-import "github.com/fatih/color"
+import (
+	"strconv"
+	"strings"
 
-// Define a color scheme for the application
+	"github.com/fatih/color"
+)
+
+type colorRole uint8
+
+const (
+	roleUser colorRole = iota
+	roleAssistant
+	roleAccent
+	roleInfo
+	roleMuted
+	roleSuccess
+	roleWarning
+	roleError
+	roleForeground
+)
+
+type themedColor struct {
+	role colorRole
+}
+
+func (c themedColor) color() *color.Color {
+	theme := CurrentTheme()
+	value := theme.Colors.Foreground
+	switch c.role {
+	case roleUser:
+		value = theme.Colors.User
+	case roleAssistant:
+		value = theme.Colors.Assistant
+	case roleAccent:
+		value = theme.Colors.Accent
+	case roleInfo:
+		value = theme.Colors.Info
+	case roleMuted:
+		value = theme.Colors.Muted
+	case roleSuccess:
+		value = theme.Colors.Success
+	case roleWarning:
+		value = theme.Colors.Warning
+	case roleError:
+		value = theme.Colors.Error
+	}
+	r, g, b := parseHexColor(value)
+	styled := color.RGB(r, g, b)
+	if c.role == roleWarning || c.role == roleError || (theme.ID == ThemeMono && c.role == roleAccent) {
+		styled.Add(color.Bold)
+	}
+	return styled
+}
+
+func parseHexColor(value string) (int, int, int) {
+	value = strings.TrimPrefix(value, "#")
+	parsed, err := strconv.ParseUint(value, 16, 24)
+	if err != nil || len(value) != 6 {
+		return 255, 255, 255
+	}
+	return int(parsed >> 16), int((parsed >> 8) & 0xFF), int(parsed & 0xFF)
+}
+
+func (c themedColor) Printf(format string, a ...interface{}) { c.color().Printf(format, a...) }
+func (c themedColor) Sprint(a ...interface{}) string         { return c.color().Sprint(a...) }
+
+// Semantic colors resolve their RGB values at each write so /config changes
+// are visible immediately, including in messages emitted by background work.
 var (
-	// Main colors
-	UserColor    = color.New(color.FgBlue)
-	AIColor      = color.New(color.FgGreen)
-	SystemColor  = color.New(color.FgCyan)
-	WarningColor = color.New(color.FgYellow)
-	ErrorColor   = color.New(color.FgRed)
-	WhiteColor   = color.New(color.FgWhite)
-
-	// Accents and secondary colors
-	PromptColor = color.New(color.FgMagenta)
-	MutedColor  = color.New(color.FgHiBlack)
+	UserColor    = themedColor{role: roleUser}
+	AIColor      = themedColor{role: roleAssistant}
+	SystemColor  = themedColor{role: roleInfo}
+	WarningColor = themedColor{role: roleWarning}
+	ErrorColor   = themedColor{role: roleError}
+	WhiteColor   = themedColor{role: roleForeground}
+	PromptColor  = themedColor{role: roleAccent}
+	MutedColor   = themedColor{role: roleMuted}
+	AccentColor  = themedColor{role: roleAccent}
+	SuccessColor = themedColor{role: roleSuccess}
 )
 
 // Formatted print functions (without newlines)

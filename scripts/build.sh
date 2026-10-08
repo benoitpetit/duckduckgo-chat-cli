@@ -37,11 +37,7 @@ GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-c
 echo "📦 Building Windows AMD64 with docs/images/logo.png application icon..."
 "$ROOT_DIR/scripts/build_windows_binary.sh" "$VERSION" "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe"
 
-echo "📦 Building Darwin ARM64..."
-GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_arm64" ./cmd/duckchat
-
-echo "📦 Building Darwin AMD64..."
-GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_darwin_amd64" ./cmd/duckchat
+echo "ℹ️ macOS binaries are built on native macOS runners in the release workflow."
 
 echo "🔐 Generating SHA256 checksums..."
 checksum() {
@@ -59,12 +55,8 @@ done
 echo "📚 Creating release archive..."
 archive="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
 zip -j "$archive" "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64 \
-  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_arm64 \
-  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_amd64 \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64.sha256 \
-  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_arm64.sha256 \
-  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_darwin_amd64.sha256 \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe.sha256
 
 echo "✅ Build v$VERSION complete! Files available in $BUILD_DIR:"

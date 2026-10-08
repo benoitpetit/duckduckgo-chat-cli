@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,6 +77,18 @@ func TestHistoryListingsTreatMissingStorageAsEmpty(t *testing.T) {
 	}
 }
 
+func TestHistoryManagerRejectsUnsafeSessionIDs(t *testing.T) {
+	manager := NewHistoryManager(t.TempDir())
+	for _, id := range []string{"../outside", "..\\outside", "", ".", "session/../../outside"} {
+		if _, err := manager.LoadSession(id); err == nil {
+			t.Errorf("LoadSession(%q) succeeded, want invalid ID error", id)
+		}
+		if err := manager.SaveSession(&ConversationSession{ID: id}); err == nil {
+			t.Errorf("SaveSession(%q) succeeded, want invalid ID error", id)
+		}
+	}
+}
+
 func TestListSessionSummariesAreNewestFirstWithPreviewOnly(t *testing.T) {
 	manager := NewHistoryManager(t.TempDir())
 	older := &ConversationSession{ID: "session_older", StartTime: time.Now().Add(-time.Hour), Model: "model-old", Messages: []intelligence.Message{{Role: "user", Content: "older conversation"}, {Role: "assistant", Content: "answer"}}}
@@ -126,5 +139,41 @@ func TestSessionRoundTripPreservesImageAttachments(t *testing.T) {
 	got := loaded.Messages[0].Images[0]
 	if got.Name != image.Name || got.MIMEType != image.MIMEType || string(got.Data) != string(image.Data) {
 		t.Fatalf("loaded attachment = %+v, want original metadata and bytes", got)
+	}
+}
+
+func TestSaveSessionReplacesLegacyUncompressedArchive(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewHistoryManager(dir)
+	legacy := ConversationSession{
+		ID: "session_duplicate", StartTime: time.Now().Add(-time.Hour),
+		Messages: []intelligence.Message{{Role: "user", Content: "old"}},
+	}
+	encoded, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(dir, "session_session_duplicate.json")
+	if err := os.WriteFile(legacyPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	updated := &ConversationSession{
+		ID: "session_duplicate", StartTime: time.Now(),
+		Messages: []intelligence.Message{{Role: "user", Content: "new"}},
+	}
+	if err := manager.SaveSession(updated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy archive still exists, stat error = %v", err)
+	}
+	sessions, err := manager.ListSessions()
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("ListSessions() = %d sessions, error = %v; want one", len(sessions), err)
+	}
+	loaded, err := manager.LoadSession(updated.ID)
+	if err != nil || loaded.Messages[0].Content != "new" {
+		t.Fatalf("LoadSession() = (%+v, %v), want updated session", loaded, err)
 	}
 }

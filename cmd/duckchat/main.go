@@ -2,9 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,9 +28,12 @@ import (
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/ui"
 	"duckduckgo-chat-cli/internal/update"
+	"duckduckgo-chat-cli/internal/voice"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/c-bata/go-prompt"
+	"github.com/fatih/color"
+	"github.com/muesli/termenv"
 	"golang.org/x/term"
 )
 
@@ -34,10 +43,83 @@ var Version = "dev"
 var chatSession *chat.Chat
 var cfg *config.Config
 var dashboardServer *dashboard.Server
+var dashboardWindow *dashboard.ChromiumWindow
+var dashboardWindowMu sync.Mutex
 var dashboardHistory *dashboard.HistoryStore
 var dashboardActivity *activity.Hub
 var cliShutdown func()
 var executorMu sync.Mutex
+
+// themeConsoleWriter adapts go-prompt's fixed ANSI colors to the active CLI
+// palette. The theme is resolved for every redraw, so /config applies at once.
+type themeConsoleWriter struct {
+	prompt.ConsoleWriter
+	colorEnabled bool
+}
+
+func newThemeConsoleWriter() prompt.ConsoleWriter {
+	return &themeConsoleWriter{
+		ConsoleWriter: prompt.NewStdoutWriter(),
+		colorEnabled:  term.IsTerminal(int(os.Stdout.Fd())) && !termenv.EnvNoColor(),
+	}
+}
+
+func (w *themeConsoleWriter) SetColor(fg, bg prompt.Color, bold bool) {
+	if !w.colorEnabled {
+		return
+	}
+
+	// Reset the previous style before applying this prompt segment's colors.
+	w.WriteRawStr("\x1b[0m")
+	theme := ui.CurrentTheme()
+	if foreground := promptColorHex(theme, fg, false); foreground != "" {
+		writePromptRGB(w, foreground, 38)
+	}
+	if background := promptColorHex(theme, bg, true); background != "" {
+		writePromptRGB(w, background, 48)
+	}
+	if bold {
+		w.WriteRawStr("\x1b[1m")
+	}
+}
+
+func promptColorHex(theme ui.Theme, color prompt.Color, background bool) string {
+	if background && color == prompt.DefaultColor {
+		return ""
+	}
+	switch color {
+	case prompt.DefaultColor, prompt.White, prompt.LightGray:
+		return theme.Colors.Foreground
+	case prompt.Black:
+		return "#171717"
+	case prompt.DarkGray:
+		return theme.Colors.Muted
+	case prompt.DarkRed, prompt.Red:
+		return theme.Colors.Error
+	case prompt.DarkGreen, prompt.Green:
+		return theme.Colors.Success
+	case prompt.Brown, prompt.Yellow:
+		return theme.Colors.Warning
+	case prompt.DarkBlue, prompt.Blue, prompt.Purple, prompt.Fuchsia:
+		return theme.Colors.Accent
+	case prompt.Cyan, prompt.Turquoise:
+		return theme.Colors.Info
+	default:
+		return theme.Colors.Foreground
+	}
+}
+
+func writePromptRGB(writer prompt.ConsoleWriter, value string, channel int) {
+	value = strings.TrimPrefix(value, "#")
+	if len(value) != 6 {
+		return
+	}
+	rgb, err := strconv.ParseUint(value, 16, 24)
+	if err != nil {
+		return
+	}
+	writer.WriteRawStr(fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", channel, rgb>>16, (rgb>>8)&0xff, rgb&0xff))
+}
 
 // Terminal state management
 var originalState *term.State
@@ -62,20 +144,27 @@ func restoreTerminalState() error {
 	return nil
 }
 
-func newShutdownFinalizer(stopSnapshots func(), saveConversation func() error, saveAnalytics func() error, stopDashboard func() error, restore func() error) func() {
+func newShutdownFinalizer(stopSnapshots func(), saveConversation func() error, saveAnalytics func() error, stopAPI func() error, stopDashboard func() error, stopVoice func() error, shutdownBrowser func() error, restore func() error) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			if stopSnapshots != nil {
 				stopSnapshots()
 			}
+			// Stop request-serving handlers before archiving state and closing the
+			// shared browser, so an in-flight handler cannot start a new capture
+			// after the browser has been shut down or write to the session after
+			// it has been archived.
 			for _, step := range []struct {
 				name string
 				run  func() error
 			}{
+				{"api", stopAPI},
+				{"dashboard", stopDashboard},
+				{"voice", stopVoice},
 				{"conversation", saveConversation},
 				{"analytics", saveAnalytics},
-				{"dashboard", stopDashboard},
+				{"browser", shutdownBrowser},
 				{"terminal", restore},
 			} {
 				if step.run != nil {
@@ -141,6 +230,45 @@ func handleDashboardCommand(action string) {
 		return
 	}
 	switch action {
+	case "open":
+		dashboardWindowMu.Lock()
+		if dashboardWindow != nil && dashboardWindow.Open() {
+			_, address := dashboardServer.Status()
+			dashboardWindowMu.Unlock()
+			ui.AIln("Local dashboard app is already open: %s", address)
+			return
+		}
+		dashboardWindow = nil
+		dashboardWindowMu.Unlock()
+		_, address := dashboardServer.Status()
+		if address == "" {
+			var err error
+			address, err = dashboardServer.Start()
+			if err != nil {
+				ui.Errorln("Could not start local dashboard: %v", err)
+				return
+			}
+			if dashboardActivity != nil {
+				dashboardActivity.Publish(activity.Event{Category: "dashboard", Status: "info", Summary: "Local dashboard started"})
+			}
+		}
+		window, err := dashboard.OpenChromiumApp(context.Background(), address)
+		if err != nil {
+			ui.Errorln("Could not open local dashboard app: %v", err)
+			return
+		}
+		dashboardWindowMu.Lock()
+		dashboardWindow = window
+		dashboardWindowMu.Unlock()
+		go func() {
+			<-window.Done()
+			dashboardWindowMu.Lock()
+			if dashboardWindow == window {
+				dashboardWindow = nil
+			}
+			dashboardWindowMu.Unlock()
+		}()
+		ui.AIln("Local dashboard opened in an app window: %s", address)
 	case "on":
 		if running, address := dashboardServer.Status(); running {
 			ui.AIln("Local dashboard is already running: %s", address)
@@ -156,6 +284,9 @@ func handleDashboardCommand(action string) {
 		}
 		ui.AIln("Local dashboard: %s", address)
 	case "off":
+		if err := closeDashboardWindow(); err != nil {
+			ui.Warningln("Could not close the dashboard app window: %v", err)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if err := dashboardServer.Stop(ctx); err != nil {
@@ -173,10 +304,21 @@ func handleDashboardCommand(action string) {
 			ui.Mutedln("Local dashboard is stopped.")
 		}
 	case "":
-		ui.Mutedln("Usage: /dashboard on|off|status")
+		ui.Mutedln("Usage: /dashboard on|off|open|status")
 	default:
-		ui.Errorln("Invalid dashboard action %q. Usage: /dashboard on|off|status", action)
+		ui.Errorln("Invalid dashboard action %q. Usage: /dashboard on|off|open|status", action)
 	}
+}
+
+func closeDashboardWindow() error {
+	dashboardWindowMu.Lock()
+	window := dashboardWindow
+	dashboardWindow = nil
+	dashboardWindowMu.Unlock()
+	if window != nil {
+		return window.Close()
+	}
+	return nil
 }
 
 // getCommands returns the command suggestions for autocompletion
@@ -186,9 +328,13 @@ func getCommands() []prompt.Suggest {
 
 	for _, name := range command.GetSupportedCommands() {
 		cmd := registry.Commands[name]
+		usage := strings.TrimSpace(cmd.Usage)
+		if usage == "" {
+			usage = cmd.Name
+		}
 		commands = append(commands, prompt.Suggest{
 			Text:        cmd.Name,
-			Description: cmd.Description,
+			Description: fmt.Sprintf("%s  %s", usage, strings.TrimSpace(cmd.Description)),
 		})
 	}
 
@@ -201,7 +347,7 @@ func completer(d prompt.Document) []prompt.Suggest {
 	text := d.TextBeforeCursor()
 	segment := text
 	if i := strings.LastIndex(text, "&&"); i >= 0 {
-		segment = strings.TrimLeft(text[i+2:], " ")
+		segment = strings.TrimSpace(text[i+2:])
 	}
 
 	// We only want to complete the command name, not its arguments.
@@ -217,7 +363,176 @@ func completer(d prompt.Document) []prompt.Suggest {
 	return nil
 }
 
+type cliOptions struct {
+	help       bool
+	version    bool
+	jsonOutput bool
+	prompt     string
+	promptSet  bool
+	model      string
+}
+
+func parseCLIOptions(args []string) (cliOptions, error) {
+	var options cliOptions
+	flags := flag.NewFlagSet("duckchat", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.BoolVar(&options.help, "help", false, "Show this help message")
+	flags.BoolVar(&options.help, "h", false, "Show this help message")
+	flags.BoolVar(&options.version, "version", false, "Show version information")
+	flags.BoolVar(&options.jsonOutput, "json", false, "Output one-shot response as JSON")
+	flags.StringVar(&options.prompt, "prompt", "", "Send one prompt and exit; use - to read from stdin")
+	flags.StringVar(&options.model, "model", "", "Select a model for --prompt")
+	if err := flags.Parse(args); err != nil {
+		return options, err
+	}
+	if flags.NArg() != 0 {
+		return options, fmt.Errorf("unexpected positional argument %q", flags.Arg(0))
+	}
+	options.promptSet = false
+	flags.Visit(func(parsed *flag.Flag) {
+		if parsed.Name == "prompt" {
+			options.promptSet = true
+		}
+	})
+	if options.model != "" && !options.promptSet {
+		return options, fmt.Errorf("--model can only be used with --prompt")
+	}
+	if options.jsonOutput && !options.promptSet {
+		return options, fmt.Errorf("--json can only be used with --prompt")
+	}
+	if options.promptSet && options.prompt != "-" && strings.TrimSpace(options.prompt) == "" {
+		return options, fmt.Errorf("--prompt cannot be empty")
+	}
+	if options.model != "" {
+		if _, ok := models.ResolveModel(options.model); !ok {
+			return options, fmt.Errorf("unknown model %q", options.model)
+		}
+	}
+	return options, nil
+}
+
+func printCLIUsage(out io.Writer) {
+	// A no-op unless out is a color-capable terminal, so redirected help stays plain text.
+	_ = ui.PrintLogo(out)
+	fmt.Fprintln(out, "Usage: duckchat [options]")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "Options:")
+	fmt.Fprintln(out, "  -h, --help          Show this help message")
+	fmt.Fprintln(out, "      --version       Show version information")
+	fmt.Fprintln(out, "      --prompt TEXT   Send one prompt and exit; use - to read from stdin")
+	fmt.Fprintln(out, "      --model ID      Select a model for --prompt")
+	fmt.Fprintln(out, "      --json          Output one-shot response as JSON")
+}
+
+func writeJSON(value any) error {
+	encoder := json.NewEncoder(os.Stdout)
+	return encoder.Encode(value)
+}
+
+func printOneShotError(options cliOptions, message string) {
+	if options.jsonOutput {
+		_ = writeJSON(map[string]string{"error": message})
+		return
+	}
+	fmt.Fprintln(os.Stderr, "duckchat:", message)
+}
+
 func main() {
+	options, err := parseCLIOptions(os.Args[1:])
+	if err != nil {
+		if slices.Contains(os.Args[1:], "--json") {
+			_ = writeJSON(map[string]string{"error": err.Error()})
+		} else {
+			fmt.Fprintln(os.Stderr, "duckchat:", err)
+			printCLIUsage(os.Stderr)
+		}
+		os.Exit(2)
+	}
+	if options.help {
+		printCLIUsage(os.Stdout)
+		return
+	}
+	if options.version {
+		fmt.Printf("DuckDuckGo AI Chat CLI version %s\n", Version)
+		return
+	}
+	if options.promptSet {
+		os.Exit(runOneShot(options))
+	}
+	runInteractive()
+}
+
+func runOneShot(options cliOptions) int {
+	// Keep machine-readable response text on stdout and initialization/errors on stderr.
+	color.Output = os.Stderr
+	if options.jsonOutput {
+		color.Output = io.Discard
+		ui.SetSpinnerDisabled(true)
+	}
+	color.NoColor = true
+	if options.prompt != "-" && strings.TrimSpace(options.prompt) == "" {
+		printOneShotError(options, "prompt is empty")
+		return 2
+	}
+
+	cfg = config.Initialize()
+	if !cfg.TOSAccepted && !term.IsTerminal(int(os.Stdin.Fd())) {
+		printOneShotError(options, "accept the terms in interactive mode before using --prompt")
+		return 1
+	}
+	if !config.AcceptTermsOfService(cfg, survey.WithStdio(os.Stdin, os.Stderr, os.Stderr)) {
+		printOneShotError(options, "terms of service were not accepted")
+		return 1
+	}
+	promptText := options.prompt
+	if promptText == "-" {
+		content, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			printOneShotError(options, "could not read prompt from stdin: "+err.Error())
+			return 1
+		}
+		promptText = strings.TrimSpace(string(content))
+	}
+	if strings.TrimSpace(promptText) == "" {
+		printOneShotError(options, "prompt is empty")
+		return 2
+	}
+
+	model := models.GetModel(cfg.DefaultModel)
+	if options.model != "" {
+		model, _ = models.ResolveModel(options.model)
+	}
+	chatSession = chat.NewChat("", "", "", "", model, cfg)
+	defer func() {
+		if err := chat.ShutdownBrowser(); err != nil {
+			ui.Warningln("Could not shut down browser: %v", err)
+		}
+	}()
+	response, err := chat.ProcessInputContext(context.Background(), chatSession, promptText, cfg)
+	if err != nil {
+		printOneShotError(options, err.Error())
+		return 1
+	}
+	if response == "" {
+		printOneShotError(options, "received an empty response")
+		return 1
+	}
+	if err := chatSession.SaveCurrentSession(); err != nil {
+		printOneShotError(options, "could not save conversation: "+err.Error())
+		return 1
+	}
+	if options.jsonOutput {
+		if err := writeJSON(map[string]string{"response": response, "model": string(model)}); err != nil {
+			fmt.Fprintln(os.Stderr, "duckchat: could not write JSON response:", err)
+			return 1
+		}
+	} else {
+		fmt.Println(response)
+	}
+	return 0
+}
+
+func runInteractive() {
 	// Save the terminal state at startup
 	if err := saveTerminalState(); err != nil {
 		ui.Warningln("Warning: Could not save terminal state: %v", err)
@@ -273,10 +588,26 @@ func main() {
 		chatSession.SaveCurrentSession,
 		func() error { return dashboardHistory.Save(chatSession.Analytics.Snapshot()) },
 		func() error {
+			if api.IsRunning() {
+				api.StopServer()
+			}
+			return nil
+		},
+		func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			return dashboardServer.Stop(ctx)
+			windowErr := closeDashboardWindow()
+			serverErr := dashboardServer.Stop(ctx)
+			if windowErr != nil {
+				return windowErr
+			}
+			return serverErr
 		},
+		func() error {
+			voice.StopActive()
+			return nil
+		},
+		chat.ShutdownBrowser,
 		restoreTerminalState,
 	)
 	if cfg.Dashboard.Autostart {
@@ -311,6 +642,7 @@ func main() {
 				ui.Warningln("\nRequest canceled.")
 				continue
 			}
+			voice.StopActive()
 			executorMu.Lock()
 			ui.Warningln("\nReceived interrupt. Exiting gracefully.")
 			if chatSession != nil {
@@ -329,6 +661,8 @@ func main() {
 	p := prompt.New(
 		executor,
 		completer,
+		prompt.OptionWriter(newThemeConsoleWriter()),
+		prompt.OptionMaxSuggestion(8),
 		prompt.OptionTitle("duckduckgo-chat-cli"),
 		prompt.OptionPrefix("You: "),
 		prompt.OptionPrefixTextColor(prompt.Blue),
@@ -359,6 +693,12 @@ func executor(input string) {
 	if input == "" {
 		return
 	}
+	if strings.HasPrefix(strings.TrimSpace(input), "/") {
+		input = strings.TrimSpace(input)
+	}
+	if input == "" {
+		return
+	}
 	var commandActivity activity.Event
 	commandName := ""
 	if dashboardActivity != nil && strings.HasPrefix(strings.TrimSpace(input), "/") {
@@ -367,23 +707,6 @@ func executor(input string) {
 		defer func() {
 			dashboardActivity.Publish(activity.Event{Category: "command", Status: "completed", Summary: "Command " + commandName + " completed", OperationID: commandActivity.OperationID})
 		}()
-	}
-	if input == "/exit" {
-		ui.Warningln("\nExiting chat. Goodbye!")
-		if dashboardActivity != nil {
-			dashboardActivity.Publish(activity.Event{Category: "command", Status: "completed", Summary: "Command /exit completed", OperationID: commandActivity.OperationID})
-			dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session stopping"})
-		}
-
-		// Show session statistics before exiting
-		if chatSession != nil {
-			chatSession.ShowSessionStats()
-		}
-
-		if cliShutdown != nil {
-			cliShutdown()
-		}
-		os.Exit(0)
 	}
 	if !strings.HasPrefix(strings.TrimSpace(input), "/") {
 		if cfg.ConfirmLongInput && shouldConfirmLongInput(input) && !confirmSendMessage(input) {
@@ -413,6 +736,18 @@ func executor(input string) {
 			return
 		}
 	}
+	if err := command.ValidateChainedCommand(chainedCmd); err != nil {
+		ui.Errorln("Invalid command chain: %v", err)
+		return
+	}
+	if len(chainedCmd.Commands) == 1 && chainedCmd.Commands[0].Type == "/exit" {
+		if chainedCmd.Prompt != "" {
+			ui.Errorln("Invalid command: /exit does not accept a prompt")
+			return
+		}
+		exitCLI(commandActivity.OperationID)
+		return
+	}
 
 	if len(chainedCmd.Commands) == 1 && !command.IsChainableCommand(chainedCmd.Commands[0].Type) {
 		// Pour les commandes non chainables (ex: /prompt), passer le prompt à handleCommand
@@ -425,6 +760,21 @@ func executor(input string) {
 	} else if len(chainedCmd.Commands) == 1 {
 		handleCommand(chatSession, cfg, chainedCmd.Commands[0])
 	}
+}
+
+func exitCLI(operationID string) {
+	ui.Warningln("\nExiting chat. Goodbye!")
+	if dashboardActivity != nil {
+		dashboardActivity.Publish(activity.Event{Category: "command", Status: "completed", Summary: "Command /exit completed", OperationID: operationID})
+		dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session stopping"})
+	}
+	if chatSession != nil {
+		chatSession.ShowSessionStats()
+	}
+	if cliShutdown != nil {
+		cliShutdown()
+	}
+	os.Exit(0)
 }
 
 func handleCommandChain(chatSession *chat.Chat, cfg *config.Config, chainedCmd *command.ChainedCommand) {
@@ -493,7 +843,9 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 
 	switch {
 	case cmd.Type == "/clear":
-		chatSession.Clear(cfg)
+		if err := chatSession.Clear(cfg); err != nil {
+			ui.Warningln("Could not clear the conversation: %v", err)
+		}
 	case cmd.Type == "/history":
 		chat.PrintHistory(chatSession)
 	case cmd.Type == "/search":
@@ -559,6 +911,14 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		ui.AIln("DuckDuckGo AI Chat CLI version %s", Version)
 		ui.Mutedln("Go version: %s", runtime.Version())
 		ui.Mutedln("OS/Arch: %s/%s", runtime.GOOS, runtime.GOARCH)
+	case cmd.Type == "/speak":
+		deps := voice.Dependencies{
+			Proof:     voice.CurrentProofProvider{},
+			Signaling: &voice.DuckAIClient{HTTPClient: http.DefaultClient, BaseURL: "https://duck.ai"},
+		}
+		if err := voice.Run(context.Background(), deps, voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
+			ui.Errorln("Voice session failed: %v", err)
+		}
 	case cmd.Type == "/stats":
 		// Show current session analytics
 		if chatSession != nil {

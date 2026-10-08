@@ -131,8 +131,15 @@ func HistoryHandler(session *Session) gin.HandlerFunc {
 		offset := 0 // default
 
 		if limitParam := c.Query("limit"); limitParam != "" {
-			if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
-				if parsedLimit > 1000 { // Maximum limit
+			parsedLimit, err := strconv.Atoi(limitParam)
+			if err != nil || parsedLimit < 0 {
+				c.JSON(http.StatusBadRequest, NewErrorResponse(ErrorCodeValidation, "Invalid limit parameter", "Query parameter 'limit' must be a non-negative integer"))
+				return
+			}
+			// Zero keeps the historical meaning of "no explicit limit" so
+			// existing clients that send limit=0 do not start receiving 400.
+			if parsedLimit > 0 {
+				if parsedLimit > 1000 {
 					limit = 1000
 				} else {
 					limit = parsedLimit
@@ -141,9 +148,12 @@ func HistoryHandler(session *Session) gin.HandlerFunc {
 		}
 
 		if offsetParam := c.Query("offset"); offsetParam != "" {
-			if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
-				offset = parsedOffset
+			parsedOffset, err := strconv.Atoi(offsetParam)
+			if err != nil || parsedOffset < 0 {
+				c.JSON(http.StatusBadRequest, NewErrorResponse(ErrorCodeValidation, "Invalid offset parameter", "Query parameter 'offset' must be a non-negative integer"))
+				return
 			}
+			offset = parsedOffset
 		}
 
 		// Apply pagination
@@ -153,11 +163,12 @@ func HistoryHandler(session *Session) gin.HandlerFunc {
 		if offset >= totalMessages {
 			messages = []chat.Message{}
 		} else {
-			end := offset + limit
-			if end > totalMessages {
-				end = totalMessages
+			remaining := totalMessages - offset
+			if limit >= remaining {
+				messages = messages[offset:]
+			} else {
+				messages = messages[offset : offset+limit]
 			}
-			messages = messages[offset:end]
 		}
 
 		// Convert to response format
@@ -322,6 +333,7 @@ func HealthHandler() gin.HandlerFunc {
 // @Tags         Chat
 // @Produce      json
 // @Success      200 {object} APIResponse "Chat history cleared successfully"
+// @Failure      500 {object} APIResponse{error=APIError} "Unable to archive the current conversation"
 // @Router       /history [delete]
 func ClearHistoryHandler(session *Session) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -329,7 +341,13 @@ func ClearHistoryHandler(session *Session) gin.HandlerFunc {
 		defer session.mu.Unlock()
 		chatSession, cfg := session.chat, session.cfg
 		requestStartTime := time.Now()
-		chatSession.Clear(cfg)
+		if err := chatSession.Clear(cfg); err != nil {
+			if chatSession.Analytics != nil {
+				chatSession.Analytics.RecordAPICall(time.Since(requestStartTime), false, "history_save")
+			}
+			c.JSON(http.StatusInternalServerError, NewErrorResponse(ErrorCodeInternal, "Failed to clear chat history", err.Error()))
+			return
+		}
 
 		// Track API call in analytics
 		if chatSession.Analytics != nil {

@@ -50,6 +50,67 @@ type ToolsConfig struct {
 	ImageGeneration bool `json:"image_generation"`
 }
 
+// AppearanceConfig contains the terminal theme selected for the CLI.
+type AppearanceConfig struct {
+	Theme string `json:"theme"`
+}
+
+// SpeakConfig controls the Chromium window used for live Duck.ai voice sessions.
+type SpeakConfig struct {
+	WindowWidth   int `json:"window_width"`
+	WindowHeight  int `json:"window_height"`
+	SchemaVersion int `json:"schema_version,omitempty"`
+}
+
+func defaultSpeakConfig() SpeakConfig {
+	return SpeakConfig{WindowWidth: 480, WindowHeight: 500, SchemaVersion: 3}
+}
+
+func normalizeSpeakConfig(cfg *SpeakConfig) {
+	defaults := defaultSpeakConfig()
+	if cfg.SchemaVersion < defaults.SchemaVersion {
+		switch {
+		case cfg.SchemaVersion == 0 && cfg.WindowWidth == 500 && cfg.WindowHeight == 500:
+			// The original default was 500 × 500.
+			cfg.WindowWidth = defaults.WindowWidth
+			cfg.WindowHeight = defaults.WindowHeight
+		case cfg.SchemaVersion == 1 && cfg.WindowWidth == 400 && cfg.WindowHeight == 460:
+			// Migrate the interim compact default while preserving custom sizes.
+			cfg.WindowWidth = defaults.WindowWidth
+			cfg.WindowHeight = defaults.WindowHeight
+		case cfg.SchemaVersion == 2 && cfg.WindowWidth == 400 && cfg.WindowHeight == 400:
+			// Migrate the compact default so the companion and subtitles fit.
+			cfg.WindowWidth = defaults.WindowWidth
+			cfg.WindowHeight = defaults.WindowHeight
+		}
+		cfg.SchemaVersion = defaults.SchemaVersion
+	}
+	if cfg.WindowWidth < 320 || cfg.WindowWidth > 1400 {
+		cfg.WindowWidth = defaults.WindowWidth
+	}
+	if cfg.WindowHeight < 360 || cfg.WindowHeight > 1400 {
+		cfg.WindowHeight = defaults.WindowHeight
+	}
+}
+
+// RateLimitConfig controls the last-resort fallback used when Duck.ai answers
+// with HTTP 429. Opening the browser is on by default so an interactive user
+// can keep working on duck.ai directly instead of staring at a dead CLI.
+type RateLimitConfig struct {
+	OpenBrowser     bool `json:"open_browser"`
+	CooldownMinutes int  `json:"cooldown_minutes"`
+}
+
+func defaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{OpenBrowser: true, CooldownMinutes: 10}
+}
+
+func normalizeRateLimitConfig(cfg *RateLimitConfig) {
+	if cfg.CooldownMinutes < 1 {
+		cfg.CooldownMinutes = defaultRateLimitConfig().CooldownMinutes
+	}
+}
+
 // DashboardConfig contains settings for the loopback-only usage dashboard.
 type DashboardConfig struct {
 	Autostart                 bool   `json:"autostart"`
@@ -89,10 +150,13 @@ type Config struct {
 	DefaultModel     string            `json:"default_model"`
 	ExportDir        string            `json:"export_dir"`
 	LastUpdateTime   time.Time         `json:"last_update_time"`
+	Appearance       AppearanceConfig  `json:"appearance"`
 	Search           SearchConfig      `json:"search"`
 	Library          LibraryConfig     `json:"library"`
 	API              APIConfig         `json:"api"`
 	Tools            ToolsConfig       `json:"tools"`
+	Speak            SpeakConfig       `json:"speak"`
+	RateLimit        RateLimitConfig   `json:"rate_limit"`
 	Dashboard        DashboardConfig   `json:"dashboard"`
 	ShowMenu         bool              `json:"show_menu"`
 	GlobalPrompt     string            `json:"global_prompt"`
@@ -102,6 +166,10 @@ type Config struct {
 
 func Initialize() *Config {
 	cfg := loadConfig()
+	normalizeAppearanceConfig(&cfg.Appearance)
+	ui.SetTheme(cfg.Appearance.Theme)
+	normalizeSpeakConfig(&cfg.Speak)
+	normalizeRateLimitConfig(&cfg.RateLimit)
 	normalizeDashboardConfig(&cfg.Dashboard)
 	if cfg.DefaultModel == "" {
 		cfg.DefaultModel = string(models.Default())
@@ -152,21 +220,34 @@ func Initialize() *Config {
 	return cfg
 }
 
+func normalizeAppearanceConfig(cfg *AppearanceConfig) {
+	theme, ok := ui.ResolveTheme(cfg.Theme)
+	if !ok {
+		cfg.Theme = string(ui.ThemeOfficial)
+		return
+	}
+	cfg.Theme = string(theme.ID)
+}
+
 func loadConfig() *Config {
 	cfg := &Config{
 		TOSAccepted:      false,
 		DefaultModel:     string(models.Default()),
 		ExportDir:        defaultExportPath(),
 		LastUpdateTime:   time.Now(),
+		Appearance:       AppearanceConfig{Theme: string(ui.ThemeOfficial)},
 		ConfirmLongInput: true, // default to enabled for safety
 		Search:           SearchConfig{IncludeSnippet: true},
 		Library:          LibraryConfig{Enabled: true},
+		Speak:            SpeakConfig{},
+		RateLimit:        defaultRateLimitConfig(),
 		Dashboard:        defaultDashboardConfig(),
 		Prompts:          make(map[string]string),
 	}
 
 	if data, err := os.ReadFile(configPath()); err == nil {
 		if err := json.Unmarshal(data, cfg); err != nil {
+			ui.SetTheme(string(ui.ThemeOfficial))
 			ui.Warningln("Warning: Failed to parse config file: %v", err)
 		}
 	}
@@ -256,7 +337,7 @@ func saveConfig(cfg *Config) error {
 	return SaveConfig(cfg)
 }
 
-func AcceptTermsOfService(cfg *Config) bool {
+func AcceptTermsOfService(cfg *Config, askOptions ...survey.AskOpt) bool {
 	if cfg.TOSAccepted {
 		return true
 	}
@@ -266,7 +347,7 @@ func AcceptTermsOfService(cfg *Config) bool {
 		Message: "Please accept the terms of service to continue. Do you accept?",
 		Default: true,
 	}
-	if err := survey.AskOne(prompt, &accepted); err != nil {
+	if err := survey.AskOne(prompt, &accepted, askOptions...); err != nil {
 		ui.Warningln("Terms of service prompt canceled.")
 		return false
 	}
@@ -287,6 +368,7 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			Message: "DuckDuckGo Chat CLI Configuration",
 			Help:    "Current settings are shown as defaults. Choose an option to edit.",
 			Options: []string{
+				"Theme",
 				"Default Model",
 				"Export Directory",
 				"Search Settings",
@@ -297,6 +379,7 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 				"API Settings",
 				"Dashboard Settings",
 				"Duck.ai Native Tools",
+				"Audio Agent Speak",
 				"Prompt Management",
 				"Back to chat",
 			},
@@ -308,6 +391,8 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 		}
 
 		switch choice {
+		case "Theme":
+			handleThemeSettings(cfg)
 		case "Default Model":
 			handleModelChange(cfg, chatSession)
 		case "Export Directory":
@@ -328,12 +413,116 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			handleDashboardSettings(cfg)
 		case "Duck.ai Native Tools":
 			handleNativeToolsChange(cfg, chatSession)
+		case "Audio Agent Speak":
+			handleSpeakSettings(cfg)
 		case "Prompt Management":
 			HandlePromptManagement(cfg)
 		case "Back to chat", "":
 			return
 		default:
 			ui.Errorln("Invalid choice. Please try again.")
+		}
+	}
+}
+
+func handleThemeSettings(cfg *Config) {
+	type themeOption struct {
+		theme ui.Theme
+		label string
+	}
+	options := make([]themeOption, 0, len(ui.Themes()))
+	defaultOption := ""
+	for _, theme := range ui.Themes() {
+		description := ""
+		switch theme.ID {
+		case ui.ThemeOfficial:
+			description = "DuckDuckGo logo colors"
+		case ui.ThemeRetro:
+			description = "Aurelia inspired"
+		case ui.ThemeMono:
+			description = "Grayscale"
+		}
+		label := fmt.Sprintf("%s - %s (font: %s)", theme.Label, description, theme.FontHint)
+		options = append(options, themeOption{theme: theme, label: label})
+		if string(theme.ID) == cfg.Appearance.Theme {
+			defaultOption = label
+		}
+	}
+
+	labels := make([]string, 0, len(options))
+	for _, option := range options {
+		labels = append(labels, option.label)
+	}
+	choice := ""
+	prompt := &survey.Select{
+		Message: "Choose CLI theme:",
+		Help:    "The font is a recommendation; configure the actual font in your terminal.",
+		Options: labels,
+		Default: defaultOption,
+	}
+	if err := survey.AskOne(prompt, &choice); err != nil {
+		ui.Warningln("Theme selection canceled.")
+		return
+	}
+
+	var selected ui.Theme
+	for _, option := range options {
+		if option.label == choice {
+			selected = option.theme
+			break
+		}
+	}
+	if selected.ID == "" {
+		ui.Errorln("Invalid theme selection. No changes made.")
+		return
+	}
+	if string(selected.ID) == cfg.Appearance.Theme {
+		ui.AIln("Theme is already active: %s", selected.Label)
+		return
+	}
+
+	previous := cfg.Appearance.Theme
+	cfg.Appearance.Theme = string(selected.ID)
+	if err := saveConfig(cfg); err != nil {
+		cfg.Appearance.Theme = previous
+		ui.Errorln("Error saving config: %v", err)
+		return
+	}
+	if !ui.SetTheme(cfg.Appearance.Theme) {
+		cfg.Appearance.Theme = previous
+		if err := saveConfig(cfg); err != nil {
+			ui.Warningln("Could not restore saved theme after applying it failed: %v", err)
+		}
+		ui.Errorln("Could not apply theme %q.", selected.ID)
+		return
+	}
+	ui.AIln("Theme changed to %s (font recommendation: %s)", selected.Label, selected.FontHint)
+}
+
+func handleSpeakSettings(cfg *Config) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "Audio Agent Speak Configuration",
+			Options: []string{
+				fmt.Sprintf("Window width (%d px)", cfg.Speak.WindowWidth),
+				fmt.Sprintf("Window height (%d px)", cfg.Speak.WindowHeight),
+				"Back",
+			},
+			Default: "Back",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Audio Agent Speak settings canceled.")
+			return
+		}
+
+		switch {
+		case strings.HasPrefix(choice, "Window width"):
+			editDashboardInteger(cfg, "Audio window width in pixels", cfg.Speak.WindowWidth, 320, 1400, func(value int) { cfg.Speak.WindowWidth = value })
+		case strings.HasPrefix(choice, "Window height"):
+			editDashboardInteger(cfg, "Audio window height in pixels", cfg.Speak.WindowHeight, 360, 1400, func(value int) { cfg.Speak.WindowHeight = value })
+		case choice == "Back":
+			return
 		}
 	}
 }

@@ -75,3 +75,58 @@ func TestCommandRegistryIncludesUsageAndDashboardExamples(t *testing.T) {
 		}
 	}
 }
+
+func TestSpeakCommandRegistrationAndValidation(t *testing.T) {
+	registry := GetCommandRegistry()
+	info, ok := registry.Commands["/speak"]
+	if !ok {
+		t.Fatal("/speak is missing from the command registry")
+	}
+	if info.Usage != "/speak" || info.Category != "core" || info.IsChainable || info.RequiresArgs {
+		t.Fatalf("/speak metadata = %+v, want core, no arguments, non-chainable", info)
+	}
+	foundExample := false
+	for _, example := range info.Examples {
+		if example == "/speak" {
+			foundExample = true
+		}
+	}
+	if !foundExample {
+		t.Fatal("/speak is missing from its help examples")
+	}
+
+	parsed, err := Parse("/speak")
+	if err != nil {
+		t.Fatalf("Parse(/speak) error = %v", err)
+	}
+	if err := ValidateCommand(parsed.Commands[0]); err != nil {
+		t.Fatalf("ValidateCommand(/speak) error = %v", err)
+	}
+	if IsChainableCommand("/speak") {
+		t.Fatal("/speak must not be chainable")
+	}
+
+	withArgument, err := Parse("/speak hello")
+	if err != nil {
+		t.Fatalf("Parse(/speak hello) error = %v", err)
+	}
+	if err := ValidateCommand(withArgument.Commands[0]); err == nil {
+		t.Fatal("ValidateCommand(/speak hello) succeeded, want an argument error")
+	}
+
+	withPrompt, err := Parse("/speak -- hello")
+	if err != nil {
+		t.Fatalf("Parse(/speak -- hello) error = %v", err)
+	}
+	if err := ValidateChainedCommand(withPrompt); err == nil {
+		t.Fatal("ValidateChainedCommand(/speak -- hello) succeeded, want a non-chainable error")
+	}
+
+	chain, err := Parse("/search birds && /speak")
+	if err != nil {
+		t.Fatalf("Parse(/search birds && /speak) error = %v", err)
+	}
+	if err := ValidateChainedCommand(chain); err == nil {
+		t.Fatal("ValidateChainedCommand(... && /speak) succeeded, want a non-chainable error")
+	}
+}

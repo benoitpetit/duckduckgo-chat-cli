@@ -14,13 +14,13 @@ import (
 // @Description Chat message request payload
 type ChatRequest struct {
 	Message string `json:"message" binding:"required" example:"Hello, how are you?" minLength:"1" maxLength:"10000"`
-	Model   string `json:"model,omitempty" example:"gpt-5.6-luna"`
+	Model   string `json:"model,omitempty" example:"gpt-6-luna"`
 } // @name ChatRequest
 
 // ModelChangeRequest represents a model change request
 // @Description Model change request payload
 type ModelChangeRequest struct {
-	Model string `json:"model" binding:"required" example:"gpt-5.6-luna" enum:"gpt-5.6-luna,gpt-5.4-nano,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,mistral-small-2603,gpt-oss-120b,tinfoil/gpt-oss-120b,gemma-4-31b,tinfoil/gemma4-31b"`
+	Model string `json:"model" binding:"required" example:"gpt-6-luna" enum:"gpt-6-luna,gpt-5.6-luna,gpt-5.4-nano,gpt-5.4-mini,claude-haiku-4-5,mistral-small-4,mistral-small-2603,gpt-oss-120b,tinfoil/gpt-oss-120b,gemma-4-31b,tinfoil/gemma4-31b"`
 } // @name ModelChangeRequest
 
 // API Response Types
@@ -39,7 +39,7 @@ type APIResponse struct {
 // @Description Chat response payload
 type ChatResponse struct {
 	Response  string       `json:"response" example:"Hello! I'm doing well, thank you for asking."`
-	Model     string       `json:"model" example:"gpt-5.6-luna"`
+	Model     string       `json:"model" example:"gpt-6-luna"`
 	MessageID string       `json:"message_id" example:"msg_123456"`
 	Metadata  ChatMetadata `json:"metadata"`
 } // @name ChatResponse
@@ -58,7 +58,7 @@ type HistoryResponse struct {
 	Messages      []MessageResponse `json:"messages"`
 	TotalMessages int               `json:"total_messages" example:"10"`
 	SessionID     string            `json:"session_id" example:"session_123456"`
-	Model         string            `json:"model" example:"gpt-5.6-luna"`
+	Model         string            `json:"model" example:"gpt-6-luna"`
 } // @name HistoryResponse
 
 // MessageResponse represents a single message in the history
@@ -73,8 +73,8 @@ type MessageResponse struct {
 // ModelInfo represents available model information
 // @Description Information about an available model
 type ModelInfo struct {
-	ID          string `json:"id" example:"gpt-5.6-luna"`
-	Name        string `json:"name" example:"GPT-5.6 Luna"`
+	ID          string `json:"id" example:"gpt-6-luna"`
+	Name        string `json:"name" example:"GPT-6 Luna"`
 	Description string `json:"description" example:"Fast and efficient model for general conversations"`
 	IsDefault   bool   `json:"is_default" example:"true"`
 } // @name ModelInfo
@@ -83,8 +83,8 @@ type ModelInfo struct {
 // @Description Available models response payload
 type ModelsResponse struct {
 	Models       []ModelInfo `json:"models"`
-	CurrentModel string      `json:"current_model" example:"gpt-5.6-luna"`
-	TotalModels  int         `json:"total_models" example:"7"`
+	CurrentModel string      `json:"current_model" example:"gpt-6-luna"`
+	TotalModels  int         `json:"total_models" example:"8"`
 } // @name ModelsResponse
 
 // APIError represents API error details

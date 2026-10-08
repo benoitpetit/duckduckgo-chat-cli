@@ -3,20 +3,24 @@ package intelligence
 import (
 	"fmt"
 	"hash/fnv"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"duckduckgo-chat-cli/internal/media"
 )
 
 // ContextOptimizer handles intelligent context management
 type ContextOptimizer struct {
-	MaxContextSize      int     // Maximum context size in characters
-	CompressionRatio    float64 // Target compression ratio
-	ImportanceThreshold float64 // Minimum importance score to keep content
+	MaxContextSize      int     // Maximum UTF-8 text size in bytes
+	CompressionRatio    float64 // Maximum fraction of low-importance prose to retain, in (0, 1]
+	ImportanceThreshold float64 // Minimum importance score to preserve full prose
 }
+
+var whitespacePattern = regexp.MustCompile(`\s+`)
 
 // Message represents a chat message for optimization
 type Message struct {
@@ -24,6 +28,7 @@ type Message struct {
 	Role       string                  `json:"role"`
 	Images     []media.ImageAttachment `json:"images,omitempty"`
 	Timestamp  time.Time               `json:"timestamp"`
+	Sequence   int                     `json:"-"`
 	Importance float64                 `json:"importance"`
 	Hash       uint64                  `json:"hash"`
 	Compressed bool                    `json:"compressed"`
@@ -43,9 +48,9 @@ type ContextAnalysis struct {
 // NewContextOptimizer creates a new context optimizer
 func NewContextOptimizer() *ContextOptimizer {
 	return &ContextOptimizer{
-		MaxContextSize:      50000, // 50KB default
-		CompressionRatio:    0.7,   // Keep 70% of content
-		ImportanceThreshold: 0.3,   // Keep messages with importance > 30%
+		MaxContextSize:      50000, // 50,000 bytes default
+		CompressionRatio:    0.7,   // Keep at most 70% of compressible content
+		ImportanceThreshold: 0.6,   // Compress older prose below 60% importance
 	}
 }
 
@@ -93,6 +98,10 @@ func (co *ContextOptimizer) AnalyzeContext(messages []Message) *ContextAnalysis 
 // OptimizeContext performs intelligent context optimization
 func (co *ContextOptimizer) OptimizeContext(messages []Message) ([]Message, int64) {
 	originalSize := co.calculateTotalSize(messages)
+	messages = append([]Message(nil), messages...)
+	for i := range messages {
+		messages[i].Sequence = i
+	}
 
 	// Step 1: Calculate importance scores
 	messagesWithScores := co.calculateImportanceScores(messages)
@@ -216,6 +225,11 @@ func (co *ContextOptimizer) removeDuplicates(messages []Message) []Message {
 // compressLowImportanceContent compresses or summarizes less important content
 func (co *ContextOptimizer) compressLowImportanceContent(messages []Message) []Message {
 	for i := range messages {
+		// The newest message is the current request and must reach the model
+		// unchanged even when it is long and scores below the threshold.
+		if i == len(messages)-1 {
+			continue
+		}
 		if messages[i].Importance < co.ImportanceThreshold && len(messages[i].Content) > 500 {
 			compressed := co.compressContent(messages[i].Content)
 			if len(compressed) < len(messages[i].Content) {
@@ -230,23 +244,48 @@ func (co *ContextOptimizer) compressLowImportanceContent(messages []Message) []M
 
 // smartTruncation removes least important messages if context is still too large
 func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
+	if len(messages) == 0 {
+		return messages
+	}
 	totalSize := co.calculateTotalSize(messages)
 
 	if totalSize <= co.MaxContextSize {
 		return messages
 	}
 
-	// Sort by importance (descending)
-	sortedMessages := make([]Message, len(messages))
-	copy(sortedMessages, messages)
+	// Keep the newest message: it is the request currently being sent. If it
+	// alone exceeds the text budget, retain it and drop older text instead of
+	// silently sending a request without the user's prompt.
+	newestIndex := -1
+	for i := range messages {
+		if messages[i].Role != "user" {
+			continue
+		}
+		if newestIndex == -1 || !messages[i].Timestamp.Before(messages[newestIndex].Timestamp) {
+			newestIndex = i
+		}
+	}
+	result := make([]Message, 0, len(messages))
+	currentSize := 0
+	if newestIndex >= 0 {
+		result = append(result, messages[newestIndex])
+		currentSize = len(messages[newestIndex].Content)
+	}
+	olderMessages := make([]Message, 0, len(messages))
+	for i, msg := range messages {
+		if i != newestIndex {
+			olderMessages = append(olderMessages, msg)
+		}
+	}
 
-	sort.Slice(sortedMessages, func(i, j int) bool {
+	// Sort older messages by importance (descending), then fill the budget
+	// around the pinned newest message.
+	sortedMessages := olderMessages
+
+	sort.SliceStable(sortedMessages, func(i, j int) bool {
 		return sortedMessages[i].Importance > sortedMessages[j].Importance
 	})
 
-	// Keep adding messages until we hit the size limit
-	result := []Message{}
-	currentSize := 0
 	for _, msg := range sortedMessages {
 		if len(msg.Images) > 0 || currentSize+len(msg.Content) <= co.MaxContextSize {
 			result = append(result, msg)
@@ -255,7 +294,10 @@ func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
 	}
 
 	// Restore chronological order
-	sort.Slice(result, func(i, j int) bool {
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Timestamp.Equal(result[j].Timestamp) {
+			return result[i].Sequence < result[j].Sequence
+		}
 		return result[i].Timestamp.Before(result[j].Timestamp)
 	})
 
@@ -264,33 +306,93 @@ func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
 
 // compressContent applies various compression techniques to content
 func (co *ContextOptimizer) compressContent(content string) string {
-	// Remove excessive whitespace
-	re := regexp.MustCompile(`\s+`)
-	compressed := re.ReplaceAllString(content, " ")
-
-	// Remove repetitive patterns
-	lines := strings.Split(compressed, "\n")
-	uniqueLines := []string{}
-	seen := make(map[string]bool)
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !seen[trimmed] {
-			uniqueLines = append(uniqueLines, line)
-			seen[trimmed] = true
-		}
+	// Keep code formatting intact. Whitespace normalization and line removal
+	// can change the meaning of code, including code imported as file context.
+	if strings.Contains(content, "```") {
+		return content
 	}
-
-	compressed = strings.Join(uniqueLines, "\n")
-
-	// If it's a context message, create a summary
+	var compressed string
 	if strings.Contains(content, "[File Context]") ||
 		strings.Contains(content, "[URL Context]") ||
 		strings.Contains(content, "[Search Context]") {
 		compressed = co.summarizeContextMessage(content)
+	} else {
+		// Normalize prose a line at a time so line boundaries remain available
+		// for duplicate removal.
+		lines := strings.Split(content, "\n")
+		uniqueLines := []string{}
+		seen := make(map[string]bool)
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				if len(uniqueLines) > 0 && uniqueLines[len(uniqueLines)-1] != "" {
+					uniqueLines = append(uniqueLines, "")
+				}
+				continue
+			}
+			normalized := whitespacePattern.ReplaceAllString(trimmed, " ")
+			if !seen[normalized] {
+				uniqueLines = append(uniqueLines, normalized)
+				seen[normalized] = true
+			}
+		}
+		compressed = strings.Join(uniqueLines, "\n")
 	}
 
-	return strings.TrimSpace(compressed)
+	compressed = strings.TrimSpace(compressed)
+	ratio := co.effectiveCompressionRatio()
+	maxBytes := int(math.Floor(float64(len(content)) * ratio))
+	if maxBytes < 1 && len(content) > 0 {
+		maxBytes = 1
+	}
+	if len(compressed) > maxBytes {
+		compressed = truncateAroundMiddle(compressed, maxBytes)
+	}
+	return compressed
+}
+
+func (co *ContextOptimizer) effectiveCompressionRatio() float64 {
+	ratio := co.CompressionRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio <= 0 || ratio > 1 {
+		return 0.7
+	}
+	return ratio
+}
+
+func truncateAroundMiddle(content string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(content) <= maxBytes {
+		return content
+	}
+	marker := "\n[...]\n"
+	if maxBytes <= len(marker) {
+		return utf8Prefix(content, maxBytes)
+	}
+	contentBytes := maxBytes - len(marker)
+	head := utf8Prefix(content, contentBytes/2)
+	tailLimit := contentBytes - len(head)
+	tailStart := len(content) - tailLimit
+	for tailStart < len(content) && !utf8.RuneStart(content[tailStart]) {
+		tailStart++
+	}
+	return head + marker + content[tailStart:]
+}
+
+func utf8Prefix(content string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(content) <= maxBytes {
+		return content
+	}
+	prefix := content[:maxBytes]
+	for len(prefix) > 0 && !utf8.ValidString(prefix) {
+		prefix = prefix[:len(prefix)-1]
+	}
+	return prefix
 }
 
 // summarizeContextMessage creates a concise summary of context messages
@@ -359,7 +461,7 @@ func (co *ContextOptimizer) calculateTotalSize(messages []Message) int {
 func (co *ContextOptimizer) hashContent(content string) uint64 {
 	h := fnv.New64a()
 	// Normalize content for hashing (remove whitespace variations)
-	normalized := regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(content), " ")
+	normalized := whitespacePattern.ReplaceAllString(strings.TrimSpace(content), " ")
 	h.Write([]byte(normalized))
 	return h.Sum64()
 }
@@ -400,7 +502,7 @@ func (co *ContextOptimizer) generateRecommendations(analysis *ContextAnalysis) [
 
 	if analysis.TotalSize > co.MaxContextSize {
 		recommendations = append(recommendations,
-			fmt.Sprintf("Context size (%d chars) exceeds recommended limit (%d chars)",
+			fmt.Sprintf("Context size (%d bytes) exceeds recommended limit (%d bytes)",
 				analysis.TotalSize, co.MaxContextSize))
 	}
 
@@ -460,7 +562,7 @@ func (co *ContextOptimizer) countDuplicates(messages []Message) int {
 
 func (co *ContextOptimizer) hashMessage(msg Message) uint64 {
 	h := fnv.New64a()
-	normalized := regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(msg.Content), " ")
+	normalized := whitespacePattern.ReplaceAllString(strings.TrimSpace(msg.Content), " ")
 	h.Write([]byte(msg.Role))
 	h.Write([]byte{0})
 	h.Write([]byte(normalized))

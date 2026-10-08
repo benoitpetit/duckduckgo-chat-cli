@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/analytics"
+	"duckduckgo-chat-cli/internal/intelligence"
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/persistence"
 )
@@ -67,5 +68,27 @@ func TestSaveCurrentSessionUsesConversationStartTime(t *testing.T) {
 	}
 	if !saved.StartTime.Equal(conversationStart) {
 		t.Fatalf("saved conversation start = %s, want %s (process start %s)", saved.StartTime, conversationStart, processStart)
+	}
+}
+
+func TestRestoreContextUsesOptimizedMessagesWhenPresent(t *testing.T) {
+	chat := &Chat{}
+	session := &persistence.ConversationSession{
+		ID:                "session-optimized",
+		Model:             string(models.Default()),
+		Messages:          []intelligence.Message{{Role: "user", Content: "original"}},
+		OptimizedMessages: []intelligence.Message{{Role: "user", Content: "optimized"}},
+	}
+
+	chat.RestoreContext(session)
+	if len(chat.Messages) != 1 || chat.Messages[0].Content != "optimized" {
+		t.Fatalf("restored messages = %+v, want optimized archive messages", chat.Messages)
+	}
+}
+
+func TestTruncateUTF8KeepsResponseValid(t *testing.T) {
+	got := truncateUTF8("abc€def", 5)
+	if got != "abc" {
+		t.Fatalf("truncateUTF8() = %q, want complete UTF-8 prefix %q", got, "abc")
 	}
 }

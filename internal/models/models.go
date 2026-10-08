@@ -36,6 +36,7 @@ type Definition struct {
 }
 
 const (
+	GPT6Luna     Model = "gpt-6-luna"
 	GPT5Luna     Model = "gpt-5.6-luna"
 	GPT54Nano    Model = "gpt-5.4-nano"
 	GPT54Mini    Model = "gpt-5.4-mini"
@@ -44,6 +45,7 @@ const (
 	GPTOSS120B   Model = "tinfoil/gpt-oss-120b"
 	Gemma431B    Model = "tinfoil/gemma4-31b"
 
+	GPT6LunaAlias     ModelAlias = "gpt-6-luna"
 	GPT5LunaAlias     ModelAlias = "gpt-5.6-luna"
 	GPT54NanoAlias    ModelAlias = "gpt-5.4-nano"
 	GPT54MiniAlias    ModelAlias = "gpt-5.4-mini"
@@ -54,7 +56,8 @@ const (
 )
 
 var modelDefinitions = []Definition{
-	{ID: GPT5Luna, Alias: GPT5LunaAlias, Name: "GPT-5.6 Luna", Description: "Duck.ai's default general-purpose model", Default: true},
+	{ID: GPT6Luna, Alias: GPT6LunaAlias, Name: "GPT-6 Luna", Description: "Duck.ai's current general-purpose model", Default: true},
+	{ID: GPT5Luna, Alias: GPT5LunaAlias, Name: "GPT-5.6 Luna", Description: "Previous Luna model"},
 	{ID: GPT54Nano, Alias: GPT54NanoAlias, Name: "GPT-5.4 Nano", Description: "Fast, lightweight model for everyday tasks"},
 	{ID: GPT54Mini, Alias: GPT54MiniAlias, Name: "GPT-5.4 Mini", Description: "Fast general-purpose model"},
 	{ID: ClaudeHaiku, Alias: ClaudeHaikuAlias, Name: "Claude Haiku 4.5", Description: "Anthropic's fast conversational model"},
@@ -92,7 +95,7 @@ func Default() Model {
 			return definition.ID
 		}
 	}
-	return GPT5Luna
+	return GPT6Luna
 }
 
 // DisplayName returns the user-facing name for a canonical model ID.
@@ -110,7 +113,7 @@ func DisplayName(model Model) string {
 // differ from the underlying provider model.
 func SupportsImageInput(model Model) bool {
 	switch model {
-	case GPT5Luna, GPT54Nano, GPT54Mini, ClaudeHaiku:
+	case GPT6Luna, GPT5Luna, GPT54Nano, GPT54Mini, ClaudeHaiku:
 		return true
 	default:
 		return false

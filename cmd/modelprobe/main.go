@@ -20,6 +20,11 @@ func main() {
 
 	cfg := config.Initialize()
 	session := chat.InitializeSession(cfg)
+	defer func() {
+		if err := chat.ShutdownBrowser(); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not close Duck.ai browser: %v\n", err)
+		}
+	}()
 
 	for _, id := range ids {
 		session.Model = models.Model(id)

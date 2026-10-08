@@ -111,11 +111,11 @@ func prepareBrowserOptions(entries []fs.DirEntry, mode browseMode) ([]string, ma
 			continue // Skip hidden files/directories
 		}
 		if entry.IsDir() {
-			option := "📁 " + name
+			option := "[DIR] " + name
 			options = append(options, option)
 			entryMap[option] = entry
 		} else if mode == BrowseFiles {
-			option := "📄 " + name
+			option := "[FILE] " + name
 			options = append(options, option)
 			entryMap[option] = entry
 		}

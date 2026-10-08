@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" translate="no">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
+    <meta name="google" content="notranslate">
     <title>DuckChat · Usage Dashboard</title>
     <link rel="icon" type="image/png" href="/favicon.ico">
     <link rel="stylesheet" href="/assets/style.css">
@@ -83,9 +84,9 @@
             <div class="analysis-controls"><label for="analysisModel">Model</label><select id="analysisModel" aria-label="Analysis model"></select><button class="button primary" id="metricsAnalysis">Analyze usage <span>→</span></button></div>
             <div class="analysis-result" id="metricsResult" hidden></div>
             <div class="conversation-analysis" id="conversationAnalysis" hidden>
-              <div><strong>Personalized report</strong><p>Archived conversation excerpts are included only after confirmation. Selected content is sent to Duck.ai.</p></div>
+              <div><strong>Personalized report</strong><p>Archived conversation excerpts are included only after confirmation. Sampled content is sent to Duck.ai.</p></div>
               <div class="analysis-controls"><button class="button secondary" id="previewReport">Estimate report</button></div>
-              <div class="preview-box" id="reportPreview" hidden><span id="reportEstimate"></span><button class="button primary" id="runReport">Analyze selected excerpts <span>→</span></button></div>
+              <div class="preview-box" id="reportPreview" hidden><span id="reportEstimate"></span><button class="button primary" id="runReport">Analyze sampled excerpts <span>→</span></button></div>
               <div class="analysis-result" id="conversationResult" hidden></div>
             </div>
           </article>

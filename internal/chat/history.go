@@ -26,13 +26,13 @@ func PrintHistory(c *Chat) {
 	for i, msg := range c.Messages {
 		switch {
 		case strings.HasPrefix(msg.Content, "[Search Context]"):
-			dimYellow.Print("🔍 Search Context: ")
+			dimYellow.Print("Search Context: ")
 			dimWhite.Println(strings.TrimSpace(strings.TrimPrefix(msg.Content, "[Search Context]")))
 		case strings.HasPrefix(msg.Content, "[File Context]"):
-			dimYellow.Print("📄 File Context: ")
+			dimYellow.Print("File Context: ")
 			dimWhite.Println(strings.TrimSpace(strings.TrimPrefix(msg.Content, "[File Context]")))
 		case strings.HasPrefix(msg.Content, "[URL Context]"):
-			dimYellow.Print("🌐 URL Context: ")
+			dimYellow.Print("URL Context: ")
 			dimWhite.Println(strings.TrimSpace(strings.TrimPrefix(msg.Content, "[URL Context]")))
 		case msg.Role == "user":
 			dimBlue.Print("You: ")
@@ -67,24 +67,24 @@ func (c *Chat) GetMarkdownContent() string {
 	md.WriteString("---\n\n")
 	md.WriteString("# DuckDuckGo AI Chat Export\n\n")
 
-	for i, msg := range c.Messages {
-		timestamp := time.Now().Add(time.Duration(-len(c.Messages)+i) * time.Minute).Format("15:04")
+	for _, msg := range c.Messages {
+		timestamp := formatMessageTimestamp(msg.Timestamp)
 		switch {
 		case strings.Contains(msg.Content, "[Search Context]"):
-			md.WriteString(fmt.Sprintf("### 🔍 Search Context (%s)\n\n", timestamp))
+			md.WriteString(fmt.Sprintf("### Search Context (%s)\n\n", timestamp))
 			md.WriteString("```\n" + strings.TrimPrefix(msg.Content, "[Search Context]\n") + "\n```\n")
 		case strings.Contains(msg.Content, "[File Context]"):
-			md.WriteString(fmt.Sprintf("### 📄 File Content (%s)\n\n", timestamp))
+			md.WriteString(fmt.Sprintf("### File Content (%s)\n\n", timestamp))
 			md.WriteString("```\n" + strings.TrimPrefix(msg.Content, "[File Context]\n") + "\n```\n")
 		case strings.Contains(msg.Content, "[URL Context]"):
-			md.WriteString(fmt.Sprintf("### 🌐 Web Content (%s)\n\n", timestamp))
+			md.WriteString(fmt.Sprintf("### Web Content (%s)\n\n", timestamp))
 			md.WriteString("```\n" + strings.TrimPrefix(msg.Content, "[URL Context]\n") + "\n```\n")
 		default:
 			if msg.Role == "user" {
-				md.WriteString(fmt.Sprintf("### 🧑 User Query (%s)\n\n", timestamp))
+				md.WriteString(fmt.Sprintf("### User Query (%s)\n\n", timestamp))
 				md.WriteString(msg.Content + "\n")
 			} else {
-				md.WriteString(fmt.Sprintf("### 🤖 AI Response (%s)\n\n", timestamp))
+				md.WriteString(fmt.Sprintf("### AI Response (%s)\n\n", timestamp))
 				md.WriteString(msg.Content + "\n")
 			}
 		}

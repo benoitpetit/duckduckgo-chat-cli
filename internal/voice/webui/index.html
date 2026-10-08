@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="google" content="notranslate">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b1016">
+  <title>Duck.ai Speak</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <main id="voice-app" class="companion">
+    <header class="companion-header">
+      <div id="connection-pill" class="connection-pill" data-state="idle" role="status" aria-live="polite">
+        <span class="status-indicator" aria-hidden="true">
+          <span class="status-dot"></span>
+        </span>
+        <span id="connection-state">Ready</span>
+      </div>
+    </header>
+
+    <section class="companion-body" aria-label="Duck.ai voice companion">
+      <div class="duck-stage" id="duck-stage" data-state="idle" role="img" aria-label="Duck.ai mascot">
+        <img class="duck-logo" src="/logo.png" alt="" aria-hidden="true">
+        <svg class="state-visual" viewBox="0 0 280 280" aria-hidden="true" focusable="false">
+          <g class="state-listening">
+            <circle class="speech-ring speech-ring-inner" cx="140" cy="140" r="119" />
+          </g>
+          <g class="state-speaking">
+            <rect class="speak-bar speak-bar-one" x="128" y="4" width="5" height="10" rx="2.5" />
+            <rect class="speak-bar speak-bar-two" x="138" y="0" width="5" height="14" rx="2.5" />
+            <rect class="speak-bar speak-bar-three" x="148" y="2" width="5" height="12" rx="2.5" />
+          </g>
+        </svg>
+      </div>
+      <p id="voice-state" class="voice-state" role="status" aria-live="polite">Starting voice session…</p>
+    </section>
+
+    <div class="subtitle-slot">
+      <div id="subtitle-panel" class="subtitle-panel" data-speaker="assistant" role="status" aria-label="Voice transcription" aria-live="polite" aria-atomic="false" hidden>
+        <span id="subtitle-speaker" class="subtitle-speaker">Duck.ai</span>
+        <p id="assistant-transcript" class="subtitle-text"></p>
+      </div>
+    </div>
+
+    <p id="error-message" class="error-message" role="alert" hidden></p>
+    <button id="audio-enable-button" class="audio-enable" type="button" hidden>Enable audio</button>
+
+    <div id="controls" class="controls" data-mode="idle" aria-label="Voice controls">
+      <button id="start-button" class="button button-start" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 10 6-10 6z" /></svg>
+        <span class="button-label">Start</span>
+      </button>
+      <button id="mute-button" class="button button-mute" type="button" aria-label="Mute microphone (M)" aria-keyshortcuts="M" aria-pressed="false" hidden disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8" />
+          <path class="mic-slash" d="m4 4 16 16" />
+        </svg>
+        <span class="button-label">Mute</span>
+        <span class="shortcut-hint" aria-hidden="true">M</span>
+      </button>
+      <button id="end-button" class="button button-end" type="button" hidden disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+        <span class="button-label">End</span>
+      </button>
+    </div>
+    <audio id="remote-audio" autoplay playsinline aria-hidden="true"></audio>
+  </main>
+
+</body>
+</html>

@@ -4,270 +4,223 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
+
+	"duckduckgo-chat-cli/internal/ui"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
-	"github.com/fatih/color"
+	"github.com/muesli/termenv"
 	"golang.org/x/term"
 )
 
-// StreamRenderer handles the progressive rendering of streaming markdown content
+// StreamRenderer renders complete Markdown blocks as they arrive, so content
+// already written to the terminal never needs to be moved or repainted.
 type StreamRenderer struct {
-	renderer       *glamour.TermRenderer
-	terminalWidth  int
-	modelName      string
-	contentStarted bool
-	linesDisplayed int
-	currentColumn  int
+	renderer  *glamour.TermRenderer
+	modelName string
 }
 
-// NewStreamRenderer creates a new streaming renderer
+// NewStreamRenderer creates a renderer using the active CLI theme and terminal
+// width. The width is taken from stdout so wrapping matches the visible output.
 func NewStreamRenderer(modelName string) (*StreamRenderer, error) {
 	width := getTerminalWidthSafe()
-
+	theme := ui.CurrentTheme()
 	customStyles := styles.DarkStyleConfig
-	// H1
-	customStyles.H1.StylePrimitive.Color = stringToPtr("99")
+	customStyles.Document.StylePrimitive.Color = stringToPtr(theme.Colors.Foreground)
+	customStyles.Heading.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.H1.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.H2.StylePrimitive.Color = stringToPtr(theme.Colors.Info)
+	customStyles.H3.StylePrimitive.Color = stringToPtr(theme.Colors.Success)
+	customStyles.H4.StylePrimitive.Color = stringToPtr(theme.Colors.Warning)
+	customStyles.H5.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.H6.StylePrimitive.Color = stringToPtr(theme.Colors.Info)
 	customStyles.H1.StylePrimitive.Bold = boolToPtr(true)
-	customStyles.H1.Prefix = ""
-	// H2
-	customStyles.H2.StylePrimitive.Color = stringToPtr("111")
 	customStyles.H2.StylePrimitive.Bold = boolToPtr(true)
-	customStyles.H2.Prefix = ""
-	// H3
-	customStyles.H3.StylePrimitive.Color = stringToPtr("118")
 	customStyles.H3.StylePrimitive.Bold = boolToPtr(true)
-	customStyles.H3.Prefix = ""
-	// H4
-	customStyles.H4.StylePrimitive.Color = stringToPtr("220")
 	customStyles.H4.StylePrimitive.Bold = boolToPtr(true)
+	customStyles.H1.Prefix = ""
+	customStyles.H2.Prefix = ""
+	customStyles.H3.Prefix = ""
 	customStyles.H4.Prefix = ""
+	customStyles.H5.Prefix = ""
+	customStyles.H1.Suffix = ""
+	customStyles.H1.BackgroundColor = nil
+	customStyles.HorizontalRule.Color = stringToPtr(theme.Colors.Muted)
+	customStyles.Link.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.LinkText.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.Image.Color = stringToPtr(theme.Colors.Info)
+	customStyles.ImageText.Color = stringToPtr(theme.Colors.Muted)
+	customStyles.Code.Color = stringToPtr(theme.Colors.Warning)
+	customStyles.Code.BackgroundColor = nil
+	customStyles.CodeBlock.Color = stringToPtr(theme.Colors.Foreground)
+	customStyles.CodeBlock.Chroma = themeChroma(theme.Colors)
 
+	wrapWidth := width - 4
+	if wrapWidth < 8 {
+		wrapWidth = 8
+	}
+	colorProfile := termenv.EnvColorProfile()
+	if !term.IsTerminal(int(os.Stdout.Fd())) || termenv.EnvNoColor() {
+		colorProfile = termenv.Ascii
+	}
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(customStyles),
-		glamour.WithWordWrap(width-4), // Leave some margin
+		glamour.WithWordWrap(wrapWidth),
+		glamour.WithColorProfile(colorProfile),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	return &StreamRenderer{
-		renderer:       renderer,
-		terminalWidth:  width,
-		modelName:      modelName,
-		contentStarted: false,
-		linesDisplayed: 0,
-		currentColumn:  0,
+		renderer:  renderer,
+		modelName: modelName,
 	}, nil
 }
 
-// RenderStream handles the progressive rendering of a streaming response to the terminal
-func RenderStream(stream <-chan string, modelName string) string {
-	// Print the model name with a clear loading indicator
-	color.New(color.FgHiGreen, color.Bold).Printf("%s: ", modelName)
+func themeChroma(palette ui.Palette) *ansi.Chroma {
+	chroma := *styles.DarkStyleConfig.CodeBlock.Chroma
+	set := func(style *ansi.StylePrimitive, value string) {
+		style.Color = stringToPtr(value)
+	}
+	set(&chroma.Text, palette.Foreground)
+	set(&chroma.Error, palette.Error)
+	chroma.Error.BackgroundColor = nil
+	set(&chroma.Comment, palette.Muted)
+	set(&chroma.CommentPreproc, palette.Warning)
+	set(&chroma.Keyword, palette.Accent)
+	set(&chroma.KeywordReserved, palette.Accent)
+	set(&chroma.KeywordNamespace, palette.Info)
+	set(&chroma.KeywordType, palette.Success)
+	set(&chroma.Operator, palette.Warning)
+	set(&chroma.Punctuation, palette.Info)
+	set(&chroma.Name, palette.Foreground)
+	set(&chroma.NameBuiltin, palette.Info)
+	set(&chroma.NameTag, palette.Accent)
+	set(&chroma.NameAttribute, palette.Success)
+	set(&chroma.NameClass, palette.Accent)
+	set(&chroma.NameDecorator, palette.Warning)
+	set(&chroma.NameFunction, palette.Success)
+	set(&chroma.NameOther, palette.Foreground)
+	set(&chroma.Literal, palette.Info)
+	set(&chroma.LiteralNumber, palette.Success)
+	set(&chroma.LiteralDate, palette.Info)
+	set(&chroma.LiteralString, palette.Warning)
+	set(&chroma.LiteralStringEscape, palette.Success)
+	set(&chroma.GenericDeleted, palette.Error)
+	set(&chroma.GenericInserted, palette.Success)
+	set(&chroma.GenericSubheading, palette.Muted)
+	set(&chroma.Background, palette.Foreground)
+	chroma.Background.BackgroundColor = nil
+	return &chroma
+}
 
+// RenderStream renders a streamed answer and returns the original Markdown.
+func RenderStream(stream <-chan string, modelName string, spinner *ui.Spinner) string {
 	renderer, err := NewStreamRenderer(modelName)
 	if err != nil {
-		// Fallback to simple streaming
-		return renderStreamFallback(stream, modelName)
+		return renderStreamFallback(stream, modelName, spinner)
 	}
-
-	return renderer.ProcessStream(stream)
+	return renderer.processStream(stream, spinner)
 }
 
-// ProcessStream processes the incoming stream and renders it progressively
+// ProcessStream progressively renders completed Markdown blocks.
 func (sr *StreamRenderer) ProcessStream(stream <-chan string) string {
-	var finalContent strings.Builder
-
-	// Show loading spinner initially
-	spinnerChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	spinnerPos := 0
-
-	// Create a ticker for spinner animation
-	spinnerTicker := time.NewTicker(120 * time.Millisecond)
-	defer spinnerTicker.Stop()
-
-	// Show initial spinner
-	fmt.Print(color.New(color.FgYellow).Sprint(spinnerChars[0]) + " ")
-
-	// Track content display state
-	contentStarted := false
-	lastSpinnerUpdate := time.Now()
-
-	for {
-		select {
-		case chunk, ok := <-stream:
-			if !ok {
-				// Stream finished - replace raw content with formatted version
-				sr.replaceWithFormattedContent(finalContent.String(), contentStarted)
-				return finalContent.String()
-			}
-
-			finalContent.WriteString(chunk)
-
-			// On first chunk, clear spinner and start displaying raw content
-			if !contentStarted {
-				fmt.Print("\r\033[K") // Clear spinner line
-				color.New(color.FgHiGreen, color.Bold).Printf("%s: ", sr.modelName)
-				fmt.Print("\n") // Start content on a new line for consistency
-				contentStarted = true
-				sr.linesDisplayed++ // Account for the newline we just added
-				sr.currentColumn = 0
-			}
-
-			// Count lines displayed for proper cleanup later, including wraps
-			for _, r := range chunk {
-				if r == '\n' {
-					sr.linesDisplayed++
-					sr.currentColumn = 0
-				} else {
-					sr.currentColumn++
-					if sr.terminalWidth > 0 && sr.currentColumn > sr.terminalWidth {
-						sr.linesDisplayed++
-						sr.currentColumn = 1
-					}
-				}
-			}
-
-			// Display raw content in real-time
-			fmt.Print(chunk)
-
-		case <-spinnerTicker.C:
-			// Update spinner animation only if no content has started
-			if !contentStarted && time.Since(lastSpinnerUpdate) >= 100*time.Millisecond {
-				spinnerPos = (spinnerPos + 1) % len(spinnerChars)
-				// Update spinner in place
-				fmt.Print("\r")
-				color.New(color.FgHiGreen, color.Bold).Printf("%s: ", sr.modelName)
-				fmt.Print(color.New(color.FgYellow).Sprint(spinnerChars[spinnerPos]) + " ")
-				lastSpinnerUpdate = time.Now()
-			}
-		}
-	}
+	return sr.processStream(stream, nil)
 }
 
-// replaceWithFormattedContent clears the raw content and displays the formatted version
-func (sr *StreamRenderer) replaceWithFormattedContent(content string, contentStarted bool) {
-	if content == "" {
-		fmt.Println()
-		return
-	}
+func (sr *StreamRenderer) processStream(stream <-chan string, spinner *ui.Spinner) string {
+	return processMarkdownStream(stream, sr.modelName, spinner, func(piece markdownPiece, previous bool) {
+		sr.renderPiece(piece, previous)
+	})
+}
 
-	// Only perform cleanup if content was actually displayed
-	if contentStarted {
-		// Move cursor up by the number of lines displayed
-		if sr.linesDisplayed > 0 {
-			fmt.Printf("\033[%dA", sr.linesDisplayed)
-		}
-		// Go to the beginning of the line
-		fmt.Print("\r")
-		// Clear everything from the cursor position to the end of the screen
-		fmt.Print("\033[J")
-
-		// Reprint model name and start content on new line for consistency
-		color.New(color.FgHiGreen, color.Bold).Printf("%s: ", sr.modelName)
-		fmt.Print("\n")
-	} else {
-		// Fallback for cases where cursor wasn't saved or content didn't start
-		// (e.g., empty response from API)
-		fmt.Print("\r\033[K")
-		color.New(color.FgHiGreen, color.Bold).Printf("%s: ", sr.modelName)
-		fmt.Print("\n")
-	}
-
-	// Try to render as markdown for the final display
-	rendered, err := sr.renderer.Render(content)
+func (sr *StreamRenderer) renderPiece(piece markdownPiece, previous bool) {
+	rendered, err := sr.renderer.Render(piece.text)
 	if err != nil {
-		// Fallback to raw text if markdown rendering fails
-		// Remove leading whitespace/newlines for consistent positioning
-		cleanContent := strings.TrimLeft(content, " \n\t\r")
-		fmt.Print(cleanContent)
-		// Ensure we end with a newline for raw content
-		if !strings.HasSuffix(cleanContent, "\n") {
-			fmt.Println()
-		}
-	} else {
-		// Print the rendered markdown, removing leading whitespace for consistent positioning
-		cleanRendered := strings.TrimLeft(rendered, " \n\t\r")
-		fmt.Print(cleanRendered)
-		// Ensure we end with a newline for rendered content
-		if !strings.HasSuffix(cleanRendered, "\n") {
-			fmt.Println()
-		}
+		rendered = piece.text
 	}
+	writeRenderedPiece(rendered, previous, piece.continuing)
 }
 
-// renderStreamFallback is a simple fallback when glamour fails
-func renderStreamFallback(stream <-chan string, modelName string) string {
+// renderStreamFallback keeps streaming usable if Glamour cannot initialize.
+func renderStreamFallback(stream <-chan string, modelName string, spinner *ui.Spinner) string {
+	return processMarkdownStream(stream, modelName, spinner, func(piece markdownPiece, previous bool) {
+		writeRenderedPiece(piece.text, previous, piece.continuing)
+	})
+}
+
+func processMarkdownStream(stream <-chan string, modelName string, spinner *ui.Spinner, renderPiece func(markdownPiece, bool)) string {
 	var content strings.Builder
-	var displayedLines int
-
-	// Show simple loading
-	fmt.Print(color.New(color.FgYellow).Sprint("⠋") + " ")
+	var blocks markdownBlockStream
 	contentStarted := false
-
+	renderedAny := false
+	startContent := func() {
+		if contentStarted {
+			return
+		}
+		if spinner != nil {
+			spinner.Stop()
+		}
+		if modelName != "" {
+			ui.AccentColor.Printf("%s:\n", modelName)
+		}
+		contentStarted = true
+	}
 	for chunk := range stream {
 		content.WriteString(chunk)
-
-		// Clear loading indicator on first chunk
-		if !contentStarted {
-			fmt.Print("\r\033[K") // Clear loading line
-			color.New(color.FgHiGreen, color.Bold).Printf("%s: ", modelName)
-			fmt.Print("\n") // Start content on new line for consistency
-			contentStarted = true
+		for _, piece := range blocks.Push(chunk) {
+			startContent()
+			renderPiece(piece, renderedAny)
+			renderedAny = true
 		}
-
-		// Stream raw content in real-time
-		fmt.Print(chunk)
-		displayedLines += strings.Count(chunk, "\n")
 	}
 
-	// For fallback, just ensure we end with a newline (no markdown formatting)
-	if !strings.HasSuffix(content.String(), "\n") {
-		fmt.Println()
+	for _, piece := range blocks.Flush() {
+		startContent()
+		renderPiece(piece, renderedAny)
+		renderedAny = true
 	}
 
+	if spinner != nil {
+		spinner.Stop()
+	}
+	if !renderedAny {
+		fmt.Println("No response received.")
+	}
 	return content.String()
 }
 
-// getTerminalWidthSafe safely gets terminal width with fallback
+func writeRenderedPiece(rendered string, previous, continuing bool) {
+	rendered = strings.Trim(rendered, "\n\r")
+	if rendered == "" {
+		return
+	}
+	if previous && !continuing {
+		fmt.Println()
+	}
+	fmt.Print(rendered)
+	fmt.Println()
+}
+
+// getTerminalWidthSafe uses stdout's terminal dimensions, with a stable width
+// for pipes, redirected output, and terminals that do not report their size.
 func getTerminalWidthSafe() int {
-	width := 80 // default
-
-	if file, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
-		defer file.Close()
-
-		// Try to get terminal size
-		if w, _, err := getTerminalSize(file); err == nil && w > 0 {
-			width = w
+	width := 80
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		if terminalWidth, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && terminalWidth > 0 {
+			width = terminalWidth
 		}
 	}
-
-	// Ensure reasonable bounds
-	if width < 40 {
-		width = 40
-	} else if width > 200 {
+	if width < 8 {
+		width = 8
+	}
+	if width > 200 {
 		width = 200
 	}
-
 	return width
 }
 
-// Helper function to get terminal size
-func getTerminalSize(file *os.File) (int, int, error) {
-	width, height, err := term.GetSize(int(file.Fd()))
-	if err != nil {
-		return 80, 24, err
-	}
-	return width, height, nil
-}
-
-// Helper functions for style config
-func stringToPtr(s string) *string {
-	return &s
-}
-
-func boolToPtr(b bool) *bool {
-	return &b
-}
+func stringToPtr(value string) *string { return &value }
+func boolToPtr(value bool) *bool       { return &value }

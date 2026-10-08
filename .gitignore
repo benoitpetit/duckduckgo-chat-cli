@@ -35,3 +35,8 @@ duckchat*
 
 # Local design and implementation notes stay outside the public source tree.
 docs/superpowers/
+# Local analysis material and generated Wails cache stay out of Git.
+/reverse/
+/.wails-cache/
+# MIRA project data
+.mira/

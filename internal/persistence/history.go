@@ -16,6 +16,10 @@ import (
 	"duckduckgo-chat-cli/internal/ui"
 )
 
+// SessionFormatVersion identifies when per-message timestamps became real
+// creation times rather than synthetic save-time ordering values.
+const SessionFormatVersion = "1.1"
+
 // ConversationSession represents a complete chat session
 type ConversationSession struct {
 	ID                string                 `json:"id"`
@@ -51,6 +55,7 @@ type HistoryManager struct {
 }
 
 var resumeSessionIDPattern = regexp.MustCompile(`^session_[A-Za-z0-9_-]{1,80}$`)
+var storageSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // NewHistoryManager creates a new history manager
 func NewHistoryManager(storageDir string) *HistoryManager {
@@ -79,26 +84,29 @@ func (hm *HistoryManager) SetRetentionDays(days int) error {
 
 // SaveSession saves a conversation session with optimization
 func (hm *HistoryManager) SaveSession(session *ConversationSession) error {
+	if session == nil || !storageSessionIDPattern.MatchString(session.ID) {
+		return fmt.Errorf("invalid session id")
+	}
 	hm.saveMu.Lock()
 	defer hm.saveMu.Unlock()
 	// Ensure storage directory exists
-	if err := os.MkdirAll(hm.StorageDir, 0755); err != nil {
+	if err := os.MkdirAll(hm.StorageDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
 	// Set session metadata
 	session.EndTime = time.Now()
-	session.Version = "1.0"
+	session.Version = SessionFormatVersion
 	session.Analytics.SessionDuration = session.EndTime.Sub(session.StartTime)
 	session.Analytics.MessageCount = len(session.Messages)
 
 	// Optimize messages if needed
 	if hm.optimizer.IsOptimizationNeeded(session.Messages) {
-		ui.Warningln("🔄 Optimizing session before saving...")
+		ui.Warningln("Optimizing session before saving...")
 		optimized, bytesSaved := hm.optimizer.OptimizeContext(session.Messages)
 		session.OptimizedMessages = optimized
 		session.Analytics.OptimizationsUsed++
-		ui.AIln("💾 Session optimized for storage (saved %d bytes)", bytesSaved)
+		ui.AIln("Session optimized for storage (saved %d bytes)", bytesSaved)
 	}
 
 	filename := fmt.Sprintf("session_%s.json", session.ID)
@@ -108,8 +116,11 @@ func (hm *HistoryManager) SaveSession(session *ConversationSession) error {
 	if err := hm.saveCompressed(session, fullPath); err != nil {
 		return fmt.Errorf("failed to save session: %w", err)
 	}
+	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove legacy uncompressed session: %w", err)
+	}
 
-	ui.AIln("📁 Session saved: %s", fullPath)
+	ui.AIln("Session saved: %s", fullPath)
 
 	// Cleanup old sessions
 	if err := hm.cleanupOldSessions(); err != nil {
@@ -121,6 +132,9 @@ func (hm *HistoryManager) SaveSession(session *ConversationSession) error {
 
 // LoadSession loads a conversation session
 func (hm *HistoryManager) LoadSession(sessionID string) (*ConversationSession, error) {
+	if !storageSessionIDPattern.MatchString(sessionID) {
+		return nil, fmt.Errorf("invalid session id")
+	}
 	filename := fmt.Sprintf("session_%s.json.gz", sessionID)
 	fullPath := filepath.Join(hm.StorageDir, filename)
 
@@ -370,11 +384,11 @@ func (hm *HistoryManager) RestoreSession(sessionID string) ([]intelligence.Messa
 
 	// Use optimized messages if available, otherwise use original
 	if len(session.OptimizedMessages) > 0 {
-		ui.AIln("📥 Restored optimized session with %d messages", len(session.OptimizedMessages))
+		ui.AIln("Restored optimized session with %d messages", len(session.OptimizedMessages))
 		return session.OptimizedMessages, nil
 	}
 
-	ui.AIln("📥 Restored session with %d messages", len(session.Messages))
+	ui.AIln("Restored session with %d messages", len(session.Messages))
 	return session.Messages, nil
 }
 
@@ -526,6 +540,9 @@ func (hm *HistoryManager) cleanupOldSessions() error {
 
 	// Remove sessions older than retention period
 	for _, session := range sessions {
+		if !storageSessionIDPattern.MatchString(session.ID) {
+			continue
+		}
 		if now.Sub(session.StartTime) > time.Duration(retentionDays)*24*time.Hour {
 			filename := fmt.Sprintf("session_%s.json", session.ID)
 			gzFilename := fmt.Sprintf("session_%s.json.gz", session.ID)
@@ -540,6 +557,9 @@ func (hm *HistoryManager) cleanupOldSessions() error {
 	if len(sessions) > maxSessions {
 		excess := sessions[maxSessions:]
 		for _, session := range excess {
+			if !storageSessionIDPattern.MatchString(session.ID) {
+				continue
+			}
 			filename := fmt.Sprintf("session_%s.json", session.ID)
 			gzFilename := fmt.Sprintf("session_%s.json.gz", session.ID)
 
@@ -550,7 +570,7 @@ func (hm *HistoryManager) cleanupOldSessions() error {
 	}
 
 	if removed > 0 {
-		ui.AIln("🧹 Cleaned up %d old sessions", removed)
+		ui.AIln("Cleaned up %d old sessions", removed)
 	}
 	return nil
 }

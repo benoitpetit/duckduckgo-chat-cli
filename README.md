@@ -64,7 +64,8 @@ The dashboard runs locally and shows your own usage data. These screenshots use 
 
 | Model Name           | Integration ID       | Alias            | Strength             | Best For                 | Characteristics                     |
 | :------------------- | :------------------- | :--------------- | :------------------- | :----------------------- | :---------------------------------- |
-| **GPT-5.6 Luna**     | gpt-5.6-luna         | gpt-5.6-luna     | General purpose      | Everyday questions       | • Fast<br>• Well-balanced           |
+| **GPT-6 Luna**       | gpt-6-luna           | gpt-6-luna       | General purpose      | Everyday questions       | • Fast<br>• Well-balanced           |
+| GPT-5.6 Luna         | gpt-5.6-luna         | gpt-5.6-luna     | Previous model       | Existing configurations  | • Kept for compatibility            |
 | **GPT-5.4 Nano**     | gpt-5.4-nano         | gpt-5.4-nano     | Lightweight tasks    | Quick answers            | • Fast<br>• Efficient               |
 | **GPT-5.4 Mini**     | gpt-5.4-mini         | gpt-5.4-mini     | Speed                | Quick answers            | • Very fast<br>• Compact responses  |
 | **Claude Haiku 4.5** | claude-haiku-4-5     | claude-haiku-4-5 | Creative writing     | Explanations & summaries | • Clear responses<br>• Concise      |
@@ -127,10 +128,10 @@ chmod +x duckchat
 
 **Prerequisites:**
 
-- Go 1.24+ (`go version`)
+- Go 1.26+ (`go version`)
 - Chrome/Chromium 115+ (`chromium-browser --version`)
 
-The chat backend is Duck.ai. Chrome or Chromium is used headlessly to obtain the rotating browser proof required by Duck.ai; no account credentials are stored by the CLI. See the [protocol notes](reverse/README.md) for the current request flow.
+The chat backend is Duck.ai. Chrome or Chromium is required for chat and voice access; the CLI does not require account credentials.
 
 ```sh
 git clone https://github.com/benoitpetit/duckduckgo-chat-cli
@@ -139,6 +140,32 @@ cd duckduckgo-chat-cli
 ```
 
 ## Usage
+
+### Command-line options
+
+Use `--help` or `--version` without starting the interactive chat. To send one
+prompt and exit, pass `--prompt`; `--model` optionally selects a model for that
+request. Add `--json` for a quiet, machine-readable JSON result. Use `--prompt -`
+to read the prompt from standard input:
+
+```sh
+./duckchat --help
+./duckchat --prompt "Summarize the Go memory model" --model gpt-6-luna
+./duckchat --prompt "Summarize the Go memory model" --json
+printf 'Summarize this input' | ./duckchat --prompt -
+```
+
+JSON mode writes one object to stdout, for example
+`{"response":"...","model":"gpt-6-luna"}`. Errors use `{"error":"..."}`.
+Progress messages and the spinner are suppressed in this mode.
+
+The CLI must have accepted the terms of service in an interactive session
+before one-shot prompts can run without a terminal. One-shot mode does not
+start the REPL, API, dashboard, or startup update check. The answer is written
+to stdout; status messages and errors are written to stderr. With `--json`,
+stdout contains only the JSON result or error object, and progress output is
+suppressed. Completed one-shot exchanges are saved in local conversation
+history.
 
 ### Typical Workflow
 
@@ -213,11 +240,12 @@ You: /load session_12345
 | --------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `/search <query> [-- prompt]`                 | `/search machine learning -- What are the best practices?` | Add search results as context and optionally process them with a prompt                               |
 | `/file <path> [-- prompt]`                    | `/file src/main.go -- Explain this code`                   | Import text or attach an image to the next prompt, or analyze it immediately                          |
-| `/library [command] [args]`                   | `/library add /path/to/docs`                               | Manage library directories for bulk file operations                                                   |
+| `/library [command] [args] [-- prompt]`       | `/library load docs -- Summarize these files`               | Manage libraries, search them, or load one for an immediate prompt                                     |
 | `/url <link> [-- prompt]`                     | `/url github.com/golang -- Summarize this page`            | Add webpage content as context and optionally process it with a prompt                                |
 | `/prompt` or `/prompt add <name> -- <prompt>` | `/prompt` or `/prompt add myprompt -- This is my prompt`   | Manage and load custom prompts. `/prompt` opens the interactive menu; subcommands are also available. |
+| `/speak`                                      | `/speak`                                                   | Open a compact Chrome/Chromium window for a live Duck.ai voice conversation                          |
 | `/stats`                                      | `/stats`                                                   | Show current CLI session analytics and performance metrics                                            |
-| `/dashboard <action>`                         | `/dashboard on`                                            | Start or stop the local usage dashboard, or show its status (`on`, `off`, `status`)                   |
+| `/dashboard <action>`                         | `/dashboard on`                                            | Start or stop the local usage dashboard, open its app window, or show its status (`on`, `off`, `open`, `status`) |
 | `/api [port]`                                 | `/api` or `/api 8080`                                      | Start or stop the API server                                                                          |
 | `/model`                                      | `/model` or `/model 2`                                     | Change AI model (interactive)                                                                         |
 | `/clear`                                      | `/clear`                                                   | Reset conversation context (with session save)                                                        |
@@ -230,6 +258,11 @@ You: /load session_12345
 | `/update`                                     | `/update` or `/update --force`                             | Update the CLI to the latest version                                                                  |
 | `/help`                                       | `/help`                                                    | Show available commands                                                                               |
 | `/exit`                                       | `/exit`                                                    | Exit application (with analytics)                                                                     |
+
+Use `&&` to combine `/file`, `/url`, and `/search` context commands before a
+prompt. `/library` is a standalone command; `/library load <library> -- <prompt>`
+can submit a prompt about the loaded files, but `/library` cannot be included
+in an `&&` chain. `/speak` is a standalone command and cannot be chained.
 
 ### Prompt Management
 
@@ -248,7 +281,7 @@ You: /load session_12345
 
 | Option         | Description                                                      | Default              | Range              |
 | -------------- | ---------------------------------------------------------------- | -------------------- | ------------------ |
-| `DefaultModel` | Starting AI model                                                | gpt-5.6-luna         | 7 models available |
+| `DefaultModel` | Starting AI model                                                | gpt-6-luna           | 8 models available |
 | `GlobalPrompt` | Instructions prepended to the first message of each conversation | ""                   | Any text           |
 | `ExportDir`    | Export directory                                                 | ~/Documents/duckchat | Any valid path     |
 | `ShowMenu`     | Display commands on start                                        | true                 | true/false         |
@@ -267,20 +300,17 @@ viewing and conversation analysis are separate opt-in settings.
 | `ShowConversations`         | `false` | Show archived conversations in the dashboard                                                                                                                    |
 | Dashboard password          | Not set | Set or remove it from this menu; when set, a browser sign-in is required                                                                                        |
 | `ShowConversationContent`   | `false` | Show prompt and assistant response text in the live Activity page; common absolute paths and labelled secrets are masked, and disabling it clears retained text |
-| `AllowConversationAnalysis` | `false` | Permit an explicitly submitted AI report to use selected excerpts                                                                                               |
+| `AllowConversationAnalysis` | `false` | Permit an explicitly submitted AI report to use sampled excerpts                                                                                                |
 | `AnalysisTokenBudget`       | `8000`  | Approximate input-token ceiling for the conversation report                                                                                                     |
 
 ### Native Duck.ai Tools
 
-Native Web Search and image generation are available as opt-in features because
-Duck.ai does not publish a stable tool protocol. Open `/config`, choose
+Native Web Search and image generation are available as opt-in features. Open `/config`, choose
 `Duck.ai Native Tools`, and enable the capabilities you want. Web citations are
 added to the streamed response. Generated images are decoded from the Duck.ai
 response and saved under `<ExportDir>/images`.
 
-The native tools use the same browser bootstrap as regular chat requests, so
-Chrome or Chromium is required. If Duck.ai changes its internal event format,
-the feature may need a protocol update without affecting regular text chat.
+These features require Chrome or Chromium.
 
 The existing `/search` command remains available as a deterministic local
 context command; enabling native Web Search lets Duck.ai decide when a prompt
@@ -292,24 +322,57 @@ needs live web results.
 | `Tools.WebSearch`       | Allow native Web Search     | false   |
 | `Tools.ImageGeneration` | Allow image generation      | false   |
 
+### Rate limit fallback
+
+Chat requests use Chrome or Chromium in the background and do not open a
+separate browser window.
+
+When Duck.ai answers with HTTP 429, the interactive CLI treats the browser as a
+last resort and opens `https://duck.ai/` in your default browser so you can
+continue the conversation there. The rate-limit error is still reported, and the
+CLI stays usable.
+
+A cooldown stops a burst of consecutive rate-limited messages from opening one
+tab per message: after the first launch, further 429s only print a reminder
+until the cooldown expires. Set `RateLimit.OpenBrowser` to `false` in
+`config.json` to turn the fallback off entirely.
+
+| Option                      | Default | Description                                                              |
+| --------------------------- | ------- | ------------------------------------------------------------------------ |
+| `RateLimit.OpenBrowser`     | `true`  | Open duck.ai in the default browser as a last resort on HTTP 429         |
+| `RateLimit.CooldownMinutes` | `10`    | Minimum delay between two automatic browser launches (1 or more)         |
+
 ### File and image support
 
 `/file` imports local text files and can attach PNG, JPEG, or WebP images to a
 prompt. Image files must be at most 10 MiB and have a matching extension and
 file signature. Use `/file path/to/image.png` to attach an image to your next
 prompt, or `/file path/to/image.png -- Describe this image` to send it with an
-immediate prompt. Images are stored in local conversation archives so resumed
-sessions retain their context. `/library` continues to load text and source
-files only. Duck.ai does not accept image uploads for every model. If the
-selected model cannot process images, the CLI routes that image conversation
-through GPT-5.4 mini and tells you when it does so. Native image generation is
-supported separately as described above.
+immediate prompt. Images wider or taller than 512 pixels are resized when they
+can be decoded safely; WebP images that need resizing are converted to JPEG
+or PNG, and resized JPEGs keep EXIF metadata. For images within the limit,
+JPEGs without EXIF are re-encoded at quality 82 and PNGs recompressed
+losslessly only when the result is smaller. Small WebP files and small JPEGs
+with EXIF metadata are sent unchanged. The source file is never modified;
+images too large to decode safely are also left unchanged.
+Images are stored in local conversation archives so resumed sessions retain
+their context. `/library` continues to load text and source files only. Duck.ai
+does not accept image uploads for every model. If the selected model cannot
+process images, the CLI routes that image conversation through GPT-5.4 mini and
+tells you when it does so. Native image generation is supported separately as
+described above.
 
-### Dictation
+### Voice conversation
 
-The CLI does not include microphone capture or voice transcription. Dictation
-is intentionally not enabled until a portable audio and transcription path is
-validated for terminal use.
+Run `/speak` in the interactive CLI to open a compact Chrome/Chromium app window
+(480 × 500 pixels by default, without the tab strip). Select **Démarrer** and
+allow microphone access when the browser asks. Use **Micro** to mute or unmute
+and **Terminer** to close the call. Adjust the window width and height in
+`/config` → **Audio Agent Speak**.
+The local voice interface does not record or store audio or transcripts, and
+voice turns stay separate from the terminal's text conversation history.
+`/speak` needs Chrome or Chromium installed, but no GTK,
+WebKitGTK, GStreamer, or separate macOS companion package.
 
 ### Search Settings
 
@@ -381,11 +444,12 @@ The CLI includes an integrated update system that keeps your installation curren
 
 ## Local Usage Dashboard
 
-The CLI can serve a private usage dashboard from the same process. It listens only on `127.0.0.1` and does not open a browser automatically. `/dashboard on`, `/dashboard off`, and `/dashboard status` control the running service; autostart and dashboard options are configured separately in `/config`.
+The CLI can serve a private usage dashboard from the same process. It listens only on `127.0.0.1`. `/dashboard on`, `/dashboard off`, and `/dashboard status` control the running service; `/dashboard open` starts the service if needed and opens it in a Chrome/Chromium app window. Autostart and dashboard options are configured separately in `/config`.
 
 ```text
 /dashboard on      Start the dashboard and print its local URL
 /dashboard off     Stop the dashboard
+/dashboard open    Open the dashboard in a Chrome/Chromium app window
 /dashboard status  Show whether it is running
 ```
 
@@ -393,7 +457,7 @@ Usage snapshots and conversation archives are stored locally. Their shared reten
 
 The overview shows a GitHub-style activity grid for the retained window (90 days by default, configurable from `/config`), approximate token totals split by user, assistant, and context, per-model request and success comparisons, and failed-request and automatic-refresh counts. Token values are estimates based on local text sizes, not provider billing totals. Context estimates include inserted file, URL, and search text, along with image labels; binary image payload sizes are not converted to tokens. Dates before local daily tracking began are marked as untracked.
 
-The dashboard includes a web reference for CLI commands, session and per-model statistics, and optional AI reports. Metrics reports use aggregate statistics only. Conversation analysis is independent from transcript viewing: **Allow conversation analysis** can authorize an explicit report without turning on the conversation page. Before sending selected excerpts to Duck.ai, the dashboard shows the included session count and estimated input tokens; the default configurable budget is 8,000 estimated tokens. The provider's actual token count can differ.
+The dashboard includes a web reference for CLI commands, session and per-model statistics, and optional AI reports. Metrics reports use aggregate statistics only. Conversation analysis is independent from transcript viewing: **Allow conversation analysis** can authorize an explicit report without turning on the conversation page. Before sending sampled excerpts to Duck.ai, the dashboard shows the included session count and estimated input tokens; the default configurable budget is 8,000 estimated tokens. The provider's actual token count can differ.
 
 The **Activity** page streams structured CLI events in real time. It keeps at most
 200 recent events in memory and does not write an activity log to disk. Prompt
@@ -418,7 +482,6 @@ Build and verification use the same scripts locally and in GitHub Actions:
 
 - **[CI/CD workflow](.github/workflows/release.yml)** - Build and release automation
 - **[Build and verification](docs/BUILD.md)** - Local build, Windows icon, and pre-release checks
-- **[Reverse Engineering](reverse/README.md)** - Complete technical reverse engineering documentation
 
 ## Troubleshooting
 
@@ -427,7 +490,7 @@ Build and verification use the same scripts locally and in GitHub Actions:
 If you encounter connection errors:
 
 ```bash
-# Try clearing the conversation context to refresh security tokens
+# Start a fresh conversation
 /clear
 
 # Check your Chrome/Chromium installation
@@ -447,13 +510,12 @@ continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 
 - [Support the project](https://devbyben.fr/don)
 - [Voie: free model API](https://github.com/benoitpetit/voie)
-- [Protocol notes](reverse/README.md)
 
 ## License & Ethics
 
 ### Privacy & Responsibility
 
-- **Local storage:** Usage snapshots and, when enabled by the user, conversation archives are stored on the local machine. A conversation report sends selected excerpts to Duck.ai only after the report is explicitly submitted.
+- **Local storage:** Usage snapshots and, when enabled by the user, conversation archives are stored on the local machine. A conversation report sends sampled excerpts to Duck.ai only after the report is explicitly submitted.
 - **Verify Information:** Always verify critical information from AI responses
 - **Responsible Use:** Use responsibly and in accordance with DuckDuckGo's terms
 

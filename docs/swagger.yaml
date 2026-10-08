@@ -51,7 +51,7 @@ definitions:
         minLength: 1
         type: string
       model:
-        example: gpt-5.6-luna
+        example: gpt-6-luna
         type: string
     required:
     - message
@@ -65,7 +65,7 @@ definitions:
       metadata:
         $ref: '#/definitions/ChatMetadata'
       model:
-        example: gpt-5.6-luna
+        example: gpt-6-luna
         type: string
       response:
         example: Hello! I'm doing well, thank you for asking.
@@ -99,7 +99,7 @@ definitions:
           $ref: '#/definitions/MessageResponse'
         type: array
       model:
-        example: gpt-5.6-luna
+        example: gpt-6-luna
         type: string
       session_id:
         example: session_123456
@@ -128,7 +128,7 @@ definitions:
     description: Model change request payload
     properties:
       model:
-        example: gpt-5.6-luna
+        example: gpt-6-luna
         type: string
     required:
     - model
@@ -140,27 +140,27 @@ definitions:
         example: Fast and efficient model for general conversations
         type: string
       id:
-        example: gpt-5.6-luna
+        example: gpt-6-luna
         type: string
       is_default:
         example: true
         type: boolean
       name:
-        example: GPT-5.6 Luna
+        example: GPT-6 Luna
         type: string
     type: object
   ModelsResponse:
     description: Available models response payload
     properties:
       current_model:
-        example: gpt-5.6-luna
+        example: gpt-6-luna
         type: string
       models:
         items:
           $ref: '#/definitions/ModelInfo'
         type: array
       total_models:
-        example: 7
+        example: 8
         type: integer
     type: object
 host: 127.0.0.1:8080
@@ -250,6 +250,15 @@ paths:
           description: Chat history cleared successfully
           schema:
             $ref: '#/definitions/APIResponse'
+        "500":
+          description: Unable to archive the current conversation
+          schema:
+            allOf:
+            - $ref: '#/definitions/APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/APIError'
+              type: object
       summary: Clear chat history
       tags:
       - Chat

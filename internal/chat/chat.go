@@ -1389,127 +1389,137 @@ type CommandHelp struct {
 }
 
 func PrintWelcomeMessage() {
-	// A no-op unless stdout is a color-capable terminal, so redirected help
-	// output stays plain text. It ends with its own blank separator line.
-	_ = ui.PrintLogo(color.Output)
-	terminalWidth := getTerminalWidthSafe()
-	for _, line := range wrapHelpText("DuckDuckGo AI Chat CLI - Help", terminalWidth) {
-		ui.Systemln("%s", line)
-	}
-	separatorWidth := terminalWidth
+	// Everything is laid out for the width PrintLogoBeside will actually give
+	// it on this writer, so the layout cannot disagree with what gets drawn.
+	textWidth := ui.TextWidth(color.Output)
+
+	// Build the whole help as text lines so it can sit beside the logo; the
+	// lines that do not fit fall below the image automatically.
+	separatorWidth := textWidth
 	if separatorWidth > 33 {
 		separatorWidth = 33
 	}
-	ui.Mutedln("%s", strings.Repeat("-", separatorWidth))
+
+	lines := wrapHelpText("DuckDuckGo AI Chat CLI - Help", textWidth)
+	lines = append(lines, strings.Repeat("-", separatorWidth))
 
 	// Get commands from centralized registry
 	commandsByCategory := command.GetCommandsByCategory()
 
-	// Core commands
-	coreCommands := []CommandHelp{}
-	for _, cmd := range commandsByCategory["core"] {
+	sections := []struct {
+		title    string
+		commands []CommandHelp
+	}{
+		{title: "Core Commands:", commands: helpRows(commandsByCategory["core"])},
+		{title: "Context Commands:", commands: helpRows(commandsByCategory["context"])},
+		{title: "Productivity Commands:", commands: helpRows(commandsByCategory["productivity"])},
+		{
+			title: "API Documentation:",
+			commands: []CommandHelp{
+				{Command: "GET /", Description: "Shows API documentation"},
+				{Command: "POST /chat", Description: "Sends a message to the chat"},
+				{Command: "GET /history", Description: "Retrieves the chat session history"},
+			},
+		},
+	}
+
+	for _, section := range sections {
+		lines = append(lines, "", ui.AIColor.Sprint(section.title))
+		lines = append(lines, renderCommandsTable(section.commands, textWidth)...)
+	}
+
+	lines = append(lines, "")
+	for _, line := range wrapHelpText("Note: You can add '-- <your request>' after /search, /file, /url, or /library load to make an immediate request about the context.", textWidth) {
+		lines = append(lines, ui.WarningColor.Sprint(line))
+	}
+
+	_ = ui.PrintLogoBeside(color.Output, lines)
+}
+
+// helpRows copies a command category into table rows, falling back to the
+// command name when the registry carries no separate usage string.
+func helpRows(commands []command.CommandInfo) []CommandHelp {
+	rows := make([]CommandHelp, 0, len(commands))
+	for _, cmd := range commands {
 		usage := cmd.Usage
 		if usage == "" {
 			usage = cmd.Name
 		}
-		coreCommands = append(coreCommands, CommandHelp{
-			Command:     usage,
-			Description: cmd.Description,
-		})
+		rows = append(rows, CommandHelp{Command: usage, Description: cmd.Description})
 	}
-
-	// Context commands
-	contextCommands := []CommandHelp{}
-	for _, cmd := range commandsByCategory["context"] {
-		usage := cmd.Usage
-		if usage == cmd.Name {
-			usage = cmd.Name // Use simple name if no special usage
-		}
-		contextCommands = append(contextCommands, CommandHelp{
-			Command:     usage,
-			Description: cmd.Description,
-		})
-	}
-
-	// Productivity commands
-	productivityCommands := []CommandHelp{}
-	for _, cmd := range commandsByCategory["productivity"] {
-		usage := cmd.Usage
-		if usage == "" {
-			usage = cmd.Name
-		}
-		productivityCommands = append(productivityCommands, CommandHelp{
-			Command:     usage,
-			Description: cmd.Description,
-		})
-	}
-
-	// API documentation (static)
-	apiCommands := []CommandHelp{
-		{"GET /", "Shows API documentation"},
-		{"POST /chat", "Sends a message to the chat"},
-		{"GET /history", "Retrieves the chat session history"},
-	}
-
-	ui.AIln("\nCore Commands:")
-	printCommandsTable(coreCommands)
-
-	ui.AIln("\nContext Commands:")
-	printCommandsTable(contextCommands)
-
-	ui.AIln("\nProductivity Commands:")
-	printCommandsTable(productivityCommands)
-
-	ui.AIln("\nAPI Documentation:")
-	printCommandsTable(apiCommands)
-
-	ui.Warningln("")
-	for _, line := range wrapHelpText("Note: You can add '-- <your request>' after /search, /file, /url, or /library load to make an immediate request about the context.", terminalWidth) {
-		ui.Warningln("%s", line)
-	}
+	return rows
 }
 
 // printCommandsTable formats and prints a list of commands.
 func printCommandsTable(commands []CommandHelp) {
-	terminalWidth := getTerminalWidthSafe()
+	for _, line := range renderCommandsTable(commands, getTerminalWidthSafe()) {
+		fmt.Println(line)
+	}
+}
+
+// renderCommandsTable formats commands into lines no wider than width, keeping
+// the themed command and description colours as ANSI sequences so the caller
+// can place them next to the logo or print them on their own.
+func renderCommandsTable(commands []CommandHelp, width int) []string {
+	const indent = 2
+	const columnGap = 2
+	const minDescriptionWidth = 24
+
+	// A command is laid out in columns when it leaves enough room for a
+	// readable description beside it. Commands that do not are stacked one by
+	// one instead, so a single long usage string cannot flatten the whole
+	// section into the stacked layout.
+	fitsColumn := func(command string) bool {
+		return width-indent-len(command)-columnGap >= minDescriptionWidth
+	}
+
+	// The description column is sized by the commands that use it; the stacked
+	// ones must not reserve space they never occupy.
 	maxLength := 0
+	anyColumn := false
 	for _, cmd := range commands {
+		if !fitsColumn(cmd.Command) {
+			continue
+		}
+		anyColumn = true
 		if len(cmd.Command) > maxLength {
 			maxLength = len(cmd.Command)
 		}
 	}
 
-	const indent = 2
-	const columnGap = 2
-	descriptionWidth := terminalWidth - indent - maxLength - columnGap
-	stacked := descriptionWidth < 24
-	if stacked {
-		descriptionWidth = terminalWidth - indent - 2
+	descriptionWidth := width - indent - 2
+	if anyColumn {
+		descriptionWidth = width - indent - maxLength - columnGap
 	}
+
+	var lines []string
 	for _, cmd := range commands {
-		if stacked {
-			for _, line := range wrapHelpText(cmd.Command, terminalWidth-indent) {
-				ui.AccentColor.Printf("  %s\n", line)
+		if !anyColumn || !fitsColumn(cmd.Command) {
+			for _, line := range wrapHelpText(cmd.Command, width-indent) {
+				lines = append(lines, ui.AccentColor.Sprint("  "+line))
 			}
 			for _, line := range wrapHelpText(cmd.Description, descriptionWidth) {
-				fmt.Printf("    ")
-				ui.WhiteColor.Printf("%s\n", line)
+				lines = append(lines, ui.WhiteColor.Sprint("    "+line))
 			}
 			continue
 		}
 
-		lines := wrapHelpText(cmd.Description, descriptionWidth)
-		if len(lines) == 0 {
-			lines = []string{""}
+		wrapped := wrapHelpText(cmd.Description, descriptionWidth)
+		if len(wrapped) == 0 {
+			wrapped = []string{""}
 		}
-		ui.AccentColor.Printf("  %-*s", maxLength, cmd.Command)
-		fmt.Printf("  ")
-		ui.WhiteColor.Printf("%s\n", lines[0])
-		for _, line := range lines[1:] {
-			fmt.Printf("%s", strings.Repeat(" ", indent+maxLength+columnGap))
-			ui.WhiteColor.Printf("%s\n", line)
+
+		head := ui.AccentColor.Sprint(fmt.Sprintf("  %-*s", maxLength, cmd.Command)) +
+			ui.WhiteColor.Sprint("  "+wrapped[0])
+		lines = append(lines, head)
+
+		indentPad := strings.Repeat(" ", indent+maxLength+columnGap)
+		for _, line := range wrapped[1:] {
+			lines = append(lines, ui.WhiteColor.Sprint(indentPad+line))
 		}
 	}
+
+	return lines
 }
 
 func wrapHelpText(text string, width int) []string {

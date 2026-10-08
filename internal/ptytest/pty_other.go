@@ -21,3 +21,8 @@ func Open() (master, slave *os.File, err error) {
 func Capture(master, slave *os.File, write func() error) (string, error) {
 	return "", ErrUnsupported
 }
+
+// SetSize sets the window size the pseudo-terminal reports.
+func SetSize(tty *os.File, cols, rows uint16) error {
+	return ErrUnsupported
+}

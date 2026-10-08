@@ -69,6 +69,21 @@ func Capture(master, slave *os.File, write func() error) (string, error) {
 	return string(out), writeErr
 }
 
+// winsize mirrors struct winsize from <termios.h>.
+type winsize struct {
+	rows    uint16
+	cols    uint16
+	xpixels uint16
+	ypixels uint16
+}
+
+// SetSize sets the window size the pseudo-terminal reports to programs that
+// query it, so tests can drive width-dependent layout code.
+func SetSize(tty *os.File, cols, rows uint16) error {
+	size := winsize{rows: rows, cols: cols}
+	return ioctl(tty.Fd(), syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(&size)))
+}
+
 func ioctl(fd, request, arg uintptr) error {
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, arg); errno != 0 {
 		return errno

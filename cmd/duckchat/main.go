@@ -40,6 +40,9 @@ import (
 // Version will be set at build time via ldflags
 var Version = "dev"
 
+// cliUsageLogoInset is how many rows of logo sit above "Usage:" in --help.
+const cliUsageLogoInset = 4
+
 var chatSession *chat.Chat
 var cfg *config.Config
 var dashboardServer *dashboard.Server
@@ -412,16 +415,20 @@ func parseCLIOptions(args []string) (cliOptions, error) {
 }
 
 func printCLIUsage(out io.Writer) {
-	// A no-op unless out is a color-capable terminal, so redirected help stays plain text.
-	_ = ui.PrintLogo(out)
-	fmt.Fprintln(out, "Usage: duckchat [options]")
-	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Options:")
-	fmt.Fprintln(out, "  -h, --help          Show this help message")
-	fmt.Fprintln(out, "      --version       Show version information")
-	fmt.Fprintln(out, "      --prompt TEXT   Send one prompt and exit; use - to read from stdin")
-	fmt.Fprintln(out, "      --model ID      Select a model for --prompt")
-	fmt.Fprintln(out, "      --json          Output one-shot response as JSON")
+	// PrintLogoBesideInset prints these lines next to the logo, or above it on a
+	// narrow terminal, and writes them verbatim when there is no logo to draw.
+	// The inset drops the usage block a little below the top of the mascot so
+	// the two read as a header rather than two stacked columns.
+	_ = ui.PrintLogoBesideInset(out, []string{
+		"Usage: duckchat [options]",
+		"",
+		"Options:",
+		"  -h, --help          Show this help message",
+		"      --version       Show version information",
+		"      --prompt TEXT   Send one prompt and exit; use - to read from stdin",
+		"      --model ID      Select a model for --prompt",
+		"      --json          Output one-shot response as JSON",
+	}, cliUsageLogoInset)
 }
 
 func writeJSON(value any) error {

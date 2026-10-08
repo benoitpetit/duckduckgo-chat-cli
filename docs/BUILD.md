@@ -35,7 +35,7 @@ permission when the user starts a call.
 From the repository root, run the build script:
 
 ```bash
-./scripts/build.sh 1.7.1
+./scripts/build.sh 1.8.0
 ```
 
 Passing a version builds without an interactive prompt. Omitting it asks for a
@@ -65,6 +65,6 @@ logo. The Windows resource generator is pinned in
 
 The GitHub Actions workflow uses the same build and verification scripts. Start
 it from **Actions → Build and Release → Run workflow** and provide a semantic
-version such as `1.7.1`. After committing and pushing `master`, the same workflow
-can be dispatched from a terminal with `./scripts/release.sh 1.7.1`; this
+version such as `1.8.0`. After committing and pushing `master`, the same workflow
+can be dispatched from a terminal with `./scripts/release.sh 1.8.0`; this
 requires an authenticated GitHub CLI (`gh auth login`).

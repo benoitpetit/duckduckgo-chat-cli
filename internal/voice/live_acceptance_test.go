@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/chat"
+
 	"github.com/chromedp/chromedp"
 )
 

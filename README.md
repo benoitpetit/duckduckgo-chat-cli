@@ -472,10 +472,10 @@ To require a password, open `/config` → **Dashboard Settings** → **Set/chang
 
 Build and verification use the same scripts locally and in GitHub Actions:
 
-- **Local build:** `./scripts/build.sh 1.7.1`
+- **Local build:** `./scripts/build.sh 1.8.0`
 - **Pre-release checks:** `./scripts/pre-release-check.sh`
-- **GitHub release:** Run **Actions → Build and Release → Run workflow** and provide a version such as `1.7.1`
-- **CLI release dispatch:** After pushing a clean `master`, run `./scripts/release.sh 1.7.1` with an authenticated GitHub CLI.
+- **GitHub release:** Run **Actions → Build and Release → Run workflow** and provide a version such as `1.8.0`
+- **CLI release dispatch:** After pushing a clean `master`, run `./scripts/release.sh 1.8.0` with an authenticated GitHub CLI.
 - **Windows icon:** The Windows `.exe` embeds `docs/images/logo.png`; Linux and macOS command-line binaries do not carry an application icon.
 
 ### Development Documentation

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"duckduckgo-chat-cli/internal/models"
+
 	"github.com/chromedp/cdproto/network"
 )
 

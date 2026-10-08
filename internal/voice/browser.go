@@ -10,6 +10,7 @@ import (
 
 	"duckduckgo-chat-cli/internal/chat"
 	"duckduckgo-chat-cli/internal/config"
+
 	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"

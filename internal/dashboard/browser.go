@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/chat"
+
 	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"

@@ -11,6 +11,7 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/persistence"
+
 	"github.com/gin-gonic/gin"
 )
 

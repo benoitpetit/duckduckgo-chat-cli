@@ -99,7 +99,7 @@ type APIError struct {
 // @Description Health check response payload
 type HealthResponse struct {
 	Status    string            `json:"status" example:"healthy"`
-	Version   string            `json:"version" example:"1.7.0"`
+	Version   string            `json:"version" example:"1.8.0"`
 	Uptime    int64             `json:"uptime_seconds" example:"3600"`
 	Services  map[string]string `json:"services"`
 	Timestamp time.Time         `json:"timestamp" example:"2023-01-01T12:00:00Z"`

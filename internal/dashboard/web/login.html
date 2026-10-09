@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" translate="no">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="google" content="notranslate">
+    <title>Sign in · DuckChat Dashboard</title>
+    <link rel="icon" type="image/png" href="/favicon.ico">
+    <link rel="stylesheet" href="/assets/login.css">
+    <script src="/assets/login.js" defer></script>
+  </head>
+  <body class="login-body">
+    <main class="login-panel">
+      <div class="login-mascot" id="loginMascot" aria-hidden="true">
+        <img class="mascot-base" src="/assets/login-duck-base.png" alt="" width="240" height="240">
+        <span class="mascot-pupil pupil-left"></span>
+        <span class="mascot-pupil pupil-right"></span>
+        <img class="mascot-hands" src="/assets/login-duck-hands.png" alt="" width="240" height="240">
+      </div>
+      <a class="login-brand" href="/" aria-label="DuckChat Dashboard">DUCKCHAT <small>LOCAL DASHBOARD</small></a>
+      <div class="login-copy">
+        <span class="eyebrow">PRIVATE ACCESS</span>
+        <h1>Welcome back.</h1>
+        <p>Enter your dashboard password to continue.</p>
+      </div>
+      <form id="loginForm" class="login-form" method="post" action="/auth/login" autocomplete="on">
+        <label for="dashboardPassword">Password</label>
+        <input id="dashboardPassword" name="password" type="password" autocomplete="current-password" required>
+        <p id="loginError" class="login-error" role="alert" hidden></p>
+        <button type="submit" class="login-submit">Sign in <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="login-local"><i></i> Dashboard is available on this machine only.</p>
+    </main>
+  </body>
+</html>

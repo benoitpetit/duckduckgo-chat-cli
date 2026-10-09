@@ -1,0 +1,176 @@
+name: 🧪 Tests and Validation
+
+on:
+  pull_request:
+    branches: [ master ]
+  push:
+    branches: [ master ]
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  test-and-validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔄 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐹 Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: ⬇️ Download dependencies
+      run: go mod download
+
+    - name: 🔍 Verify dependencies
+      run: go mod verify
+
+    - name: 🧹 Run go fmt
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "❌ Code is not formatted properly"
+          gofmt -s -l .
+          exit 1
+        fi
+        echo "✅ Code is formatted correctly"
+
+    - name: 🔬 Run go vet
+      run: go vet ./...
+
+    - name: 📚 Generate and validate API documentation
+      run: |
+        echo "📚 Installing swag for documentation generation..."
+        go install github.com/swaggo/swag/cmd/swag@v1.16.6
+        
+        echo "📚 Generating API documentation..."
+        swag init --generalInfo internal/api/docs.go --output docs/ --parseInternal
+        
+        echo "📚 Validating generated documentation..."
+        if [ ! -f "docs/docs.go" ]; then
+          echo "❌ docs.go not generated"
+          exit 1
+        fi
+        
+        if [ ! -f "docs/swagger.json" ]; then
+          echo "❌ swagger.json not generated"
+          exit 1
+        fi
+        
+        if [ ! -f "docs/swagger.yaml" ]; then
+          echo "❌ swagger.yaml not generated"
+          exit 1
+        fi
+        
+        echo "✅ API documentation generated and validated successfully"
+
+    - name: 🧪 Run tests
+      run: go test -v ./...
+
+    - name: 🧪 Run race detector
+      run: go test -race ./...
+
+    - name: 🔍 Basic code checks
+      run: |
+        echo "🔍 Running basic code quality checks..."
+        
+        # Check for goimports
+        if ! command -v goimports &> /dev/null; then
+          go install golang.org/x/tools/cmd/goimports@v0.35.0
+        fi
+        
+        # Check imports
+        if [ "$(goimports -l . | wc -l)" -gt 0 ]; then
+          echo "❌ Import formatting issues found:"
+          goimports -l .
+          echo "Run: goimports -w ."
+          exit 1
+        fi
+        echo "✅ Import formatting is correct"
+        
+        # Check for inefficient assignments
+        if ! command -v ineffassign &> /dev/null; then
+          go install github.com/gordonklaus/ineffassign@v0.1.0
+        fi
+        ineffassign ./...
+        
+        echo "✅ Basic code checks passed"
+
+    - name: 🔒 Security scan with gosec
+      id: security_scan
+      run: |
+        if ! command -v gosec &> /dev/null; then
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8
+        fi
+        gosec -no-fail -fmt sarif -out results.sarif ./...
+
+    - name: 📊 Upload SARIF file
+      if: always() && steps.security_scan.outcome == 'success' && hashFiles('results.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: results.sarif
+
+    - name: 🏗️ Test build
+      run: |
+        echo "🏗️ Testing build process..."
+        go build -o test_binary ./cmd/duckchat
+        
+        if [ -f "test_binary" ]; then
+          chmod +x test_binary
+          echo "✅ Build successful - binary created"
+          rm test_binary
+        else
+          echo "❌ Build failed - no binary created"
+          exit 1
+        fi
+
+    - name: 🎯 Cross-compilation test
+      run: |
+        echo "🎯 Testing cross-compilation..."
+        
+        # Test Linux build
+        GOOS=linux GOARCH=amd64 go build -o test_linux ./cmd/duckchat
+        if [ -f "test_linux" ]; then
+          echo "✅ Linux AMD64 build successful"
+          rm test_linux
+        else
+          echo "❌ Linux AMD64 build failed"
+          exit 1
+        fi
+        
+        # Test Windows build
+        GOOS=windows GOARCH=amd64 go build -o test_windows.exe ./cmd/duckchat
+        if [ -f "test_windows.exe" ]; then
+          echo "✅ Windows AMD64 build successful"
+          rm test_windows.exe
+        else
+          echo "❌ Windows AMD64 build failed"
+          exit 1
+        fi
+        
+        # Test macOS build
+        # Test macOS ARM build
+        GOOS=darwin GOARCH=arm64 go build -o test_darwin ./cmd/duckchat
+        if [ -f "test_darwin" ]; then
+          echo "✅ Darwin ARM64 build successful"
+          rm test_darwin
+        else
+          echo "❌ Darwin ARM64 build failed"
+          exit 1
+        fi
+        
+        # Test macOS Intel build
+        GOOS=darwin GOARCH=amd64 go build -o test_darwin_amd64 ./cmd/duckchat
+        if [ -f "test_darwin_amd64" ]; then
+          echo "✅ Darwin AMD64 build successful"
+          rm test_darwin_amd64
+        else
+          echo "❌ Darwin AMD64 build failed"
+          exit 1
+        fi
+        
+        echo "🎉 All cross-compilation tests passed!"

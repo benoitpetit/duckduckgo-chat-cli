@@ -1,0 +1,58 @@
+version: 2
+updates:
+  # Update GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "benoitpetit"
+    assignees:
+      - "benoitpetit"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated"
+
+  # Update Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "benoitpetit"
+    assignees:
+      - "benoitpetit"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "go"
+      - "automated"
+    # Group minor and patch updates
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # Allow specific dependency updates
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Ignore specific packages if needed
+    ignore:
+      # Example: ignore major version updates for stable packages
+      - dependency-name: "github.com/fatih/color"
+        update-types: ["version-update:semver-major"] 

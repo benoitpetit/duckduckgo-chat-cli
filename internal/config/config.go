@@ -1,0 +1,1142 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+
+	"duckduckgo-chat-cli/internal/interfaces"
+	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/security"
+	"duckduckgo-chat-cli/internal/ui"
+
+	"github.com/AlecAivazis/survey/v2"
+)
+
+type SearchConfig struct {
+	MaxResults     int  `json:"max_results"`
+	IncludeSnippet bool `json:"include_snippet"`
+	MaxRetries     int  `json:"max_retries"`
+	RetryDelay     int  `json:"retry_delay"`
+}
+
+type LibraryConfig struct {
+	Directories []string `json:"directories"`
+	Enabled     bool     `json:"enabled"`
+}
+
+type APIConfig struct {
+	Enabled        bool     `json:"enabled"`
+	Host           string   `json:"host"`
+	Port           int      `json:"port"`
+	Autostart      bool     `json:"autostart"`
+	LogRequests    bool     `json:"log_requests"`
+	ShowGinLogs    bool     `json:"show_gin_logs"`
+	APIKey         string   `json:"api_key,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+}
+
+// ToolsConfig controls Duck.ai's built-in tools. These flags are opt-in
+// because the tool protocol is not part of Duck.ai's public API and can
+// change independently of the chat endpoint.
+type ToolsConfig struct {
+	Enabled         bool `json:"enabled"`
+	WebSearch       bool `json:"web_search"`
+	ImageGeneration bool `json:"image_generation"`
+}
+
+// AppearanceConfig contains the terminal theme selected for the CLI.
+type AppearanceConfig struct {
+	Theme string `json:"theme"`
+}
+
+// SpeakConfig controls the Chromium window used for live Duck.ai voice sessions.
+type SpeakConfig struct {
+	WindowWidth   int `json:"window_width"`
+	WindowHeight  int `json:"window_height"`
+	SchemaVersion int `json:"schema_version,omitempty"`
+}
+
+func defaultSpeakConfig() SpeakConfig {
+	return SpeakConfig{WindowWidth: 480, WindowHeight: 500, SchemaVersion: 3}
+}
+
+func normalizeSpeakConfig(cfg *SpeakConfig) {
+	defaults := defaultSpeakConfig()
+	if cfg.SchemaVersion < defaults.SchemaVersion {
+		switch {
+		case cfg.SchemaVersion == 0 && cfg.WindowWidth == 500 && cfg.WindowHeight == 500:
+			// The original default was 500 × 500.
+			cfg.WindowWidth = defaults.WindowWidth
+			cfg.WindowHeight = defaults.WindowHeight
+		case cfg.SchemaVersion == 1 && cfg.WindowWidth == 400 && cfg.WindowHeight == 460:
+			// Migrate the interim compact default while preserving custom sizes.
+			cfg.WindowWidth = defaults.WindowWidth
+			cfg.WindowHeight = defaults.WindowHeight
+		case cfg.SchemaVersion == 2 && cfg.WindowWidth == 400 && cfg.WindowHeight == 400:
+			// Migrate the compact default so the companion and subtitles fit.
+			cfg.WindowWidth = defaults.WindowWidth
+			cfg.WindowHeight = defaults.WindowHeight
+		}
+		cfg.SchemaVersion = defaults.SchemaVersion
+	}
+	if cfg.WindowWidth < 320 || cfg.WindowWidth > 1400 {
+		cfg.WindowWidth = defaults.WindowWidth
+	}
+	if cfg.WindowHeight < 360 || cfg.WindowHeight > 1400 {
+		cfg.WindowHeight = defaults.WindowHeight
+	}
+}
+
+// RateLimitConfig controls the last-resort fallback used when Duck.ai answers
+// with HTTP 429. Opening the browser is on by default so an interactive user
+// can keep working on duck.ai directly instead of staring at a dead CLI.
+type RateLimitConfig struct {
+	OpenBrowser     bool `json:"open_browser"`
+	CooldownMinutes int  `json:"cooldown_minutes"`
+}
+
+func defaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{OpenBrowser: true, CooldownMinutes: 10}
+}
+
+func normalizeRateLimitConfig(cfg *RateLimitConfig) {
+	if cfg.CooldownMinutes < 1 {
+		cfg.CooldownMinutes = defaultRateLimitConfig().CooldownMinutes
+	}
+}
+
+// DashboardConfig contains settings for the loopback-only usage dashboard.
+type DashboardConfig struct {
+	Autostart                 bool   `json:"autostart"`
+	Port                      int    `json:"port"`
+	RefreshIntervalSeconds    int    `json:"refresh_interval_seconds"`
+	RetentionDays             int    `json:"retention_days"`
+	ShowConversations         bool   `json:"show_conversations"`
+	ShowConversationContent   bool   `json:"show_conversation_content"`
+	AllowConversationAnalysis bool   `json:"allow_conversation_analysis"`
+	AnalysisTokenBudget       int    `json:"analysis_token_budget"`
+	PasswordSalt              string `json:"password_salt,omitempty"`
+	PasswordHash              string `json:"password_hash,omitempty"`
+}
+
+func defaultDashboardConfig() DashboardConfig {
+	return DashboardConfig{Port: 8765, RefreshIntervalSeconds: 3, RetentionDays: 90, AnalysisTokenBudget: 8000}
+}
+
+func normalizeDashboardConfig(cfg *DashboardConfig) {
+	defaults := defaultDashboardConfig()
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		cfg.Port = defaults.Port
+	}
+	if cfg.RefreshIntervalSeconds < 1 || cfg.RefreshIntervalSeconds > 60 {
+		cfg.RefreshIntervalSeconds = defaults.RefreshIntervalSeconds
+	}
+	if cfg.RetentionDays < 1 || cfg.RetentionDays > 3650 {
+		cfg.RetentionDays = defaults.RetentionDays
+	}
+	if cfg.AnalysisTokenBudget < 1000 || cfg.AnalysisTokenBudget > 32000 {
+		cfg.AnalysisTokenBudget = defaults.AnalysisTokenBudget
+	}
+}
+
+type Config struct {
+	TOSAccepted      bool              `json:"tos_accepted"`
+	DefaultModel     string            `json:"default_model"`
+	ExportDir        string            `json:"export_dir"`
+	LastUpdateTime   time.Time         `json:"last_update_time"`
+	Appearance       AppearanceConfig  `json:"appearance"`
+	Search           SearchConfig      `json:"search"`
+	Library          LibraryConfig     `json:"library"`
+	API              APIConfig         `json:"api"`
+	Tools            ToolsConfig       `json:"tools"`
+	Speak            SpeakConfig       `json:"speak"`
+	RateLimit        RateLimitConfig   `json:"rate_limit"`
+	Dashboard        DashboardConfig   `json:"dashboard"`
+	ShowMenu         bool              `json:"show_menu"`
+	GlobalPrompt     string            `json:"global_prompt"`
+	ConfirmLongInput bool              `json:"confirm_long_input"`
+	Prompts          map[string]string `json:"prompts"`
+}
+
+func Initialize() *Config {
+	cfg := loadConfig()
+	normalizeAppearanceConfig(&cfg.Appearance)
+	ui.SetTheme(cfg.Appearance.Theme)
+	normalizeSpeakConfig(&cfg.Speak)
+	normalizeRateLimitConfig(&cfg.RateLimit)
+	normalizeDashboardConfig(&cfg.Dashboard)
+	if cfg.DefaultModel == "" {
+		cfg.DefaultModel = string(models.Default())
+	} else if _, ok := models.ResolveModel(cfg.DefaultModel); !ok {
+		ui.Warningln("Warning: Unknown configured model %q; using %s", cfg.DefaultModel, models.Default())
+		cfg.DefaultModel = string(models.Default())
+	}
+	if cfg.Search.MaxResults < 1 || cfg.Search.MaxResults > 50 {
+		cfg.Search.MaxResults = 10
+	}
+	if cfg.Search.MaxRetries < 1 || cfg.Search.MaxRetries > 10 {
+		cfg.Search.MaxRetries = 3
+	}
+	if cfg.Search.RetryDelay < 1 || cfg.Search.RetryDelay > 30 {
+		cfg.Search.RetryDelay = 1
+	}
+	// Defaults are initialized before unmarshalling, so an explicit false in
+	// an existing configuration remains false.
+
+	// Initialize library config with defaults
+	if len(cfg.Library.Directories) == 0 {
+		cfg.Library.Directories = []string{}
+	}
+
+	// Initialize prompts map if nil
+	if cfg.Prompts == nil {
+		cfg.Prompts = make(map[string]string)
+	}
+
+	// Initialize API config with defaults - check if config file exists first
+	configExists := configFileExists()
+	if cfg.API.Port == 0 {
+		cfg.API.Port = 8080 // default port
+	}
+	if cfg.API.Host == "" {
+		cfg.API.Host = "127.0.0.1"
+	}
+
+	// Only set defaults if no config file exists (first run) or if explicitly not set
+	if !configExists {
+		cfg.API.LogRequests = true // default to true for new installs
+		cfg.API.ShowGinLogs = true // default to true for new installs
+	}
+
+	if err := ensureExportDir(cfg); err != nil {
+		ui.Warningln("Warning: Failed to create export directory: %v", err)
+	}
+	return cfg
+}
+
+func normalizeAppearanceConfig(cfg *AppearanceConfig) {
+	theme, ok := ui.ResolveTheme(cfg.Theme)
+	if !ok {
+		cfg.Theme = string(ui.ThemeOfficial)
+		return
+	}
+	cfg.Theme = string(theme.ID)
+}
+
+func loadConfig() *Config {
+	cfg := &Config{
+		TOSAccepted:      false,
+		DefaultModel:     string(models.Default()),
+		ExportDir:        defaultExportPath(),
+		LastUpdateTime:   time.Now(),
+		Appearance:       AppearanceConfig{Theme: string(ui.ThemeOfficial)},
+		ConfirmLongInput: true, // default to enabled for safety
+		Search:           SearchConfig{IncludeSnippet: true},
+		Library:          LibraryConfig{Enabled: true},
+		Speak:            SpeakConfig{},
+		RateLimit:        defaultRateLimitConfig(),
+		Dashboard:        defaultDashboardConfig(),
+		Prompts:          make(map[string]string),
+	}
+
+	if data, err := os.ReadFile(configPath()); err == nil {
+		if err := json.Unmarshal(data, cfg); err != nil {
+			ui.SetTheme(string(ui.ThemeOfficial))
+			ui.Warningln("Warning: Failed to parse config file: %v", err)
+		}
+	}
+	if cfg.Prompts == nil {
+		cfg.Prompts = make(map[string]string)
+	}
+	return cfg
+}
+
+func defaultExportPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("USERPROFILE"), "Documents", "duckchat")
+	}
+	return filepath.Join(os.Getenv("HOME"), "Documents", "duckchat")
+}
+
+func configPath() string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		// Fallback to home directory if config dir is not available
+		if runtime.GOOS == "windows" {
+			configDir = filepath.Join(os.Getenv("USERPROFILE"), ".config")
+		} else {
+			configDir = filepath.Join(os.Getenv("HOME"), ".config")
+		}
+	}
+	return filepath.Join(configDir, "duckduckgo-chat-cli", "config.json")
+}
+
+// DashboardHistoryPath returns the local analytics history file, separate from exports.
+func DashboardHistoryPath() string {
+	return filepath.Join(filepath.Dir(configPath()), "dashboard-history.json")
+}
+
+// configFileExists checks if the configuration file exists
+func configFileExists() bool {
+	_, err := os.Stat(configPath())
+	return err == nil
+}
+
+func ensureExportDir(cfg *Config) error {
+	return os.MkdirAll(cfg.ExportDir, 0755)
+}
+
+// SaveConfig saves the configuration to file (exported version of saveConfig)
+func SaveConfig(cfg *Config) error {
+	configDir := filepath.Dir(configPath())
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %v", err)
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %v", err)
+	}
+
+	tmp, err := os.CreateTemp(configDir, ".config.json-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config: %v", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to secure temporary config: %v", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to write config: %v", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to sync config: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close config: %v", err)
+	}
+	if err := os.Rename(tmpName, configPath()); err != nil {
+		return fmt.Errorf("failed to replace config: %v", err)
+	}
+
+	return nil
+}
+
+// Private version for internal use
+func saveConfig(cfg *Config) error {
+	return SaveConfig(cfg)
+}
+
+func AcceptTermsOfService(cfg *Config, askOptions ...survey.AskOpt) bool {
+	if cfg.TOSAccepted {
+		return true
+	}
+
+	var accepted bool
+	prompt := &survey.Confirm{
+		Message: "Please accept the terms of service to continue. Do you accept?",
+		Default: true,
+	}
+	if err := survey.AskOne(prompt, &accepted, askOptions...); err != nil {
+		ui.Warningln("Terms of service prompt canceled.")
+		return false
+	}
+
+	if accepted {
+		cfg.TOSAccepted = true
+		if err := saveConfig(cfg); err != nil {
+			ui.Warningln("Warning: Failed to save config: %v", err)
+		}
+	}
+	return accepted
+}
+
+func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "DuckDuckGo Chat CLI Configuration",
+			Help:    "Current settings are shown as defaults. Choose an option to edit.",
+			Options: []string{
+				"Theme",
+				"Default Model",
+				"Export Directory",
+				"Search Settings",
+				"Show Commands Menu",
+				"Global Prompt",
+				"Long Input Protection",
+				"Library Settings",
+				"API Settings",
+				"Dashboard Settings",
+				"Duck.ai Native Tools",
+				"Audio Agent Speak",
+				"Prompt Management",
+				"Back to chat",
+			},
+			Default: "Back to chat",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Configuration menu canceled.")
+			return
+		}
+
+		switch choice {
+		case "Theme":
+			handleThemeSettings(cfg)
+		case "Default Model":
+			handleModelChange(cfg, chatSession)
+		case "Export Directory":
+			handleExportDirChange(cfg)
+		case "Search Settings":
+			handleSearchSettings(cfg)
+		case "Show Commands Menu":
+			handleShowMenuChange(cfg)
+		case "Global Prompt":
+			handleGlobalPromptChange(cfg)
+		case "Long Input Protection":
+			handleLongInputProtectionChange(cfg)
+		case "Library Settings":
+			handleLibrarySettings(cfg)
+		case "API Settings":
+			handleAPISettings(cfg)
+		case "Dashboard Settings":
+			handleDashboardSettings(cfg)
+		case "Duck.ai Native Tools":
+			handleNativeToolsChange(cfg, chatSession)
+		case "Audio Agent Speak":
+			handleSpeakSettings(cfg)
+		case "Prompt Management":
+			HandlePromptManagement(cfg)
+		case "Back to chat", "":
+			return
+		default:
+			ui.Errorln("Invalid choice. Please try again.")
+		}
+	}
+}
+
+func handleThemeSettings(cfg *Config) {
+	type themeOption struct {
+		theme ui.Theme
+		label string
+	}
+	options := make([]themeOption, 0, len(ui.Themes()))
+	defaultOption := ""
+	for _, theme := range ui.Themes() {
+		description := ""
+		switch theme.ID {
+		case ui.ThemeOfficial:
+			description = "DuckDuckGo logo colors"
+		case ui.ThemeRetro:
+			description = "Aurelia inspired"
+		case ui.ThemeMono:
+			description = "Grayscale"
+		}
+		label := fmt.Sprintf("%s - %s (font: %s)", theme.Label, description, theme.FontHint)
+		options = append(options, themeOption{theme: theme, label: label})
+		if string(theme.ID) == cfg.Appearance.Theme {
+			defaultOption = label
+		}
+	}
+
+	labels := make([]string, 0, len(options))
+	for _, option := range options {
+		labels = append(labels, option.label)
+	}
+	choice := ""
+	prompt := &survey.Select{
+		Message: "Choose CLI theme:",
+		Help:    "The font is a recommendation; configure the actual font in your terminal.",
+		Options: labels,
+		Default: defaultOption,
+	}
+	if err := survey.AskOne(prompt, &choice); err != nil {
+		ui.Warningln("Theme selection canceled.")
+		return
+	}
+
+	var selected ui.Theme
+	for _, option := range options {
+		if option.label == choice {
+			selected = option.theme
+			break
+		}
+	}
+	if selected.ID == "" {
+		ui.Errorln("Invalid theme selection. No changes made.")
+		return
+	}
+	if string(selected.ID) == cfg.Appearance.Theme {
+		ui.AIln("Theme is already active: %s", selected.Label)
+		return
+	}
+
+	previous := cfg.Appearance.Theme
+	cfg.Appearance.Theme = string(selected.ID)
+	if err := saveConfig(cfg); err != nil {
+		cfg.Appearance.Theme = previous
+		ui.Errorln("Error saving config: %v", err)
+		return
+	}
+	if !ui.SetTheme(cfg.Appearance.Theme) {
+		cfg.Appearance.Theme = previous
+		if err := saveConfig(cfg); err != nil {
+			ui.Warningln("Could not restore saved theme after applying it failed: %v", err)
+		}
+		ui.Errorln("Could not apply theme %q.", selected.ID)
+		return
+	}
+	ui.AIln("Theme changed to %s (font recommendation: %s)", selected.Label, selected.FontHint)
+}
+
+func handleSpeakSettings(cfg *Config) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "Audio Agent Speak Configuration",
+			Options: []string{
+				fmt.Sprintf("Window width (%d px)", cfg.Speak.WindowWidth),
+				fmt.Sprintf("Window height (%d px)", cfg.Speak.WindowHeight),
+				"Back",
+			},
+			Default: "Back",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Audio Agent Speak settings canceled.")
+			return
+		}
+
+		switch {
+		case strings.HasPrefix(choice, "Window width"):
+			editDashboardInteger(cfg, "Audio window width in pixels", cfg.Speak.WindowWidth, 320, 1400, func(value int) { cfg.Speak.WindowWidth = value })
+		case strings.HasPrefix(choice, "Window height"):
+			editDashboardInteger(cfg, "Audio window height in pixels", cfg.Speak.WindowHeight, 360, 1400, func(value int) { cfg.Speak.WindowHeight = value })
+		case choice == "Back":
+			return
+		}
+	}
+}
+
+func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {
+	model := ""
+	modelOptions := make([]string, 0, len(models.Available()))
+	for _, definition := range models.Available() {
+		modelOptions = append(modelOptions, string(definition.Alias))
+	}
+	prompt := &survey.Select{
+		Message: "Choose Default Model:",
+		Options: modelOptions,
+		Default: cfg.DefaultModel,
+	}
+	if err := survey.AskOne(prompt, &model); err != nil {
+		ui.Warningln("Model selection canceled.")
+		return
+	}
+
+	if model != "" {
+		cfg.DefaultModel = model
+		if err := saveConfig(cfg); err != nil {
+			ui.Errorln("Error saving config: %v", err)
+			return
+		}
+		chatSession.ChangeModel(models.GetModel(model))
+		ui.AIln("Default model updated and applied: %s", model)
+	} else {
+		ui.Errorln("Invalid choice. No changes made.")
+	}
+}
+
+func handleExportDirChange(cfg *Config) {
+	path := ""
+	prompt := &survey.Input{
+		Message: "Enter new export directory path:",
+		Default: cfg.ExportDir,
+		Help:    "Press Enter to use the default path.",
+	}
+	if err := survey.AskOne(prompt, &path); err != nil {
+		ui.Warningln("Export directory selection canceled.")
+		return
+	}
+
+	if path == "" {
+		path = defaultExportPath()
+	}
+
+	cfg.ExportDir = path
+	if err := ensureExportDir(cfg); err != nil {
+		ui.Errorln("Error creating directory: %v", err)
+	}
+
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving config: %v", err)
+	} else {
+		ui.AIln("Export directory updated to: %s", path)
+	}
+}
+
+func handleSearchSettings(cfg *Config) {
+	qs := []*survey.Question{
+		{
+			Name:   "max_results",
+			Prompt: &survey.Input{Message: "Max search results:", Default: strconv.Itoa(cfg.Search.MaxResults)},
+		},
+		{
+			Name:   "max_retries",
+			Prompt: &survey.Input{Message: "Max search retries:", Default: strconv.Itoa(cfg.Search.MaxRetries)},
+		},
+		{
+			Name:   "retry_delay",
+			Prompt: &survey.Input{Message: "Retry delay in seconds:", Default: strconv.Itoa(cfg.Search.RetryDelay)},
+		},
+		{
+			Name:   "include_snippet",
+			Prompt: &survey.Confirm{Message: "Include snippets in search results?", Default: cfg.Search.IncludeSnippet},
+		},
+	}
+	answers := struct {
+		MaxResults     string `survey:"max_results"`
+		MaxRetries     string `survey:"max_retries"`
+		RetryDelay     string `survey:"retry_delay"`
+		IncludeSnippet bool   `survey:"include_snippet"`
+	}{}
+
+	err := survey.Ask(qs, &answers)
+	if err != nil {
+		ui.Errorln("Error reading input: %v", err)
+		return
+	}
+
+	maxResults, err := strconv.Atoi(answers.MaxResults)
+	if err != nil || maxResults < 1 || maxResults > 50 {
+		ui.Errorln("Invalid max results; expected a value between 1 and 50")
+	} else {
+		cfg.Search.MaxResults = maxResults
+	}
+	if maxRetries, parseErr := strconv.Atoi(answers.MaxRetries); parseErr == nil && maxRetries >= 1 && maxRetries <= 10 {
+		cfg.Search.MaxRetries = maxRetries
+	} else {
+		ui.Errorln("Invalid max retries; keeping the previous value")
+	}
+	if retryDelay, parseErr := strconv.Atoi(answers.RetryDelay); parseErr == nil && retryDelay >= 1 && retryDelay <= 30 {
+		cfg.Search.RetryDelay = retryDelay
+	} else {
+		ui.Errorln("Invalid retry delay; keeping the previous value")
+	}
+	cfg.Search.IncludeSnippet = answers.IncludeSnippet
+
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving config: %v", err)
+	} else {
+		ui.AIln("Search settings updated.")
+	}
+}
+
+func handleShowMenuChange(cfg *Config) {
+	showMenu := false
+	prompt := &survey.Confirm{
+		Message: "Show commands menu on startup?",
+		Default: cfg.ShowMenu,
+	}
+	if err := survey.AskOne(prompt, &showMenu); err != nil {
+		ui.Warningln("Menu preference change canceled.")
+		return
+	}
+	cfg.ShowMenu = showMenu
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving config: %v", err)
+	} else {
+		ui.AIln("Show menu preference updated.")
+	}
+}
+
+func handleGlobalPromptChange(cfg *Config) {
+	prompt := ""
+	p := &survey.Input{
+		Message: "Enter global prompt (or leave empty to clear):",
+		Default: cfg.GlobalPrompt,
+	}
+	if err := survey.AskOne(p, &prompt); err != nil {
+		ui.Warningln("Global prompt change canceled.")
+		return
+	}
+	cfg.GlobalPrompt = prompt
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving config: %v", err)
+	} else {
+		ui.AIln("Global prompt updated.")
+	}
+}
+
+func handleNativeToolsChange(cfg *Config, chatSession interfaces.ChatSession) {
+	answers := struct {
+		Enabled         bool `survey:"enabled"`
+		WebSearch       bool `survey:"web_search"`
+		ImageGeneration bool `survey:"image_generation"`
+	}{}
+
+	questions := []*survey.Question{
+		{
+			Name: "enabled",
+			Prompt: &survey.Confirm{
+				Message: "Enable Duck.ai native tools?",
+				Default: cfg.Tools.Enabled,
+			},
+		},
+		{
+			Name: "web_search",
+			Prompt: &survey.Confirm{
+				Message: "Allow native Web Search?",
+				Default: cfg.Tools.WebSearch,
+			},
+		},
+		{
+			Name: "image_generation",
+			Prompt: &survey.Confirm{
+				Message: "Allow native image generation?",
+				Default: cfg.Tools.ImageGeneration,
+			},
+		},
+	}
+
+	if err := survey.Ask(questions, &answers); err != nil {
+		ui.Errorln("Error reading native tool settings: %v", err)
+		return
+	}
+
+	cfg.Tools.Enabled = answers.Enabled
+	cfg.Tools.WebSearch = answers.WebSearch
+	cfg.Tools.ImageGeneration = answers.ImageGeneration
+	if !cfg.Tools.Enabled {
+		cfg.Tools.WebSearch = false
+		cfg.Tools.ImageGeneration = false
+	}
+	chatSession.SetNativeTools(cfg.Tools.Enabled, cfg.Tools.WebSearch, cfg.Tools.ImageGeneration)
+
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving native tool settings: %v", err)
+	} else {
+		ui.AIln("Duck.ai native tool settings updated.")
+	}
+}
+
+func handleLibrarySettings(cfg *Config) {
+	choice := ""
+	prompt := &survey.Select{
+		Message: "Library Settings",
+		Options: []string{
+			fmt.Sprintf("Enabled (%t)", cfg.Library.Enabled),
+			"Manage Directories",
+			"Back",
+		},
+		Default: "Back",
+	}
+	if err := survey.AskOne(prompt, &choice); err != nil {
+		ui.Warningln("Library settings canceled.")
+		return
+	}
+
+	switch {
+	case strings.HasPrefix(choice, "Enabled"):
+		cfg.Library.Enabled = !cfg.Library.Enabled
+		if err := saveConfig(cfg); err != nil {
+			ui.Errorln("Error saving config: %v", err)
+		} else {
+			ui.AIln("Library system set to: %t", cfg.Library.Enabled)
+		}
+	case choice == "Manage Directories":
+		ui.Warningln("Directory management is handled via /library add and /library remove commands.")
+	}
+}
+
+func handleAPISettings(cfg *Config) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "API Settings",
+			Options: []string{
+				fmt.Sprintf("Enabled (%t)", cfg.API.Enabled),
+				fmt.Sprintf("Host (%s)", cfg.API.Host),
+				fmt.Sprintf("Port (%d)", cfg.API.Port),
+				fmt.Sprintf("API key (%t)", cfg.API.APIKey != ""),
+				fmt.Sprintf("Autostart on launch (%t)", cfg.API.Autostart),
+				fmt.Sprintf("Log API Requests (%t)", cfg.API.LogRequests),
+				fmt.Sprintf("Show GIN Logs (%t)", cfg.API.ShowGinLogs),
+				"Back",
+			},
+			Default: "Back",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("API settings canceled.")
+			return
+		}
+
+		switch {
+		case strings.HasPrefix(choice, "Enabled"):
+			cfg.API.Enabled = !cfg.API.Enabled
+			saveAndReport(cfg, fmt.Sprintf("API Enabled status set to: %t", cfg.API.Enabled))
+		case strings.HasPrefix(choice, "Host"):
+			handleAPIHostChange(cfg)
+		case strings.HasPrefix(choice, "Port"):
+			handleAPIPortChange(cfg)
+		case strings.HasPrefix(choice, "API key"):
+			handleAPIKeyChange(cfg)
+		case strings.HasPrefix(choice, "Autostart"):
+			cfg.API.Autostart = !cfg.API.Autostart
+			saveAndReport(cfg, fmt.Sprintf("API Autostart set to: %t", cfg.API.Autostart))
+		case strings.HasPrefix(choice, "Log API Requests"):
+			cfg.API.LogRequests = !cfg.API.LogRequests
+			saveAndReport(cfg, fmt.Sprintf("API Request Logging set to: %t", cfg.API.LogRequests))
+		case strings.HasPrefix(choice, "Show GIN Logs"):
+			cfg.API.ShowGinLogs = !cfg.API.ShowGinLogs
+			saveAndReport(cfg, fmt.Sprintf("GIN Logs visibility set to: %t", cfg.API.ShowGinLogs))
+		case choice == "Back":
+			return
+		}
+	}
+}
+
+func handleDashboardSettings(cfg *Config) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "Local Dashboard Settings",
+			Options: []string{
+				fmt.Sprintf("Autostart (%t)", cfg.Dashboard.Autostart),
+				fmt.Sprintf("Set/change dashboard password (%t)", cfg.Dashboard.PasswordHash != ""),
+				"Remove dashboard password",
+				fmt.Sprintf("Port (%d)", cfg.Dashboard.Port),
+				fmt.Sprintf("Refresh interval seconds (%d)", cfg.Dashboard.RefreshIntervalSeconds),
+				fmt.Sprintf("History retention days (%d)", cfg.Dashboard.RetentionDays),
+				fmt.Sprintf("Show conversations (%t)", cfg.Dashboard.ShowConversations),
+				fmt.Sprintf("Show prompt and response content (%t)", cfg.Dashboard.ShowConversationContent),
+				fmt.Sprintf("Allow conversation analysis (%t)", cfg.Dashboard.AllowConversationAnalysis),
+				fmt.Sprintf("Analysis token budget (%d)", cfg.Dashboard.AnalysisTokenBudget),
+				"Back",
+			},
+			Default: "Back",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Dashboard settings canceled.")
+			return
+		}
+
+		switch {
+		case strings.HasPrefix(choice, "Autostart"):
+			cfg.Dashboard.Autostart = !cfg.Dashboard.Autostart
+			saveAndReport(cfg, fmt.Sprintf("Dashboard autostart set to: %t", cfg.Dashboard.Autostart))
+		case strings.HasPrefix(choice, "Set/change dashboard password"):
+			handleDashboardPasswordChange(cfg)
+		case choice == "Remove dashboard password":
+			handleDashboardPasswordRemoval(cfg)
+		case strings.HasPrefix(choice, "Show conversations"):
+			cfg.Dashboard.ShowConversations = !cfg.Dashboard.ShowConversations
+			saveAndReport(cfg, fmt.Sprintf("Dashboard conversations visible: %t", cfg.Dashboard.ShowConversations))
+		case strings.HasPrefix(choice, "Show prompt and response content"):
+			cfg.Dashboard.ShowConversationContent = !cfg.Dashboard.ShowConversationContent
+			saveAndReport(cfg, fmt.Sprintf("Dashboard prompt and response content visible: %t", cfg.Dashboard.ShowConversationContent))
+		case strings.HasPrefix(choice, "Allow conversation analysis"):
+			cfg.Dashboard.AllowConversationAnalysis = !cfg.Dashboard.AllowConversationAnalysis
+			saveAndReport(cfg, fmt.Sprintf("Dashboard conversation analysis allowed: %t", cfg.Dashboard.AllowConversationAnalysis))
+		case strings.HasPrefix(choice, "Port"):
+			editDashboardInteger(cfg, "Dashboard port", cfg.Dashboard.Port, 1, 65535, func(v int) { cfg.Dashboard.Port = v })
+		case strings.HasPrefix(choice, "Refresh interval"):
+			editDashboardInteger(cfg, "Refresh interval in seconds", cfg.Dashboard.RefreshIntervalSeconds, 1, 60, func(v int) { cfg.Dashboard.RefreshIntervalSeconds = v })
+		case strings.HasPrefix(choice, "History retention"):
+			editDashboardInteger(cfg, "History retention in days", cfg.Dashboard.RetentionDays, 1, 3650, func(v int) { cfg.Dashboard.RetentionDays = v })
+		case strings.HasPrefix(choice, "Analysis token budget"):
+			editDashboardInteger(cfg, "Estimated analysis token budget", cfg.Dashboard.AnalysisTokenBudget, 1000, 32000, func(v int) { cfg.Dashboard.AnalysisTokenBudget = v })
+		case choice == "Back":
+			return
+		}
+	}
+}
+
+func handleDashboardPasswordChange(cfg *Config) {
+	password := ""
+	if err := survey.AskOne(&survey.Password{Message: "Enter dashboard password:"}, &password); err != nil {
+		ui.Warningln("Dashboard password change canceled.")
+		return
+	}
+	confirmation := ""
+	if err := survey.AskOne(&survey.Password{Message: "Confirm dashboard password:"}, &confirmation); err != nil {
+		ui.Warningln("Dashboard password change canceled.")
+		return
+	}
+	if password != confirmation {
+		ui.Errorln("Passwords do not match. No changes made.")
+		return
+	}
+	salt, hash, err := security.HashPassword(password)
+	if err != nil {
+		ui.Errorln("Could not set dashboard password: %v", err)
+		return
+	}
+	cfg.Dashboard.PasswordSalt = salt
+	cfg.Dashboard.PasswordHash = hash
+	saveAndReport(cfg, "Dashboard password protection enabled.")
+}
+
+func handleDashboardPasswordRemoval(cfg *Config) {
+	if cfg.Dashboard.PasswordHash == "" {
+		ui.AIln("Dashboard password protection is already disabled.")
+		return
+	}
+	confirmed := false
+	if err := survey.AskOne(&survey.Confirm{Message: "Disable dashboard password protection?", Default: false}, &confirmed); err != nil {
+		ui.Warningln("Dashboard password removal canceled.")
+		return
+	}
+	if !confirmed {
+		ui.AIln("Dashboard password protection was not changed.")
+		return
+	}
+	cfg.Dashboard.PasswordSalt = ""
+	cfg.Dashboard.PasswordHash = ""
+	saveAndReport(cfg, "Dashboard password protection disabled.")
+}
+
+func editDashboardInteger(cfg *Config, label string, current, minimum, maximum int, set func(int)) {
+	input := ""
+	prompt := &survey.Input{Message: label + ":", Default: strconv.Itoa(current)}
+	if err := survey.AskOne(prompt, &input); err != nil {
+		ui.Warningln("Operation canceled. No changes made.")
+		return
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(input))
+	if err != nil || value < minimum || value > maximum {
+		ui.Errorln("Value must be between %d and %d. No changes made.", minimum, maximum)
+		return
+	}
+	set(value)
+	saveAndReport(cfg, fmt.Sprintf("%s updated to: %d", label, value))
+}
+
+func handleAPIPortChange(cfg *Config) {
+	portStr := ""
+	prompt := &survey.Input{
+		Message: "Enter API Port:",
+		Default: strconv.Itoa(cfg.API.Port),
+	}
+	if err := survey.AskOne(prompt, &portStr); err != nil {
+		ui.Warningln("API port change canceled.")
+		return
+	}
+
+	if port, err := strconv.Atoi(portStr); err == nil && port >= 1 && port <= 65535 {
+		cfg.API.Port = port
+		saveAndReport(cfg, fmt.Sprintf("API Port updated to: %d", port))
+	} else {
+		ui.Errorln("Invalid port number. No changes made.")
+	}
+}
+
+func handleAPIHostChange(cfg *Config) {
+	host := ""
+	prompt := &survey.Input{Message: "Enter API bind address:", Default: cfg.API.Host}
+	if err := survey.AskOne(prompt, &host); err != nil {
+		return
+	}
+	if strings.TrimSpace(host) == "" {
+		ui.Errorln("Bind address cannot be empty.")
+		return
+	}
+	cfg.API.Host = strings.TrimSpace(host)
+	saveAndReport(cfg, fmt.Sprintf("API bind address updated to: %s", cfg.API.Host))
+}
+
+func handleAPIKeyChange(cfg *Config) {
+	key := ""
+	prompt := &survey.Password{Message: "Enter API key (leave empty to disable authentication):"}
+	if err := survey.AskOne(prompt, &key); err != nil {
+		return
+	}
+	cfg.API.APIKey = strings.TrimSpace(key)
+	saveAndReport(cfg, fmt.Sprintf("API key protection enabled: %t", cfg.API.APIKey != ""))
+}
+
+func handleLongInputProtectionChange(cfg *Config) {
+	confirmLongInput := cfg.ConfirmLongInput
+	prompt := &survey.Confirm{
+		Message: "Enable Long Input Protection?",
+		Default: cfg.ConfirmLongInput,
+		Help:    "When enabled, you'll be asked to confirm before sending long text (>500 chars), URLs, or multi-line content to the AI.",
+	}
+	if err := survey.AskOne(prompt, &confirmLongInput); err != nil {
+		// If the user presses Ctrl+C, AskOne returns an error.
+		// We can interpret this as "no change".
+		ui.Warningln("Operation cancelled. No changes made.")
+		return
+	}
+
+	cfg.ConfirmLongInput = confirmLongInput
+	saveAndReport(cfg, fmt.Sprintf("Long input protection set to: %v", cfg.ConfirmLongInput))
+}
+
+func saveAndReport(cfg *Config, message string) {
+	if err := saveConfig(cfg); err != nil {
+		ui.Errorln("Error saving config: %v", err)
+	} else {
+		ui.AIln(message)
+	}
+}
+
+// AddPrompt adds a new prompt to the config
+func AddPrompt(cfg *Config, name, content string) error {
+	if cfg.Prompts == nil {
+		cfg.Prompts = make(map[string]string)
+	}
+	if _, exists := cfg.Prompts[name]; exists {
+		return fmt.Errorf("prompt '%s' already exists", name)
+	}
+	cfg.Prompts[name] = content
+	return saveConfig(cfg)
+}
+
+// EditPrompt edits an existing prompt
+func EditPrompt(cfg *Config, name, content string) error {
+	if cfg.Prompts == nil {
+		return fmt.Errorf("no prompts configured")
+	}
+	if _, exists := cfg.Prompts[name]; !exists {
+		return fmt.Errorf("prompt '%s' does not exist", name)
+	}
+	cfg.Prompts[name] = content
+	return saveConfig(cfg)
+}
+
+// RemovePrompt removes a prompt by name
+func RemovePrompt(cfg *Config, name string) error {
+	if cfg.Prompts == nil {
+		return fmt.Errorf("no prompts configured")
+	}
+	if _, exists := cfg.Prompts[name]; !exists {
+		return fmt.Errorf("prompt '%s' does not exist", name)
+	}
+	delete(cfg.Prompts, name)
+	return saveConfig(cfg)
+}
+
+// ListPrompts returns a list of prompt names
+func ListPrompts(cfg *Config) []string {
+	if cfg.Prompts == nil {
+		return []string{}
+	}
+	names := make([]string, 0, len(cfg.Prompts))
+	for name := range cfg.Prompts {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetPrompt returns the content of a prompt by name
+func GetPrompt(cfg *Config, name string) (string, error) {
+	if cfg.Prompts == nil {
+		return "", fmt.Errorf("no prompts configured")
+	}
+	content, exists := cfg.Prompts[name]
+	if !exists {
+		return "", fmt.Errorf("prompt '%s' does not exist", name)
+	}
+	return content, nil
+}
+
+// handlePromptManagement provides an interactive menu for managing prompts
+func HandlePromptManagement(cfg *Config) {
+	for {
+		choice := ""
+		prompt := &survey.Select{
+			Message: "Prompt Management",
+			Options: []string{"List Prompts", "Add Prompt", "Edit Prompt", "Remove Prompt", "Back"},
+			Default: "Back",
+		}
+		if err := survey.AskOne(prompt, &choice); err != nil {
+			ui.Warningln("Prompt management canceled.")
+			return
+		}
+		switch choice {
+		case "List Prompts":
+			names := ListPrompts(cfg)
+			if len(names) == 0 {
+				ui.AIln("No prompts saved.")
+			} else {
+				ui.AIln("Saved prompts:")
+				for _, name := range names {
+					content, _ := GetPrompt(cfg, name)
+					preview := content
+					if len(preview) > 80 {
+						preview = preview[:80] + "..."
+					}
+					ui.AIln("- %s: %s", name, preview)
+				}
+			}
+		case "Add Prompt":
+			name := ""
+			content := ""
+			if err := survey.AskOne(&survey.Input{Message: "Prompt name:"}, &name); err != nil {
+				return
+			}
+			if err := survey.AskOne(&survey.Input{Message: "Prompt content:"}, &content); err != nil {
+				return
+			}
+			if name == "" || content == "" {
+				ui.Errorln("Name and content required.")
+				continue
+			}
+			err := AddPrompt(cfg, name, content)
+			if err != nil {
+				ui.Errorln("%v", err)
+			} else {
+				ui.AIln("Prompt '%s' added.", name)
+			}
+		case "Edit Prompt":
+			names := ListPrompts(cfg)
+			if len(names) == 0 {
+				ui.AIln("No prompts to edit.")
+				continue
+			}
+			name := ""
+			if err := survey.AskOne(&survey.Select{Message: "Select prompt to edit:", Options: names}, &name); err != nil {
+				return
+			}
+			oldContent, _ := GetPrompt(cfg, name)
+			content := oldContent
+			if err := survey.AskOne(&survey.Input{Message: "New content:", Default: oldContent}, &content); err != nil {
+				return
+			}
+			err := EditPrompt(cfg, name, content)
+			if err != nil {
+				ui.Errorln("%v", err)
+			} else {
+				ui.AIln("Prompt '%s' updated.", name)
+			}
+		case "Remove Prompt":
+			names := ListPrompts(cfg)
+			if len(names) == 0 {
+				ui.AIln("No prompts to remove.")
+				continue
+			}
+			name := ""
+			if err := survey.AskOne(&survey.Select{Message: "Select prompt to remove:", Options: names}, &name); err != nil {
+				return
+			}
+			err := RemovePrompt(cfg, name)
+			if err != nil {
+				ui.Errorln("%v", err)
+			} else {
+				ui.AIln("Prompt '%s' removed.", name)
+			}
+		case "Back":
+			return
+		}
+	}
+}

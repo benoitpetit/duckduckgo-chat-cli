@@ -214,12 +214,12 @@ GPT-6 Luna: Based on the search results about Go concurrency patterns and your c
 [Detailed analysis follows]
 
 You: /stats
- SESSION ANALYTICS SUMMARY
-═══════════════════════════════════════════════════════════
- Session Performance
-   Duration: 8.5m | Messages: 6 | Avg Response: 1.1s
-   Chat Success Rate: 100% (3/3 requests)
-═══════════════════════════════════════════════════════════
+╭─ SESSION ANALYTICS SUMMARY ────────────────────╮
+│ Live duration, messages, and token estimates   │
+│ Chat and API response performance             │
+│ Search, file, URL, and image-generation counts │
+│ Command usage and connection recoveries        │
+╰───────────────────────────────────────────────╯
 
 You: /copy
 Choose what to copy:
@@ -257,19 +257,20 @@ You: /load session_12345
 | `/url <link> [-- prompt]`                     | `/url github.com/golang -- Summarize this page`            | Add webpage content as context and optionally process it with a prompt                                |
 | `/prompt` or `/prompt add <name> -- <prompt>` | `/prompt` or `/prompt add myprompt -- This is my prompt`   | Manage and load custom prompts. `/prompt` opens the interactive menu; subcommands are also available. |
 | `/speak`                                      | `/speak`                                                   | Open a compact Chrome/Chromium window for a live Duck.ai voice conversation                          |
-| `/stats`                                      | `/stats`                                                   | Show current CLI session analytics and performance metrics                                            |
+| `/stats`                                      | `/stats`                                                   | Show current session metrics without ending the session                                                 |
 | `/dashboard <action>`                         | `/dashboard on`                                            | Start or stop the local usage dashboard, open its app window, or show its status (`on`, `off`, `open`, `status`) |
 | `/api [port]`                                 | `/api` or `/api 8080`                                      | Start or stop the API server                                                                          |
 | `/model`                                      | `/model` or `/model 2`                                     | Change AI model (interactive)                                                                         |
 | `/clear`                                      | `/clear`                                                   | Save the conversation, then reset its context and CLI Duck.ai session                                  |
 | `/export`                                     | `/export`                                                  | Export content (interactive)                                                                          |
 | `/copy`                                       | `/copy`                                                    | Copy to clipboard (interactive)                                                                       |
-| `/history`                                    | `/history`                                                 | Display conversation history                                                                          |
+| `/history`                                    | `/history`                                                 | Show the conversation history in a framed view                                                        |
 | `/load [session_id]`                          | `/load` or `/load session_12345`                           | Load and restore a previous session interactively or by ID                                            |
 | `/config`                                     | `/config`                                                  | Modify configuration settings                                                                         |
 | `/version`                                    | `/version`                                                 | Show version and system info                                                                          |
 | `/update`                                     | `/update` or `/update --force`                             | Update the CLI to the latest version                                                                  |
-| `/help`                                       | `/help`                                                    | Show the welcome message and interactive command list                                                 |
+| `/help`                                       | `/help`                                                    | Show the framed command reference                                                                     |
+| `/issue`                                      | `/issue`                                                   | Choose a report type, enter a title and details, then open the prefilled GitHub issue                   |
 | `/exit`                                       | `/exit`                                                    | Exit application (with analytics)                                                                     |
 
 Use `&&` to combine `/file`, `/url`, and `/search` context commands before a
@@ -509,6 +510,10 @@ update manually.
 
 ### Connection issues
 
+CLI errors include a `/issue` hint. Run the command to open a short form for
+reporting a problem; the selected issue type, title, and description are passed
+to the GitHub issue page.
+
 If you encounter connection errors:
 
 ```bash
@@ -534,10 +539,10 @@ continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 
 The local build and verification scripts are also used by GitHub Actions:
 
-- Build locally with `./scripts/build.sh 1.9.0`.
+- Build locally with `./scripts/build.sh 1.9.1`.
 - Run `./scripts/pre-release-check.sh` before a release.
-- To publish from GitHub, open **Actions → Build and Release → Run workflow** and enter a version such as `1.9.0`.
-- After pushing a clean `master`, run `./scripts/release.sh 1.9.0` with an authenticated GitHub CLI.
+- To publish from GitHub, open **Actions → Build and Release → Run workflow** and enter a version such as `1.9.1`.
+- After pushing a clean `master`, run `./scripts/release.sh 1.9.1` with an authenticated GitHub CLI.
 - The Windows `.exe` includes `docs/images/logo.png` as its application icon. Linux and macOS command-line binaries have no application icon.
 
 ### Development documentation

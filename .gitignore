@@ -32,8 +32,7 @@ build/
 duckduckgo-chat-cli
 duckduckgo-chat-cli_*
 duckchat*
-!browser-extension/duckchat-relay/
-!browser-extension/duckchat-relay/**
+/browser-extension/duckchat-relay/
 
 # Local design and implementation notes stay outside the public source tree.
 docs/superpowers/

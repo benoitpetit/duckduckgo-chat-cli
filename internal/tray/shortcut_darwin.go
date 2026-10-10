@@ -66,20 +66,20 @@ func unregisterDarwinHotkeys(hotkeys []*hotkey.Hotkey) {
 func darwinHotkey(binding shortcut.Shortcut) (*hotkey.Hotkey, error) {
 	var modifiers []hotkey.Modifier
 	if binding.Ctrl {
-		modifiers = append(modifiers, hotkey.ModCtrl)
+		modifiers = append(modifiers, darwinModifierControl)
 	}
 	if binding.Alt {
-		modifiers = append(modifiers, hotkey.ModOption)
+		modifiers = append(modifiers, darwinModifierOption)
 	}
 	if binding.Shift {
-		modifiers = append(modifiers, hotkey.ModShift)
+		modifiers = append(modifiers, darwinModifierShift)
 	}
 	if binding.Super {
-		modifiers = append(modifiers, hotkey.ModCmd)
+		modifiers = append(modifiers, darwinModifierCommand)
 	}
 	key := strings.ToUpper(binding.Key)
 	if key == "SPACE" {
-		return hotkey.New(modifiers, hotkey.KeySpace), nil
+		return hotkey.New(modifiers, darwinKeySpace), nil
 	}
 	if len(key) == 1 && (key[0] >= 'A' && key[0] <= 'Z' || key[0] >= '0' && key[0] <= '9') {
 		return hotkey.New(modifiers, hotkey.Key(darwinKeycode(key[0]))), nil
@@ -93,6 +93,16 @@ func darwinHotkey(binding shortcut.Shortcut) (*hotkey.Hotkey, error) {
 	}
 	return nil, fmt.Errorf("unsupported macOS key %q", binding.Key)
 }
+
+// Keep the Carbon values local so Darwin cross-compilation also works when
+// CGO is disabled (the hotkey package then exposes the types without constants).
+const (
+	darwinModifierControl hotkey.Modifier = 0x1000
+	darwinModifierShift   hotkey.Modifier = 0x0200
+	darwinModifierOption  hotkey.Modifier = 0x0800
+	darwinModifierCommand hotkey.Modifier = 0x0100
+	darwinKeySpace        hotkey.Key      = 49
+)
 
 func darwinKeycode(key byte) uint32 {
 	if key >= '0' && key <= '9' {

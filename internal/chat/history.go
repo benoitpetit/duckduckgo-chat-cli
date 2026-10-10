@@ -6,54 +6,47 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/media"
-
-	"github.com/fatih/color"
+	"duckduckgo-chat-cli/internal/ui"
 )
 
 func PrintHistory(c *Chat) {
-	if len(c.Messages) == 0 {
-		color.Yellow("No messages in history yet")
+	if c == nil || len(c.Messages) == 0 {
+		ui.PrintPanel("Chat History", []string{"No messages in history yet."})
 		return
 	}
 
-	dimWhite := color.New(color.FgHiWhite, color.Faint)
-	dimBlue := color.New(color.FgBlue, color.Faint)
-	dimGreen := color.New(color.FgHiGreen, color.Faint)
-	dimYellow := color.New(color.FgYellow, color.Faint)
-
-	// add a newline before printing the history
-	fmt.Println()
-	for i, msg := range c.Messages {
+	lines := make([]ui.PanelLine, 0, len(c.Messages)*2)
+	for _, msg := range c.Messages {
+		label := "Message"
+		labelStyle := ui.PanelAssistant
+		content := msg.Content
 		switch {
 		case strings.HasPrefix(msg.Content, "[Search Context]"):
-			dimYellow.Print("Search Context: ")
-			dimWhite.Println(strings.TrimSpace(strings.TrimPrefix(msg.Content, "[Search Context]")))
+			label = "Search Context"
+			labelStyle = ui.PanelInfo
+			content = strings.TrimSpace(strings.TrimPrefix(msg.Content, "[Search Context]"))
 		case strings.HasPrefix(msg.Content, "[File Context]"):
-			dimYellow.Print("File Context: ")
-			dimWhite.Println(strings.TrimSpace(strings.TrimPrefix(msg.Content, "[File Context]")))
+			label = "File Context"
+			labelStyle = ui.PanelInfo
+			content = strings.TrimSpace(strings.TrimPrefix(msg.Content, "[File Context]"))
 		case strings.HasPrefix(msg.Content, "[URL Context]"):
-			dimYellow.Print("URL Context: ")
-			dimWhite.Println(strings.TrimSpace(strings.TrimPrefix(msg.Content, "[URL Context]")))
+			label = "URL Context"
+			labelStyle = ui.PanelInfo
+			content = strings.TrimSpace(strings.TrimPrefix(msg.Content, "[URL Context]"))
 		case msg.Role == "user":
-			dimBlue.Print("You: ")
-			dimWhite.Println(msg.Content)
-		case msg.Role == "assistant":
-			dimGreen.Print("\nAI: ")
-			dimWhite.Println(msg.Content)
-		default:
-			dimWhite.Println(msg.Content)
+			label = "You"
+			labelStyle = ui.PanelUser
+		}
+		lines = append(lines, ui.PanelLine{{Text: label, Style: labelStyle}})
+		for _, contentLine := range strings.Split(content, "\n") {
+			lines = append(lines, ui.PanelLine{{Text: "  " + contentLine, Style: ui.PanelForeground}})
 		}
 		for _, image := range msg.Images {
-			dimYellow.Print("  ")
-			dimWhite.Println(imageAttachmentMarker(image))
+			lines = append(lines, ui.PanelLine{{Text: "  " + imageAttachmentMarker(image), Style: ui.PanelMuted}})
 		}
-
-		// add a newline between messages
-		if i < len(c.Messages)-1 {
-			fmt.Println()
-		}
+		lines = append(lines, ui.PanelLine{{Text: "", Style: ui.PanelForeground}})
 	}
-	fmt.Println()
+	ui.PrintStyledPanel(fmt.Sprintf("Chat History · %d messages", len(c.Messages)), lines)
 }
 
 // GetMarkdownContent exports the chat history in markdown format

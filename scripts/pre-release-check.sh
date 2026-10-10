@@ -47,7 +47,7 @@ go mod verify
 go mod tidy -diff
 
 printf '\n🧹 Checking Go formatting...\n'
-unformatted="$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)"
+unformatted="$(gofmt -s -l .)"
 if [[ -n "$unformatted" ]]; then
   printf '%s\n' "$unformatted" >&2
   fail "Go source needs gofmt"

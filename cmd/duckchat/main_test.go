@@ -1,20 +1,88 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"duckduckgo-chat-cli/internal/chat"
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
+	"duckduckgo-chat-cli/internal/ui"
 	"duckduckgo-chat-cli/internal/update"
+
+	"github.com/c-bata/go-prompt"
 )
 
+func TestPromptCompletionTextHasReadableContrastForEveryTheme(t *testing.T) {
+	for _, theme := range ui.Themes() {
+		t.Run(string(theme.ID), func(t *testing.T) {
+			foreground := promptColorHex(theme, prompt.LightGray, false)
+			background := promptColorHex(theme, prompt.DarkGray, true)
+			if background != theme.Colors.Surface {
+				t.Fatalf("completion background = %s, want theme surface %s", background, theme.Colors.Surface)
+			}
+			if ratio := contrastRatio(foreground, background); ratio < 4.5 {
+				t.Fatalf("completion contrast = %.2f:1, want at least 4.5:1 (foreground %s, background %s)", ratio, foreground, background)
+			}
+			selectedText := promptColorHex(theme, prompt.Black, false)
+			selectedBackground := promptColorHex(theme, prompt.Blue, true)
+			if ratio := contrastRatio(selectedText, selectedBackground); ratio < 4.5 {
+				t.Fatalf("selected completion contrast = %.2f:1, want at least 4.5:1 (foreground %s, background %s)", ratio, selectedText, selectedBackground)
+			}
+		})
+	}
+}
+
+func TestPromptScrollbarUsesThemeAccentAndSurface(t *testing.T) {
+	thumb, track := promptScrollbarColors()
+	if thumb != prompt.Blue || track != prompt.DarkGray {
+		t.Fatalf("scrollbar colors = (%v, %v), want theme accent and surface", thumb, track)
+	}
+	for _, theme := range ui.Themes() {
+		if got := promptColorHex(theme, thumb, true); got != theme.Colors.Accent {
+			t.Errorf("%s scrollbar thumb = %s, want accent %s", theme.ID, got, theme.Colors.Accent)
+		}
+		if got := promptColorHex(theme, track, true); got != theme.Colors.Surface {
+			t.Errorf("%s scrollbar track = %s, want surface %s", theme.ID, got, theme.Colors.Surface)
+		}
+	}
+}
+
+func contrastRatio(foreground, background string) float64 {
+	firstLum := relativeLuminance(foreground)
+	secondLum := relativeLuminance(background)
+	if firstLum < secondLum {
+		firstLum, secondLum = secondLum, firstLum
+	}
+	return (firstLum + 0.05) / (secondLum + 0.05)
+}
+
+func relativeLuminance(value string) float64 {
+	rgb := hexRGB(value)
+	return 0.2126*linearize(rgb[0]) + 0.7152*linearize(rgb[1]) + 0.0722*linearize(rgb[2])
+}
+
+func hexRGB(value string) [3]float64 {
+	value = strings.TrimPrefix(value, "#")
+	rgb, _ := strconv.ParseUint(value, 16, 24)
+	return [3]float64{float64((rgb >> 16) & 0xff), float64((rgb >> 8) & 0xff), float64(rgb & 0xff)}
+}
+
+func linearize(channel float64) float64 {
+	channel /= 255
+	if channel <= 0.04045 {
+		return channel / 12.92
+	}
+	return math.Pow((channel+0.055)/1.055, 2.4)
+}
+
 func TestStartupHelpLineShowsOnlyCommonCommands(t *testing.T) {
-	if got, want := startupHelpLine(), "/help · /model · /search · /image · /exit"; got != want {
+	if got, want := startupHelpLine(), "/help · /model · /search · /image · /issue · /exit"; got != want {
 		t.Fatalf("startup help line = %q, want %q", got, want)
 	}
 }

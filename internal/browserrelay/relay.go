@@ -236,9 +236,9 @@ func (r *Relay) Do(ctx context.Context, request Request) (*http.Response, bool, 
 		case <-timer.C:
 			var err error
 			if connected {
-				err = errors.New("Chrome relay connected but Duck.ai did not start the retry after clearing site data")
+				err = errors.New("browser relay connected, but Duck.ai did not start the retry after clearing site data")
 			} else {
-				err = errors.New("Chrome relay did not connect; check that the DuckChat CLI extension is enabled in the browser opened by the CLI, then reload it in chrome://extensions")
+				err = errors.New("browser relay did not connect before the timeout")
 			}
 			cleanup(err)
 			return nil, true, err

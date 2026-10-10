@@ -52,6 +52,12 @@ func GetCommandRegistry() *CommandRegistry {
 				Usage:       "/image [idea]",
 				Category:    "core",
 			},
+			"/issue": {
+				Name:        "/issue",
+				Description: "Open a prefilled GitHub issue form",
+				Usage:       "/issue",
+				Category:    "core",
+			},
 			"/clear": {
 				Name:        "/clear",
 				Description: "Start a fresh chat and Duck.ai session",
@@ -166,7 +172,7 @@ func GetCommandRegistry() *CommandRegistry {
 		},
 	}
 	for name, examples := range map[string][]string{
-		"/help": {"/help"}, "/exit": {"/exit"}, "/speak": {"/speak"}, "/image": {"/image", "/image a bird flying"}, "/clear": {"/clear"}, "/history": {"/history"},
+		"/help": {"/help"}, "/exit": {"/exit"}, "/speak": {"/speak"}, "/image": {"/image", "/image a bird flying"}, "/issue": {"/issue"}, "/clear": {"/clear"}, "/history": {"/history"},
 		"/search":  {"/search Go concurrency", "/search Go concurrency -- Summarize the results"},
 		"/file":    {"/file ./README.md", "/file ./main.go -- Explain this code"},
 		"/library": {"/library", "/library add ./docs"},

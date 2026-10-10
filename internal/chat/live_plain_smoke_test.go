@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -221,68 +219,6 @@ func TestLiveVisibleTemporaryBrowserChat(t *testing.T) {
 	t.Logf("clean visible temporary Chromium: HTTP %d, completed=%t", status, complete)
 	if status != http.StatusOK || !complete {
 		t.Fatalf("clean visible temporary Chromium did not complete chat (HTTP %d)", status)
-	}
-}
-
-func TestLiveIsolatedChromeExtensionChat(t *testing.T) {
-	if os.Getenv("DUCKAI_LIVE_ISOLATED_EXTENSION_TEST") != "1" {
-		t.Skip("set DUCKAI_LIVE_ISOLATED_EXTENSION_TEST=1 to test the extension in a clean automated Chrome profile")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	executable, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skipf("Chromium is unavailable: %v", err)
-	}
-	extension, err := filepath.Abs("../../browser-extension/duckchat-relay")
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile := t.TempDir()
-	var process *exec.Cmd
-	relay := browserrelay.New(browserrelay.Options{OpenBrowser: func(target string) error {
-		process = exec.CommandContext(ctx, executable,
-			"--user-data-dir="+profile,
-			"--disable-extensions-except="+extension,
-			"--load-extension="+extension,
-			"--no-first-run", "--no-default-browser-check", "--no-sandbox",
-			"--new-window", target,
-		)
-		process.Stdout, process.Stderr = io.Discard, io.Discard
-		return process.Start()
-	}})
-	defer func() {
-		cancel()
-		if process != nil {
-			_ = process.Wait()
-		}
-	}()
-	chat := &Chat{Model: models.GPT54Mini, Messages: []Message{{Role: "user", Content: "Reply PONG only"}}}
-	durable, err := chat.durableStreamForRequest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(chat.buildPayload(durable))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, _, err := relay.Do(ctx, browserrelay.Request{
-		URL: models.ChatURL, Method: http.MethodPost,
-		Header: http.Header{"Accept": {"text/event-stream"}, "Content-Type": {"application/json"}},
-		Body:   payload,
-	})
-	if err != nil {
-		t.Fatalf("isolated Chrome extension failed: %v", err)
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	complete := strings.Contains(string(body), "data: [DONE]")
-	t.Logf("isolated automated Chrome extension: HTTP %d, completed=%t", response.StatusCode, complete)
-	if response.StatusCode != http.StatusOK || !complete {
-		t.Fatalf("isolated automated Chrome extension did not complete chat (HTTP %d)", response.StatusCode)
 	}
 }
 

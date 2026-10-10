@@ -139,8 +139,13 @@ func (w *themeConsoleWriter) SetColor(fg, bg prompt.Color, bold bool) {
 }
 
 func promptColorHex(theme ui.Theme, color prompt.Color, background bool) string {
-	if background && color == prompt.DefaultColor {
-		return ""
+	if background {
+		switch color {
+		case prompt.DefaultColor:
+			return ""
+		case prompt.DarkGray:
+			return theme.Colors.Surface
+		}
 	}
 	switch color {
 	case prompt.DefaultColor, prompt.White, prompt.LightGray:
@@ -162,6 +167,10 @@ func promptColorHex(theme ui.Theme, color prompt.Color, background bool) string 
 	default:
 		return theme.Colors.Foreground
 	}
+}
+
+func promptScrollbarColors() (thumb, track prompt.Color) {
+	return prompt.Blue, prompt.DarkGray
 }
 
 func writePromptRGB(writer prompt.ConsoleWriter, value string, channel int) {
@@ -896,6 +905,7 @@ func runInteractive() {
 			"DuckDuckGo AI Chat CLI · "+models.DisplayName(chatSession.Model),
 			startupHelpLine(), cfg.Appearance.FrameResponses,
 		)
+		ui.SetPanelRecorder(chatSession.Display.RecordPanel)
 	}
 	chatSession.Activity = dashboardActivity
 	dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session started", Model: string(chatSession.Model)})
@@ -1009,6 +1019,7 @@ func runInteractive() {
 		}
 	}()
 
+	scrollbarThumbColor, scrollbarTrackColor := promptScrollbarColors()
 	p := prompt.New(
 		func(input string) {
 			executePromptInputWithNotice(input, startupUpdateResults, ui.DebugEnabled(), func(message string) {
@@ -1034,18 +1045,26 @@ func runInteractive() {
 		prompt.OptionTitle("duckduckgo-chat-cli"),
 		prompt.OptionPrefix("You: "),
 		prompt.OptionPrefixTextColor(prompt.Blue),
+		prompt.OptionPrefixBackgroundColor(prompt.DarkGray),
+		prompt.OptionInputTextColor(prompt.LightGray),
+		prompt.OptionInputBGColor(prompt.DarkGray),
 		prompt.OptionSuggestionTextColor(prompt.LightGray),
 		prompt.OptionSuggestionBGColor(prompt.DarkGray),
 		prompt.OptionSelectedSuggestionTextColor(prompt.Black),
-		prompt.OptionSelectedSuggestionBGColor(prompt.Green),
+		prompt.OptionSelectedSuggestionBGColor(prompt.Blue),
 		prompt.OptionDescriptionTextColor(prompt.LightGray),
 		prompt.OptionDescriptionBGColor(prompt.DarkGray),
 		prompt.OptionSelectedDescriptionTextColor(prompt.Black),
-		prompt.OptionSelectedDescriptionBGColor(prompt.Green),
+		prompt.OptionSelectedDescriptionBGColor(prompt.Blue),
 		prompt.OptionPreviewSuggestionTextColor(prompt.Turquoise),
 		prompt.OptionPreviewSuggestionBGColor(prompt.DarkGray),
+		prompt.OptionScrollbarThumbColor(scrollbarThumbColor),
+		prompt.OptionScrollbarBGColor(scrollbarTrackColor),
 	)
+	ui.SetIssueHelpEnabled(true)
 	p.Run()
+	ui.SetPanelRecorder(nil)
+	ui.SetIssueHelpEnabled(false)
 	if dashboardActivity != nil {
 		dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session stopping"})
 	}
@@ -1056,7 +1075,7 @@ func runInteractive() {
 }
 
 func startupHelpLine() string {
-	return "/help · /model · /search · /image · /exit"
+	return "/help · /model · /search · /image · /issue · /exit"
 }
 
 func executor(input string) {
@@ -1224,22 +1243,34 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 	case cmd.Type == "/history":
 		chat.PrintHistory(chatSession)
 	case cmd.Type == "/image":
-		trackActivity("image", "Image generation", func() { chat.HandleImageCommand(chatSession, cmd.Args, cfg) })
+		withResizeRedrawSuspended(chatSession, func() {
+			trackActivity("image", "Image generation", func() { chat.HandleImageCommand(chatSession, cmd.Args, cfg) })
+		})
+	case cmd.Type == "/issue":
+		withResizeRedrawSuspended(chatSession, chat.HandleIssueCommand)
 	case cmd.Type == "/search":
-		trackActivity("search", "Search operation", func() { chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, nil) })
+		withResizeRedrawSuspended(chatSession, func() {
+			trackActivity("search", "Search operation", func() { chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, nil) })
+		})
 	case cmd.Type == "/file":
 		trackActivity("file", "File operation", func() { chat.HandleFileCommand(chatSession, cmd.Raw, cfg, nil) })
 	case cmd.Type == "/library":
-		trackActivity("library", "Library operation", func() { chat.HandleLibraryCommand(chatSession, cmd.Raw, cfg) })
+		withResizeRedrawSuspended(chatSession, func() {
+			trackActivity("library", "Library operation", func() { chat.HandleLibraryCommand(chatSession, cmd.Raw, cfg) })
+		})
 	case cmd.Type == "/url":
 		trackActivity("url", "URL operation", func() { chat.HandleURLCommand(chatSession, cmd.Raw, cfg, nil) })
 	case cmd.Type == "/export":
 		chat.HandleExportCommand(chatSession, cfg)
 	case cmd.Type == "/copy":
-		chat.HandleCopyCommand(chatSession)
+		withResizeRedrawSuspended(chatSession, func() {
+			chat.HandleCopyCommand(chatSession)
+		})
 	case cmd.Type == "/config":
 		previousTrayConfig := cfg.Tray
-		config.HandleConfiguration(cfg, chatSession)
+		withResizeRedrawSuspended(chatSession, func() {
+			config.HandleConfiguration(cfg, chatSession)
+		})
 		refreshDashboardSettings(cfg)
 		if cfg.Tray != previousTrayConfig {
 			if response, err := tray.Send(context.Background(), tray.ActionReloadConfig); err != nil || response.Error != "" {
@@ -1251,7 +1282,10 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 			}
 		}
 	case cmd.Type == "/model":
-		newModel := models.HandleModelChange(chatSession, cmd.Args)
+		var newModel models.ModelAlias
+		withResizeRedrawSuspended(chatSession, func() {
+			newModel = models.HandleModelChange(chatSession, cmd.Args)
+		})
 		if newModel != "" {
 			chatSession.ChangeModel(models.GetModel(string(newModel)))
 			if dashboardActivity != nil {
@@ -1265,35 +1299,37 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 	case cmd.Type == "/help":
 		chat.PrintWelcomeMessage()
 	case cmd.Type == "/api":
-		if api.IsRunning() {
-			confirm := false
-			prompt := &survey.Confirm{
-				Message: "The API server is currently running. Do you want to stop it?",
-				Default: true,
-			}
-			if err := survey.AskOne(prompt, &confirm); err != nil {
-				ui.Warningln("API stop canceled.")
-				return
-			}
-			if confirm {
-				api.StopServer()
-			}
-		} else {
-			if !cfg.API.Enabled {
-				ui.Warningln("API is disabled in the configuration. Use /config to enable it.")
-				return
-			}
-			port := cfg.API.Port
-			if cmd.Args != "" {
-				if p, err := strconv.Atoi(cmd.Args); err == nil {
-					port = p
-				} else {
-					ui.Errorln("Invalid port number.")
+		withResizeRedrawSuspended(chatSession, func() {
+			if api.IsRunning() {
+				confirm := false
+				prompt := &survey.Confirm{
+					Message: "The API server is currently running. Do you want to stop it?",
+					Default: true,
+				}
+				if err := survey.AskOne(prompt, &confirm); err != nil {
+					ui.Warningln("API stop canceled.")
 					return
 				}
+				if confirm {
+					api.StopServer()
+				}
+			} else {
+				if !cfg.API.Enabled {
+					ui.Warningln("API is disabled in the configuration. Use /config to enable it.")
+					return
+				}
+				port := cfg.API.Port
+				if cmd.Args != "" {
+					if p, err := strconv.Atoi(cmd.Args); err == nil {
+						port = p
+					} else {
+						ui.Errorln("Invalid port number.")
+						return
+					}
+				}
+				api.StartServer(chatSession, cfg, port)
 			}
-			api.StartServer(chatSession, cfg, port)
-		}
+		})
 	case cmd.Type == "/version":
 		ui.AIln("DuckDuckGo AI Chat CLI version %s", Version)
 		ui.Mutedln("Go version: %s", runtime.Version())
@@ -1303,12 +1339,14 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 	case cmd.Type == "/stats":
 		// Show current session analytics
 		if chatSession != nil {
-			chatSession.ShowSessionStats()
+			chatSession.ShowLiveSessionStats()
 		} else {
 			ui.Errorln("No active chat session found.")
 		}
 	case cmd.Type == "/dashboard":
-		handleDashboardCommand(cmd.Args)
+		withResizeRedrawSuspended(chatSession, func() {
+			handleDashboardCommand(cmd.Args)
+		})
 	case cmd.Type == "/update":
 		// Handle update command
 		force := strings.Contains(cmd.Args, "--force")
@@ -1318,7 +1356,9 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 	case cmd.Type == "/load":
 		chat.HandleLoadCommand(chatSession, cmd.Args)
 	case cmd.Type == "/prompt":
-		chat.HandlePromptCommand(chatSession, cmd.Raw, cfg)
+		withResizeRedrawSuspended(chatSession, func() {
+			chat.HandlePromptCommand(chatSession, cmd.Raw, cfg)
+		})
 	default:
 		// Check if the input is potentially pasted content (long text, URLs, etc.)
 		if cfg.ConfirmLongInput && shouldConfirmLongInput(cmd.Raw) {
@@ -1330,6 +1370,16 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		}
 		chat.ProcessInput(chatSession, cmd.Raw, cfg)
 	}
+}
+
+func withResizeRedrawSuspended(chatSession *chat.Chat, run func()) {
+	if chatSession == nil || chatSession.Display == nil {
+		run()
+		return
+	}
+	resume := chatSession.Display.SuspendRedraw()
+	defer resume()
+	run()
 }
 
 func trackActivity(category, summary string, run func()) {

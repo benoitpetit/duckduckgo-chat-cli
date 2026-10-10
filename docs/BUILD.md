@@ -5,6 +5,11 @@ Chrome or Chromium 115+ is required at runtime for Duck.ai browser access and
 `/speak`; neither browser is required to compile the CLI. Linux builds do not
 need GTK, WebKitGTK, or GStreamer development packages.
 
+`go.mod` replaces `github.com/c-bata/go-prompt` with the checked-in copy in
+`third_party/go-prompt`. That copy includes the resize callback used by the
+interactive prompt, so keep it in the repository when cloning or packaging the
+CLI.
+
 The resident tray uses a pure-Go tray backend and does not add Linux GTK build
 dependencies. Linux global shortcuts use the desktop portal on Wayland or X11
 key grabs on X11. Windows and macOS use their native shortcut registration;
@@ -31,19 +36,18 @@ GOCACHE="$PWD/build/go-cache" \
 
 If Chrome or Chromium is missing, install either browser with your operating
 system's package manager and ensure its executable is available to the CLI.
-The interactive chat and `/speak` both use the browser for Duck.ai access;
+The interactive chat uses an isolated headless Chromium profile for Duck.ai requests.
 `/speak` opens a separate app-style browser window and requests microphone
 permission when the user starts a call. After the terms are accepted, a normal
-interactive launch also starts or reuses the background tray service. The
-service stays running after the terminal closes and can be stopped from its
-tray menu.
+interactive launch also starts or reuses the background tray service. It stays
+in the tray after the terminal closes and can be stopped from the tray menu.
 
 ## Local release build
 
 From the repository root, run the build script:
 
 ```bash
-./scripts/build.sh 1.9.0
+./scripts/build.sh 1.9.1
 ```
 
 Passing a version builds without an interactive prompt. Omitting it asks for a
@@ -73,6 +77,6 @@ logo. The Windows resource generator is pinned in
 
 The GitHub Actions workflow uses the same build and verification scripts. Start
 it from **Actions → Build and Release → Run workflow** and provide a semantic
-version such as `1.9.0`. After committing and pushing `master`, the same workflow
-can be dispatched from a terminal with `./scripts/release.sh 1.9.0`; this
+version such as `1.9.1`. After committing and pushing `master`, the same workflow
+can be dispatched from a terminal with `./scripts/release.sh 1.9.1`; this
 requires an authenticated GitHub CLI (`gh auth login`).

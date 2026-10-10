@@ -3,6 +3,7 @@ package ui
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/fatih/color"
 )
@@ -69,17 +70,22 @@ func (c themedColor) Sprint(a ...interface{}) string         { return c.color().
 // Semantic colors resolve their RGB values at each write so /config changes
 // are visible immediately, including in messages emitted by background work.
 var (
-	UserColor    = themedColor{role: roleUser}
-	AIColor      = themedColor{role: roleAssistant}
-	SystemColor  = themedColor{role: roleInfo}
-	WarningColor = themedColor{role: roleWarning}
-	ErrorColor   = themedColor{role: roleError}
-	WhiteColor   = themedColor{role: roleForeground}
-	PromptColor  = themedColor{role: roleAccent}
-	MutedColor   = themedColor{role: roleMuted}
-	AccentColor  = themedColor{role: roleAccent}
-	SuccessColor = themedColor{role: roleSuccess}
+	UserColor        = themedColor{role: roleUser}
+	AIColor          = themedColor{role: roleAssistant}
+	SystemColor      = themedColor{role: roleInfo}
+	WarningColor     = themedColor{role: roleWarning}
+	ErrorColor       = themedColor{role: roleError}
+	WhiteColor       = themedColor{role: roleForeground}
+	PromptColor      = themedColor{role: roleAccent}
+	MutedColor       = themedColor{role: roleMuted}
+	AccentColor      = themedColor{role: roleAccent}
+	SuccessColor     = themedColor{role: roleSuccess}
+	issueHelpEnabled atomic.Bool
 )
+
+// SetIssueHelpEnabled controls whether interactive CLI errors include a hint
+// for reporting the problem through /issue.
+func SetIssueHelpEnabled(enabled bool) { issueHelpEnabled.Store(enabled) }
 
 // Formatted print functions (without newlines)
 func Userf(format string, a ...interface{})    { UserColor.Printf(format, a...) }
@@ -96,6 +102,11 @@ func Userln(format string, a ...interface{})    { UserColor.Printf(format+"\n", 
 func AIln(format string, a ...interface{})      { AIColor.Printf(format+"\n", a...) }
 func Systemln(format string, a ...interface{})  { SystemColor.Printf(format+"\n", a...) }
 func Warningln(format string, a ...interface{}) { WarningColor.Printf(format+"\n", a...) }
-func Errorln(format string, a ...interface{})   { ErrorColor.Printf(format+"\n", a...) }
-func Whiteln(format string, a ...interface{})   { WhiteColor.Printf(format+"\n", a...) }
-func Mutedln(format string, a ...interface{})   { MutedColor.Printf(format+"\n", a...) }
+func Errorln(format string, a ...interface{}) {
+	ErrorColor.Printf(format+"\n", a...)
+	if issueHelpEnabled.Load() {
+		Mutedln("Tip: use /issue to report this problem.")
+	}
+}
+func Whiteln(format string, a ...interface{}) { WhiteColor.Printf(format+"\n", a...) }
+func Mutedln(format string, a ...interface{}) { MutedColor.Printf(format+"\n", a...) }

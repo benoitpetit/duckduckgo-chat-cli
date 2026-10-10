@@ -54,6 +54,7 @@ type Snapshot struct {
 	FilesProcessed             int                     `json:"files_processed"`
 	URLsProcessed              int                     `json:"urls_processed"`
 	SearchesPerformed          int                     `json:"searches_performed"`
+	ImageGenerationRequests    int                     `json:"image_generation_requests"`
 	ByModel                    map[string]ModelMetrics `json:"by_model"`
 }
 
@@ -78,9 +79,10 @@ func (ca *ChatAnalytics) Snapshot() Snapshot {
 		ContextOptimizations: ca.ContextOptimizations, ContextCompressions: ca.ContextCompressions, BytesSaved: ca.BytesSaved,
 		ModelChanges: ca.ModelChanges, CurrentModel: ca.CurrentModel, FilesProcessed: ca.FilesProcessed,
 		URLsProcessed: ca.URLsProcessed, SearchesPerformed: ca.SearchesPerformed,
-		CommandsUsed:      make(map[string]int, len(ca.CommandsUsed)),
-		DailyUserMessages: make(map[string]int, len(ca.DailyUserMessages)),
-		ByModel:           make(map[string]ModelMetrics, len(ca.byModel)),
+		ImageGenerationRequests: ca.ImageGenerationRequests,
+		CommandsUsed:            make(map[string]int, len(ca.CommandsUsed)),
+		DailyUserMessages:       make(map[string]int, len(ca.DailyUserMessages)),
+		ByModel:                 make(map[string]ModelMetrics, len(ca.byModel)),
 	}
 	for command, count := range ca.CommandsUsed {
 		snapshot.CommandsUsed[command] = count

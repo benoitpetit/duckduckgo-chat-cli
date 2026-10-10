@@ -10,7 +10,6 @@ import (
 	"github.com/fatih/color"
 
 	"duckduckgo-chat-cli/internal/ptytest"
-	"duckduckgo-chat-cli/internal/ui"
 )
 
 // sgrSequence matches the colour escapes fatih/color wraps around help text.
@@ -41,7 +40,7 @@ func TestRenderCommandsTableProducesWrappedColouredLines(t *testing.T) {
 	}
 }
 
-func TestPrintWelcomeMessagePutsTheTitleBesideTheLogo(t *testing.T) {
+func TestPrintWelcomeMessageDrawsResponsiveHelpPanel(t *testing.T) {
 	master, slave, err := ptytest.Open()
 	if err != nil {
 		t.Skipf("cannot allocate a pseudo-terminal: %v", err)
@@ -86,24 +85,11 @@ func TestPrintWelcomeMessagePutsTheTitleBesideTheLogo(t *testing.T) {
 		t.Fatal("expected the help title to be printed")
 	}
 
-	// The title sits inside the logo block, which is 18 rows tall.
-	logoDrawn := false
-	for _, line := range lines[:18] {
-		if strings.ContainsRune(line, '▀') {
-			logoDrawn = true
-			break
-		}
-	}
-	if !logoDrawn {
-		t.Error("expected the logo to be drawn beside the title")
-	}
-	textColumn := ui.DefaultLogoWidthCells + 2
-	if cells := []rune(lines[titleRow]); len(cells) <= textColumn ||
-		!strings.HasPrefix(string(cells[textColumn:]), "DuckDuckGo AI Chat CLI - Help") {
-		t.Errorf("title should start at column %d, got %q", textColumn, lines[titleRow])
+	if !strings.HasPrefix(lines[titleRow], "╭─ DuckDuckGo AI Chat CLI - Help") {
+		t.Errorf("expected the title in the help panel border, got %q", lines[titleRow])
 	}
 
-	// The command tables ride beside the logo too, not underneath it.
+	// Help content should be inside the same panel and remain within the terminal.
 	commandsRow := -1
 	for i, line := range lines {
 		if strings.Contains(line, "Core Commands:") {
@@ -114,37 +100,17 @@ func TestPrintWelcomeMessagePutsTheTitleBesideTheLogo(t *testing.T) {
 	if commandsRow < 0 {
 		t.Fatal("expected the command tables to be printed")
 	}
-	if commandsRow >= 18 {
-		t.Errorf("command tables at row %d should sit beside the 18-line logo", commandsRow)
+	if !strings.Contains(lines[commandsRow], "│ Core Commands:") {
+		t.Errorf("Core Commands should be inside the panel, got %q", lines[commandsRow])
 	}
-	if cells := []rune(lines[commandsRow]); len(cells) <= textColumn ||
-		!strings.HasPrefix(string(cells[textColumn:]), "Core Commands:") {
-		t.Errorf("Core Commands should start at column %d, got %q", textColumn, lines[commandsRow])
-	}
-
-	// A continuation line must line up under the description column. If the
-	// table were rendered for the full width and then re-wrapped into the
-	// column, the continuation would start at the command indent instead.
-	dashboardRow := -1
 	for i, line := range lines {
-		if strings.Contains(line, "/dashboard") {
-			dashboardRow = i
-			break
+		if width := utf8.RuneCountInString(line); width > 110 {
+			t.Errorf("line %d is %d cells wide, terminal is 110: %q", i, width, line)
 		}
-	}
-	if dashboardRow < 0 {
-		t.Fatal("expected the /dashboard command to be printed")
-	}
-	continuation := lines[dashboardRow+1]
-	if !strings.Contains(continuation, "usage") {
-		t.Errorf("expected the /dashboard description to continue, got %q", continuation)
-	}
-	if text := string([]rune(continuation)[textColumn:]); !strings.HasPrefix(text, strings.Repeat(" ", 30)) {
-		t.Errorf("continuation should align under the description column, got %q", text)
 	}
 }
 
-func TestPrintWelcomeMessageDrawsTheLogoOnATerminal(t *testing.T) {
+func TestPrintWelcomeMessageFramesHelpOnTerminal(t *testing.T) {
 	master, slave, err := ptytest.Open()
 	if err != nil {
 		t.Skipf("cannot allocate a pseudo-terminal: %v", err)
@@ -167,18 +133,12 @@ func TestPrintWelcomeMessageDrawsTheLogoOnATerminal(t *testing.T) {
 		t.Fatalf("capturing /help output failed: %v", err)
 	}
 
-	if !strings.Contains(got, "▀") {
-		t.Error("expected /help on a terminal to draw the logo")
-	}
 	if !strings.Contains(got, "DuckDuckGo AI Chat CLI - Help") {
 		t.Error("expected /help to still print its title")
 	}
-	if strings.Index(got, "▀") > strings.Index(got, "DuckDuckGo AI Chat CLI - Help") {
-		t.Error("expected the logo to appear above the help title")
-	}
 	plain := strings.ReplaceAll(sgrSequence.ReplaceAllString(got, ""), "\r\n", "\n")
-	if !strings.Contains(plain, "\n\nDuckDuckGo AI Chat CLI - Help") {
-		t.Error("expected exactly one blank line between the logo and the help title")
+	if !strings.Contains(plain, "╭─ DuckDuckGo AI Chat CLI - Help") {
+		t.Error("expected /help title to be framed on a terminal")
 	}
 }
 
@@ -197,9 +157,6 @@ func TestPrintWelcomeMessageStaysPlainWhenRedirected(t *testing.T) {
 	PrintWelcomeMessage()
 
 	got := out.String()
-	if strings.Contains(got, "▀") {
-		t.Error("redirected /help output must not contain half blocks")
-	}
 	if strings.Contains(got, "\x1b[38;2;") {
 		t.Error("redirected /help output must not contain truecolor sequences")
 	}
@@ -240,14 +197,13 @@ func TestPrintWelcomeMessageStacksOnANarrowTerminal(t *testing.T) {
 	}
 
 	plain := strings.ReplaceAll(sgrSequence.ReplaceAllString(got, ""), "\r\n", "\n")
-	for _, want := range []string{"DuckDuckGo AI Chat CLI - Help", "Core Commands:", "/clear", "Context Commands:", "Productivity Commands:", "API Documentation:"} {
+	for _, want := range []string{"DuckDuckGo AI Chat CLI", "Core Commands:", "/clear", "Context Commands:", "Productivity Commands:", "API Documentation:"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("stacked help is missing %q", want)
 		}
 	}
 
-	// Stacked puts the logo above the text, but neither may run past the
-	// terminal or the terminal will hard-wrap it and destroy the layout.
+	// The narrow panel must wrap content without exceeding the terminal width.
 	for i, line := range strings.Split(plain, "\n") {
 		if width := utf8.RuneCountInString(line); width > 30 {
 			t.Errorf("line %d is %d cells wide, want at most 30: %q", i, width, line)

@@ -483,11 +483,11 @@ func TestFetchContextKeepsRateLimitWhenBrowserRelayFails(t *testing.T) {
 				Request:    req,
 			}, nil
 		})},
-		BrowserRetry: &fakeBrowserRetry{opened: true, err: errors.New("relay extension unavailable")},
+		BrowserRetry: &fakeBrowserRetry{opened: true, err: errors.New("browser relay unavailable")},
 	}
 
 	_, err := chat.FetchContext(context.Background(), "hello")
-	if !errors.Is(err, ErrRateLimited) || !strings.Contains(err.Error(), "relay extension unavailable") {
+	if !errors.Is(err, ErrRateLimited) || !strings.Contains(err.Error(), "browser relay unavailable") {
 		t.Fatalf("FetchContext() error = %v, want original 429 and relay failure detail", err)
 	}
 	if got := requests.Load(); got != 2 {

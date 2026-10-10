@@ -11,6 +11,8 @@ const (
 	ThemeOfficial ThemeID = "official"
 	ThemeRetro    ThemeID = "retro"
 	ThemeMono     ThemeID = "mono"
+	ThemeDracula  ThemeID = "dracula"
+	ThemeNord     ThemeID = "nord"
 )
 
 // Palette defines colors by meaning so every CLI surface can share one theme.
@@ -24,6 +26,7 @@ type Palette struct {
 	Warning    string
 	Error      string
 	Foreground string
+	Surface    string
 }
 
 // Theme contains the palette and a terminal-font recommendation.
@@ -49,6 +52,7 @@ var availableThemes = []Theme{
 			Warning:    "#FDC303",
 			Error:      "#FC4A03",
 			Foreground: "#FFFFFF",
+			Surface:    "#292929",
 		},
 	},
 	{
@@ -65,6 +69,7 @@ var availableThemes = []Theme{
 			Warning:    "#CE9178",
 			Error:      "#E92888",
 			Foreground: "#EAEAEA",
+			Surface:    "#252526",
 		},
 	},
 	{
@@ -81,6 +86,41 @@ var availableThemes = []Theme{
 			Warning:    "#EAEAEA",
 			Error:      "#FFFFFF",
 			Foreground: "#EAEAEA",
+			Surface:    "#1E1E1E",
+		},
+	},
+	{
+		ID:       ThemeDracula,
+		Label:    "dracula",
+		FontHint: "Terminal default monospace",
+		Colors: Palette{
+			User:       "#FF79C6",
+			Assistant:  "#F8F8F2",
+			Accent:     "#BD93F9",
+			Info:       "#8BE9FD",
+			Muted:      "#6272A4",
+			Success:    "#50FA7B",
+			Warning:    "#FFB86C",
+			Error:      "#FF5555",
+			Foreground: "#F8F8F2",
+			Surface:    "#343746",
+		},
+	},
+	{
+		ID:       ThemeNord,
+		Label:    "nord",
+		FontHint: "Terminal default monospace",
+		Colors: Palette{
+			User:       "#88C0D0",
+			Assistant:  "#ECEFF4",
+			Accent:     "#81A1C1",
+			Info:       "#5E81AC",
+			Muted:      "#D8DEE9",
+			Success:    "#A3BE8C",
+			Warning:    "#EBCB8B",
+			Error:      "#BF616A",
+			Foreground: "#ECEFF4",
+			Surface:    "#3B4252",
 		},
 	},
 }

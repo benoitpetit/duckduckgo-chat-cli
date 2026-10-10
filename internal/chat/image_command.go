@@ -142,6 +142,9 @@ func HandleImageCommand(c *Chat, idea string, cfg *config.Config) {
 	err := runImageCommand(idea, terminalImagePromptSurvey{}, func(prompt string) {
 		withNativeImageGeneration(c, func() {
 			logImagePrompt(prompt)
+			if c.Analytics != nil {
+				c.Analytics.RecordImageGenerationRequest()
+			}
 			ProcessInput(c, prompt, cfg)
 		})
 	})

@@ -1792,19 +1792,8 @@ type CommandHelp struct {
 }
 
 func PrintWelcomeMessage() {
-	// Everything is laid out for the width PrintLogoBeside will actually give
-	// it on this writer, so the layout cannot disagree with what gets drawn.
-	textWidth := ui.TextWidth(color.Output)
-
-	// Build the whole help as text lines so it can sit beside the logo; the
-	// lines that do not fit fall below the image automatically.
-	separatorWidth := textWidth
-	if separatorWidth > 33 {
-		separatorWidth = 33
-	}
-
-	lines := wrapHelpText("DuckDuckGo AI Chat CLI - Help", textWidth)
-	lines = append(lines, strings.Repeat("-", separatorWidth))
+	textWidth := max(20, ui.TextWidth(color.Output)-4)
+	lines := make([]ui.PanelLine, 0)
 
 	// Get commands from centralized registry
 	commandsByCategory := command.GetCommandsByCategory()
@@ -1827,16 +1816,19 @@ func PrintWelcomeMessage() {
 	}
 
 	for _, section := range sections {
-		lines = append(lines, "", ui.AIColor.Sprint(section.title))
-		lines = append(lines, renderCommandsTable(section.commands, textWidth)...)
+		lines = append(lines,
+			ui.PanelLine{{Text: "", Style: ui.PanelForeground}},
+			ui.PanelLine{{Text: section.title, Style: ui.PanelAccent}},
+		)
+		lines = append(lines, renderCommandPanelLines(section.commands, textWidth)...)
 	}
 
-	lines = append(lines, "")
+	lines = append(lines, ui.PanelLine{{Text: "", Style: ui.PanelForeground}})
 	for _, line := range wrapHelpText("Note: You can add '-- <your request>' after /search, /file, /url, or /library load to make an immediate request about the context.", textWidth) {
-		lines = append(lines, ui.WarningColor.Sprint(line))
+		lines = append(lines, ui.PanelLine{{Text: line, Style: ui.PanelWarning}})
 	}
 
-	_ = ui.PrintLogoBeside(color.Output, lines)
+	ui.PrintStyledPanel("DuckDuckGo AI Chat CLI - Help", lines)
 }
 
 // helpRows copies a command category into table rows, falling back to the
@@ -1864,6 +1856,23 @@ func printCommandsTable(commands []CommandHelp) {
 // the themed command and description colours as ANSI sequences so the caller
 // can place them next to the logo or print them on their own.
 func renderCommandsTable(commands []CommandHelp, width int) []string {
+	styledLines := renderCommandPanelLines(commands, width)
+	lines := make([]string, 0, len(styledLines))
+	for _, line := range styledLines {
+		var rendered strings.Builder
+		for _, span := range line {
+			if span.Style == ui.PanelAccent {
+				rendered.WriteString(ui.AccentColor.Sprint(span.Text))
+			} else {
+				rendered.WriteString(ui.WhiteColor.Sprint(span.Text))
+			}
+		}
+		lines = append(lines, rendered.String())
+	}
+	return lines
+}
+
+func renderCommandPanelLines(commands []CommandHelp, width int) []ui.PanelLine {
 	const indent = 2
 	const columnGap = 2
 	const minDescriptionWidth = 24
@@ -1895,14 +1904,14 @@ func renderCommandsTable(commands []CommandHelp, width int) []string {
 		descriptionWidth = width - indent - maxLength - columnGap
 	}
 
-	var lines []string
+	var lines []ui.PanelLine
 	for _, cmd := range commands {
 		if !anyColumn || !fitsColumn(cmd.Command) {
 			for _, line := range wrapHelpText(cmd.Command, width-indent) {
-				lines = append(lines, ui.AccentColor.Sprint("  "+line))
+				lines = append(lines, ui.PanelLine{{Text: "  " + line, Style: ui.PanelAccent}})
 			}
 			for _, line := range wrapHelpText(cmd.Description, descriptionWidth) {
-				lines = append(lines, ui.WhiteColor.Sprint("    "+line))
+				lines = append(lines, ui.PanelLine{{Text: "    " + line, Style: ui.PanelForeground}})
 			}
 			continue
 		}
@@ -1912,13 +1921,15 @@ func renderCommandsTable(commands []CommandHelp, width int) []string {
 			wrapped = []string{""}
 		}
 
-		head := ui.AccentColor.Sprint(fmt.Sprintf("  %-*s", maxLength, cmd.Command)) +
-			ui.WhiteColor.Sprint("  "+wrapped[0])
+		head := ui.PanelLine{
+			{Text: fmt.Sprintf("  %-*s", maxLength, cmd.Command), Style: ui.PanelAccent},
+			{Text: "  " + wrapped[0], Style: ui.PanelForeground},
+		}
 		lines = append(lines, head)
 
 		indentPad := strings.Repeat(" ", indent+maxLength+columnGap)
 		for _, line := range wrapped[1:] {
-			lines = append(lines, ui.WhiteColor.Sprint(indentPad+line))
+			lines = append(lines, ui.PanelLine{{Text: indentPad + line, Style: ui.PanelForeground}})
 		}
 	}
 
@@ -2267,10 +2278,17 @@ func (c *Chat) SaveCurrentSession() error {
 	return c.HistoryManager.SaveSession(session)
 }
 
-// ShowSessionStats displays analytics at the end of the session
+// ShowSessionStats displays final analytics at the end of the session.
 func (c *Chat) ShowSessionStats() {
 	if c.Analytics != nil {
 		c.Analytics.DisplayStatistics()
+	}
+}
+
+// ShowLiveSessionStats displays current analytics without ending the session.
+func (c *Chat) ShowLiveSessionStats() {
+	if c.Analytics != nil {
+		c.Analytics.DisplayCurrentStatistics()
 	}
 }
 

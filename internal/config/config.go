@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"duckduckgo-chat-cli/internal/interfaces"
 	"duckduckgo-chat-cli/internal/models"
@@ -17,6 +18,9 @@ import (
 	"duckduckgo-chat-cli/internal/ui"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/AlecAivazis/survey/v2/terminal"
+	"github.com/charmbracelet/x/ansi"
+	"golang.org/x/term"
 )
 
 type SearchConfig struct {
@@ -391,65 +395,80 @@ func AcceptTermsOfService(cfg *Config, askOptions ...survey.AskOpt) bool {
 
 func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 	for {
+		frameStatus := "Off"
+		if cfg.Appearance.FrameResponses {
+			frameStatus = "On"
+		}
+		themeLabel := ui.CurrentTheme().Label
+		summary := []string{
+			fmt.Sprintf("Default model: %s", cfg.DefaultModel),
+			fmt.Sprintf("Theme: %s", themeLabel),
+			fmt.Sprintf("Response frame: %s", frameStatus),
+			fmt.Sprintf("Text shortcut: %s", cfg.Tray.TextShortcut),
+			fmt.Sprintf("Voice shortcut: %s", cfg.Tray.VoiceShortcut),
+			"",
+			"Settings are grouped by area. Changes are saved as you go.",
+		}
+
 		choice := ""
 		prompt := &survey.Select{
-			Message: "DuckDuckGo Chat CLI Configuration",
-			Help:    "Current settings are shown as defaults. Choose an option to edit.",
+			Message: "Choose a setting",
+			Help:    "",
 			Options: []string{
-				"Theme",
-				"Response Frame",
-				"Chat Shortcuts",
-				"Default Model",
-				"Export Directory",
-				"Search Settings",
-				"Show Commands Menu",
-				"Global Prompt",
-				"Long Input Protection",
-				"Library Settings",
-				"API Settings",
-				"Dashboard Settings",
-				"Duck.ai Native Tools",
-				"Audio Agent Speak",
-				"Prompt Management",
+				"Appearance · Theme",
+				"Appearance · Response frame",
+				"Chat · Default model",
+				"Chat · Shortcuts",
+				"Chat · Global prompt",
+				"Chat · Long input protection",
+				"Chat · Show commands menu",
+				"Search · Search settings",
+				"Search · Library settings",
+				"Tools · Duck.ai native tools",
+				"Prompts · Prompt management",
+				"Services · API settings",
+				"Services · Dashboard settings",
+				"Services · Audio agent speak",
+				"Files · Export directory",
 				"Back to chat",
 			},
 			Default: "Back to chat",
 		}
-		if err := survey.AskOne(prompt, &choice); err != nil {
+		if err := askFramedConfigChoice(prompt, &choice, summary); err != nil {
 			ui.Warningln("Configuration menu canceled.")
 			return
 		}
 
 		switch choice {
-		case "Theme":
+		case "Appearance · Theme":
 			handleThemeSettings(cfg)
-		case "Response Frame":
+		case "Appearance · Response frame":
 			handleResponseFrameSettings(cfg)
-		case "Chat Shortcuts":
+		case "Chat · Shortcuts":
 			HandleShortcutConfiguration(cfg)
-		case "Default Model":
+		case "Chat · Default model":
 			handleModelChange(cfg, chatSession)
-		case "Export Directory":
+		case "Files · Export directory":
 			handleExportDirChange(cfg)
-		case "Search Settings":
+		case "Search · Search settings":
 			handleSearchSettings(cfg)
-		case "Show Commands Menu":
+		case "Chat · Show commands menu":
 			handleShowMenuChange(cfg)
-		case "Global Prompt":
+		case "Chat · Global prompt":
 			handleGlobalPromptChange(cfg)
-		case "Long Input Protection":
+		case "Chat · Long input protection":
 			handleLongInputProtectionChange(cfg)
-		case "Library Settings":
+		case "Search · Library settings":
 			handleLibrarySettings(cfg)
-		case "API Settings":
+		case "Services · API settings":
 			handleAPISettings(cfg)
-		case "Dashboard Settings":
+		case "Services · Dashboard settings":
 			handleDashboardSettings(cfg)
-		case "Duck.ai Native Tools":
+		case "Tools · Duck.ai native tools":
 			handleNativeToolsChange(cfg, chatSession)
-		case "Audio Agent Speak":
+		case "Services · Audio agent speak":
 			handleSpeakSettings(cfg)
-		case "Prompt Management":
+		case "Prompts · Prompt management":
 			HandlePromptManagement(cfg)
 		case "Back to chat", "":
 			return
@@ -457,6 +476,162 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			ui.Errorln("Invalid choice. Please try again.")
 		}
 	}
+}
+
+// askFramedConfigChoice temporarily applies a framed survey template to the
+// configuration selector. Survey exposes its templates as package globals, so
+// restore both immediately after this prompt to leave other prompts untouched.
+func askFramedConfigChoice(prompt *survey.Select, choice *string, summary []string) error {
+	previousSelectTemplate := survey.SelectQuestionTemplate
+	previousMultiSelectTemplate := survey.MultiSelectQuestionTemplate
+	previousHelp := prompt.Help
+	menuTitle := "Configuration"
+	if prompt.Message != "" && prompt.Message != "Choose a setting" {
+		label := strings.TrimSuffix(strings.TrimPrefix(prompt.Message, "Choose "), ":")
+		menuTitle += " · " + label
+	}
+	selectTemplate, offsetTemplate, width := configurationSelectTemplates(menuTitle)
+	frameSummary := append([]string(nil), summary...)
+	if previousHelp != "" {
+		if len(frameSummary) > 0 {
+			frameSummary = append(frameSummary, "")
+		}
+		frameSummary = append(frameSummary, previousHelp)
+	}
+	prompt.Help = configurationFrameLines(frameSummary, width)
+	survey.SelectQuestionTemplate = selectTemplate
+	survey.MultiSelectQuestionTemplate = offsetTemplate
+	defer func() {
+		survey.SelectQuestionTemplate = previousSelectTemplate
+		survey.MultiSelectQuestionTemplate = previousMultiSelectTemplate
+		prompt.Help = previousHelp
+	}()
+
+	if err := survey.AskOne(prompt, choice); err != nil {
+		return err
+	}
+	clearConfigurationAnswer(prompt, choice, width)
+	return nil
+}
+
+// Survey renders a final answer panel after a selection. Remove that panel so
+// the configuration frame is visible only while the selector is open.
+func clearConfigurationAnswer(prompt *survey.Select, choice *string, width int) {
+	if !term.IsTerminal(int(os.Stdout.Fd())) || choice == nil {
+		return
+	}
+
+	answer := fmt.Sprintf("%s: %s", prompt.Message, *choice)
+	answerRows := max(1, (ansi.StringWidth(answer)+width-5)/(width-4))
+	helpRows := 0
+	if prompt.Help != "" {
+		helpRows = len(strings.Split(strings.TrimSuffix(prompt.Help, "\n"), "\n"))
+	}
+	rows := helpRows + answerRows + 2 // top and bottom borders
+
+	cursor := &terminal.Cursor{Out: os.Stdout}
+	if err := cursor.Up(1); err != nil {
+		return
+	}
+	for row := 0; row < rows; row++ {
+		if err := cursor.HorizontalAbsolute(0); err != nil {
+			return
+		}
+		if err := terminal.EraseLine(os.Stdout, terminal.ERASE_LINE_ALL); err != nil {
+			return
+		}
+		if row+1 < rows {
+			if err := cursor.Up(1); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func configurationSelectTemplates(title string) (string, string, int) {
+	terminalWidth := 80
+	cursorWidth := 10000
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		if columns, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && columns > 0 {
+			terminalWidth = columns
+			cursorWidth = columns
+		}
+	}
+	width := terminalWidth
+	if width > 112 {
+		width = 112
+	}
+	if width < 24 {
+		width = 24
+	}
+	labelWidth := max(10, width-6)
+	if ansi.StringWidth(title) > width-6 {
+		title = ansi.Truncate(title, max(1, width-6), "…")
+	}
+	topTitle := "─ " + title + " "
+	top := ui.MutedColor.Sprint("╭─ ") + ui.AccentColor.Sprint(title) + ui.MutedColor.Sprint(" "+strings.Repeat("─", max(0, width-utf8.RuneCountInString(topTitle)-2))+"╮")
+	bottom := ui.MutedColor.Sprint("╰" + strings.Repeat("─", width-2) + "╯")
+	vertical := ui.MutedColor.Sprint("│")
+	focus := ui.AccentColor.Sprint("›")
+
+	selectTemplate := `
+{{- define "option"}}
+{{- printf "%s " "` + vertical + `"}}
+{{- if eq .SelectedIndex .CurrentIndex}}{{printf "%s " "` + focus + `"}}{{else}}  {{end}}
+{{- printf "%-*s" ` + strconv.Itoa(labelWidth) + ` .CurrentOpt.Value}}
+{{- printf " %s\n" "` + vertical + `"}}
+{{- end}}
+{{- printf "%s\n" "` + top + `"}}
+{{- printf "%s" .Help}}
+{{- if .ShowAnswer}}
+{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` (printf "%s: %s" .Message .Answer) "` + vertical + `"}}
+{{- printf "%s\n" "` + bottom + `"}}
+{{- else}}
+{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` (printf "%s%s" .Message .FilterMessage) "` + vertical + `"}}
+{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` "↑/↓ move · Enter select · type to filter · ? for help" "` + vertical + `"}}
+{{- if .ShowHelp}}{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` "Use ↑/↓ to move, Enter to edit, or type to filter." "` + vertical + `"}}{{end}}
+{{- range $ix, $option := .PageEntries}}{{template "option" $.IterateOption $ix $option}}{{end}}
+{{- printf "%s\n" "` + bottom + `"}}
+{{- end}}`
+
+	// RenderWithCursorOffset in survey v2.3.7 calculates the focus row with
+	// MultiSelectQuestionTemplate even for Select prompts. Keep its option row
+	// width in step with the framed row above. The selected offset row includes
+	// one synthetic wrap to account for the footer line.
+	offsetPadding := strings.Repeat(" ", cursorWidth+1)
+	offsetTemplate := `{{- define "option"}}{{if eq .SelectedIndex .CurrentIndex}}{{printf "%s" "` + offsetPadding + `"}}{{else}}│  {{printf "%-*s" ` + strconv.Itoa(labelWidth) + ` .CurrentOpt.Value}} │{{end}}{{end}}`
+	return selectTemplate, offsetTemplate, width
+}
+
+func configurationFrameLines(lines []string, width int) string {
+	var framed strings.Builder
+	for _, part := range configurationWrappedLines(lines, width) {
+		contentWidth := max(1, width-4)
+		content := styleConfigurationSummary(part)
+		padding := max(0, contentWidth-ansi.StringWidth(content))
+		fmt.Fprintf(&framed, "%s %s%s %s\n", ui.MutedColor.Sprint("│"), content, strings.Repeat(" ", padding), ui.MutedColor.Sprint("│"))
+	}
+	return framed.String()
+}
+
+func styleConfigurationSummary(line string) string {
+	label, value, found := strings.Cut(line, ": ")
+	if !found {
+		return ui.WhiteColor.Sprint(line)
+	}
+	return ui.AccentColor.Sprint(label+": ") + ui.WhiteColor.Sprint(value)
+}
+
+func configurationWrappedLines(lines []string, width int) []string {
+	var wrappedLines []string
+	for _, line := range lines {
+		wrapped := []string{line}
+		if line != "" && width > 4 {
+			wrapped = strings.Split(ansi.Hardwrap(line, width-4, true), "\n")
+		}
+		wrappedLines = append(wrappedLines, wrapped...)
+	}
+	return wrappedLines
 }
 
 func handleResponseFrameSettings(cfg *Config) {
@@ -555,6 +730,10 @@ func handleThemeSettings(cfg *Config) {
 			description = "Aurelia inspired"
 		case ui.ThemeMono:
 			description = "Grayscale"
+		case ui.ThemeDracula:
+			description = "Dracula classic palette"
+		case ui.ThemeNord:
+			description = "Arctic blue palette"
 		}
 		label := fmt.Sprintf("%s - %s (font: %s)", theme.Label, description, theme.FontHint)
 		options = append(options, themeOption{theme: theme, label: label})
@@ -574,7 +753,7 @@ func handleThemeSettings(cfg *Config) {
 		Options: labels,
 		Default: defaultOption,
 	}
-	if err := survey.AskOne(prompt, &choice); err != nil {
+	if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
 		ui.Warningln("Theme selection canceled.")
 		return
 	}
@@ -625,7 +804,7 @@ func handleSpeakSettings(cfg *Config) {
 			},
 			Default: "Back",
 		}
-		if err := survey.AskOne(prompt, &choice); err != nil {
+		if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
 			ui.Warningln("Audio Agent Speak settings canceled.")
 			return
 		}
@@ -652,7 +831,7 @@ func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {
 		Options: modelOptions,
 		Default: cfg.DefaultModel,
 	}
-	if err := survey.AskOne(prompt, &model); err != nil {
+	if err := askFramedConfigChoice(prompt, &model, nil); err != nil {
 		ui.Warningln("Model selection canceled.")
 		return
 	}
@@ -854,7 +1033,7 @@ func handleLibrarySettings(cfg *Config) {
 		},
 		Default: "Back",
 	}
-	if err := survey.AskOne(prompt, &choice); err != nil {
+	if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
 		ui.Warningln("Library settings canceled.")
 		return
 	}
@@ -889,7 +1068,7 @@ func handleAPISettings(cfg *Config) {
 			},
 			Default: "Back",
 		}
-		if err := survey.AskOne(prompt, &choice); err != nil {
+		if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
 			ui.Warningln("API settings canceled.")
 			return
 		}
@@ -939,7 +1118,7 @@ func handleDashboardSettings(cfg *Config) {
 			},
 			Default: "Back",
 		}
-		if err := survey.AskOne(prompt, &choice); err != nil {
+		if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
 			ui.Warningln("Dashboard settings canceled.")
 			return
 		}
@@ -1173,7 +1352,7 @@ func HandlePromptManagement(cfg *Config) {
 			Options: []string{"List Prompts", "Add Prompt", "Edit Prompt", "Remove Prompt", "Back"},
 			Default: "Back",
 		}
-		if err := survey.AskOne(prompt, &choice); err != nil {
+		if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
 			ui.Warningln("Prompt management canceled.")
 			return
 		}
@@ -1219,7 +1398,8 @@ func HandlePromptManagement(cfg *Config) {
 				continue
 			}
 			name := ""
-			if err := survey.AskOne(&survey.Select{Message: "Select prompt to edit:", Options: names}, &name); err != nil {
+			prompt := &survey.Select{Message: "Select prompt to edit:", Options: names}
+			if err := askFramedConfigChoice(prompt, &name, nil); err != nil {
 				return
 			}
 			oldContent, _ := GetPrompt(cfg, name)
@@ -1240,7 +1420,8 @@ func HandlePromptManagement(cfg *Config) {
 				continue
 			}
 			name := ""
-			if err := survey.AskOne(&survey.Select{Message: "Select prompt to remove:", Options: names}, &name); err != nil {
+			prompt := &survey.Select{Message: "Select prompt to remove:", Options: names}
+			if err := askFramedConfigChoice(prompt, &name, nil); err != nil {
 				return
 			}
 			err := RemovePrompt(cfg, name)

@@ -66,9 +66,10 @@ type ChatAnalytics struct {
 	CurrentModel string `json:"current_model"`
 
 	// Files and URLs
-	FilesProcessed    int `json:"files_processed"`
-	URLsProcessed     int `json:"urls_processed"`
-	SearchesPerformed int `json:"searches_performed"`
+	FilesProcessed          int `json:"files_processed"`
+	URLsProcessed           int `json:"urls_processed"`
+	SearchesPerformed       int `json:"searches_performed"`
+	ImageGenerationRequests int `json:"image_generation_requests"`
 
 	byModel map[string]ModelMetrics
 	now     func() time.Time
@@ -291,6 +292,13 @@ func (ca *ChatAnalytics) RecordSearchPerformed() {
 	ca.SearchesPerformed++
 }
 
+// RecordImageGenerationRequest records a prompt sent with image generation enabled.
+func (ca *ChatAnalytics) RecordImageGenerationRequest() {
+	ca.mutex.Lock()
+	defer ca.mutex.Unlock()
+	ca.ImageGenerationRequests++
+}
+
 func (ca *ChatAnalytics) RecordModelChange(newModel string) {
 	ca.mutex.Lock()
 	defer ca.mutex.Unlock()
@@ -308,99 +316,98 @@ func (ca *ChatAnalytics) EndSession() {
 	ca.SessionDuration = ca.SessionEndTime.Sub(ca.SessionStartTime)
 }
 
-// Display comprehensive statistics
+// DisplayStatistics renders a final analytics summary and closes the session timer.
 func (ca *ChatAnalytics) DisplayStatistics() {
-	ca.EndSession()
+	ca.displayStatistics(true)
+}
+
+// DisplayCurrentStatistics renders a live summary without ending the session.
+func (ca *ChatAnalytics) DisplayCurrentStatistics() {
+	ca.displayStatistics(false)
+}
+
+func (ca *ChatAnalytics) displayStatistics(finalize bool) {
+	if finalize {
+		ca.EndSession()
+	}
 
 	ca.mutex.RLock()
-	defer ca.mutex.RUnlock()
-
-	ui.Systemln("\n" + strings.Repeat("-", 50))
-	ui.Systemln("SESSION ANALYTICS SUMMARY")
-	ui.Systemln(strings.Repeat("-", 50))
-
-	// Session Overview
-	ui.AIln("Session Overview:")
-	ui.Whiteln("  Duration: %s", formatDuration(ca.SessionDuration))
-	ui.Whiteln("  Messages: %d total (%d user, %d AI)", ca.MessagesTotal, ca.UserMessages, ca.AssistantMessages)
-	ui.Whiteln("  Estimated Tokens: ~%d total (user ~%d, assistant ~%d, context ~%d)", ca.TotalTokensEstimate, ca.UserTokensEstimate, ca.AssistantTokensEstimate, ca.ContextTokensEstimate)
+	duration := ca.SessionDuration
+	if !finalize && ca.SessionEndTime.IsZero() && !ca.SessionStartTime.IsZero() {
+		duration = ca.now().Sub(ca.SessionStartTime)
+	}
+	lines := []string{
+		"Session Overview",
+		fmt.Sprintf("  Duration: %s", formatDuration(duration)),
+		fmt.Sprintf("  Messages: %d total (%d user, %d assistant)", ca.MessagesTotal, ca.UserMessages, ca.AssistantMessages),
+		fmt.Sprintf("  Estimated Tokens: ~%d total (user ~%d, assistant ~%d, context ~%d)", ca.TotalTokensEstimate, ca.UserTokensEstimate, ca.AssistantTokensEstimate, ca.ContextTokensEstimate),
+	}
 	if len(ca.DailyUserMessages) > 0 {
-		ui.AIln("\nDaily User Activity:")
+		lines = append(lines, "", "Daily User Activity:")
 		dates := make([]string, 0, len(ca.DailyUserMessages))
 		for date := range ca.DailyUserMessages {
 			dates = append(dates, date)
 		}
 		sort.Strings(dates)
 		for _, date := range dates {
-			ui.Whiteln("  %s: %d messages", date, ca.DailyUserMessages[date])
+			lines = append(lines, fmt.Sprintf("  %s: %d messages", date, ca.DailyUserMessages[date]))
 		}
 	}
-
-	// Chat Performance (CLI interactions)
 	if ca.ChatInteractionsTotal > 0 {
-		ui.AIln("\nChat Performance:")
-		ui.Whiteln("  Interactions: %d total (%d successful, %d failed)", ca.ChatInteractionsTotal, ca.ChatInteractionsSuccessful, ca.ChatInteractionsFailed)
-		ui.Whiteln("  Success Rate: %.1f%%", ca.getChatSuccessRate())
-		ui.Whiteln("  Average Response Time: %s", formatDuration(ca.AverageChatResponseTime))
-
-		// Error Details (only if there are errors)
+		lines = append(lines, "", "Chat Performance:",
+			fmt.Sprintf("  Interactions: %d total (%d successful, %d failed)", ca.ChatInteractionsTotal, ca.ChatInteractionsSuccessful, ca.ChatInteractionsFailed),
+			fmt.Sprintf("  Success rate: %.1f%%", ca.getChatSuccessRate()),
+			fmt.Sprintf("  Average response time: %s", formatDuration(ca.AverageChatResponseTime)))
 		if ca.ChatInteractionsFailed > 0 {
-			ui.Warningln("  Errors: 418=%d, 429=%d, Other=%d", ca.Error418Count, ca.Error429Count, ca.OtherErrorsCount)
+			lines = append(lines, fmt.Sprintf("  Errors: 418=%d, 429=%d, Other=%d", ca.Error418Count, ca.Error429Count, ca.OtherErrorsCount))
 		}
 	}
-
-	// REST API Usage (only if there were actual API calls)
 	if ca.APICallsTotal > 0 {
-		ui.AIln("\nREST API Usage:")
-		ui.Whiteln("  Calls: %d total (%d successful, %d failed)", ca.APICallsTotal, ca.APICallsSuccessful, ca.APICallsFailed)
-		ui.Whiteln("  Success Rate: %.1f%%", ca.getAPISuccessRate())
-		ui.Whiteln("  Average Response Time: %s", formatDuration(ca.AverageAPIResponseTime))
+		lines = append(lines, "", "REST API Usage:",
+			fmt.Sprintf("  Calls: %d total (%d successful, %d failed)", ca.APICallsTotal, ca.APICallsSuccessful, ca.APICallsFailed),
+			fmt.Sprintf("  Success rate: %.1f%%", ca.getAPISuccessRate()),
+			fmt.Sprintf("  Average response time: %s", formatDuration(ca.AverageAPIResponseTime)))
 	}
-
-	// Content Processing
-	if ca.FilesProcessed > 0 || ca.URLsProcessed > 0 || ca.SearchesPerformed > 0 {
-		ui.AIln("\nContent Processing:")
+	if ca.FilesProcessed > 0 || ca.URLsProcessed > 0 || ca.SearchesPerformed > 0 || ca.ImageGenerationRequests > 0 {
+		lines = append(lines, "", "Content Processing:")
 		if ca.FilesProcessed > 0 {
-			ui.Whiteln("  Files: %d", ca.FilesProcessed)
+			lines = append(lines, fmt.Sprintf("  Files: %d", ca.FilesProcessed))
 		}
 		if ca.URLsProcessed > 0 {
-			ui.Whiteln("  URLs: %d", ca.URLsProcessed)
+			lines = append(lines, fmt.Sprintf("  URLs: %d", ca.URLsProcessed))
 		}
 		if ca.SearchesPerformed > 0 {
-			ui.Whiteln("  Searches: %d", ca.SearchesPerformed)
+			lines = append(lines, fmt.Sprintf("  Searches: %d", ca.SearchesPerformed))
+		}
+		if ca.ImageGenerationRequests > 0 {
+			lines = append(lines, fmt.Sprintf("  Image generation requests: %d", ca.ImageGenerationRequests))
 		}
 	}
-
-	// Context Optimization
 	if ca.ContextOptimizations > 0 || ca.ContextCompressions > 0 {
-		ui.AIln("\nContext Intelligence:")
-		ui.Whiteln("  Optimizations: %d", ca.ContextOptimizations)
-		ui.Whiteln("  Compressions: %d", ca.ContextCompressions)
-		ui.Whiteln("  Bytes Saved: %s", formatBytes(ca.BytesSaved))
+		lines = append(lines, "", "Context Intelligence:",
+			fmt.Sprintf("  Optimizations: %d", ca.ContextOptimizations),
+			fmt.Sprintf("  Compressions: %d", ca.ContextCompressions),
+			fmt.Sprintf("  Bytes saved: %s", formatBytes(ca.BytesSaved)))
 	}
-
-	// Commands Usage
 	if len(ca.CommandsUsed) > 0 {
-		ui.AIln("\nCommands Used:")
+		lines = append(lines, "", "Commands Used:")
 		commands := make([]string, 0, len(ca.CommandsUsed))
 		for command := range ca.CommandsUsed {
 			commands = append(commands, command)
 		}
 		sort.Strings(commands)
 		for _, command := range commands {
-			ui.Whiteln("  %s: %d", command, ca.CommandsUsed[command])
+			lines = append(lines, fmt.Sprintf("  %s: %d", command, ca.CommandsUsed[command]))
 		}
 	}
-
-	// Model Info
 	if ca.CurrentModel != "" {
-		ui.AIln("\nModel: %s", ca.CurrentModel)
+		lines = append(lines, "", fmt.Sprintf("Model: %s", ca.CurrentModel))
 		if ca.ModelChanges > 0 {
-			ui.Whiteln("  Changes: %d", ca.ModelChanges)
+			lines = append(lines, fmt.Sprintf("  Changes: %d", ca.ModelChanges))
 		}
 	}
 	if len(ca.byModel) > 0 {
-		ui.AIln("\nModel Performance:")
+		lines = append(lines, "", "Model Performance:")
 		models := make([]string, 0, len(ca.byModel))
 		for model := range ca.byModel {
 			models = append(models, model)
@@ -408,21 +415,63 @@ func (ca *ChatAnalytics) DisplayStatistics() {
 		sort.Strings(models)
 		for _, model := range models {
 			metrics := ca.byModel[model]
-			successRate := float64(0)
+			successRate := 0.0
 			if metrics.Interactions > 0 {
 				successRate = float64(metrics.Successful) * 100 / float64(metrics.Interactions)
 			}
-			ui.Whiteln("  %s: %d requests, %.1f%% success, average %s", model, metrics.Interactions, successRate, formatDuration(metrics.AverageResponseTime))
+			lines = append(lines, fmt.Sprintf("  %s: %d requests, %.1f%% success, average %s", model, metrics.Interactions, successRate, formatDuration(metrics.AverageResponseTime)))
 		}
 	}
 	if ca.VQDRefreshCount > 0 || ca.HeaderRefreshCount > 0 {
-		ui.AIln("\nConnection Recovery:")
-		ui.Whiteln("  VQD refreshes: %d | Header refreshes: %d", ca.VQDRefreshCount, ca.HeaderRefreshCount)
+		lines = append(lines, "", "Connection Recovery:",
+			fmt.Sprintf("  VQD refreshes: %d | Header refreshes: %d", ca.VQDRefreshCount, ca.HeaderRefreshCount))
 	}
-	// Performance Summary
-	ui.AIln("\nPerformance Score: %.1f%% | Messages/min: %.1f", ca.getEfficiencyScore(), ca.getMessagesPerMinute())
+	efficiency := ca.getEfficiencyScore()
+	messagesPerMinute := 0.0
+	if duration.Minutes() > 0 {
+		messagesPerMinute = float64(ca.UserMessages) / duration.Minutes()
+	}
+	lines = append(lines, "", fmt.Sprintf("Performance: %.1f%% efficiency · %.1f messages/min", efficiency, messagesPerMinute))
+	ca.mutex.RUnlock()
 
-	ui.Systemln(strings.Repeat("-", 50) + "\n")
+	ui.PrintStyledPanel("Session Analytics", analyticsPanelLines(lines))
+}
+
+func analyticsPanelLines(lines []string) []ui.PanelLine {
+	sections := map[string]struct{}{
+		"Session Overview": {}, "Daily User Activity:": {}, "Chat Performance:": {},
+		"REST API Usage:": {}, "Content Processing:": {}, "Context Intelligence:": {},
+		"Commands Used:": {}, "Model Performance:": {}, "Connection Recovery:": {},
+	}
+	styled := make([]ui.PanelLine, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if _, ok := sections[trimmed]; ok {
+			styled = append(styled, ui.PanelLine{{Text: line, Style: ui.PanelAccent}})
+			continue
+		}
+
+		label, value, found := strings.Cut(line, ":")
+		if !found {
+			styled = append(styled, ui.PanelLine{{Text: line, Style: ui.PanelForeground}})
+			continue
+		}
+		value = strings.TrimPrefix(value, " ")
+		valueStyle := ui.PanelForeground
+		switch strings.ToLower(strings.TrimSpace(label)) {
+		case "success rate", "performance":
+			valueStyle = ui.PanelSuccess
+		case "errors":
+			valueStyle = ui.PanelError
+		case "model":
+			valueStyle = ui.PanelInfo
+		}
+		styled = append(styled, ui.PanelLine{
+			{Text: label + ":", Style: ui.PanelMuted},
+			{Text: " " + value, Style: valueStyle},
+		})
+	}
+	return styled
 }
 
 // Save analytics to file for future analysis

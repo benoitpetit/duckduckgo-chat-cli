@@ -10,7 +10,59 @@ import (
 	"duckduckgo-chat-cli/internal/chat"
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
+	"duckduckgo-chat-cli/internal/update"
 )
+
+func TestStartupHelpLineShowsOnlyCommonCommands(t *testing.T) {
+	if got, want := startupHelpLine(), "/help · /model · /search · /image · /exit"; got != want {
+		t.Fatalf("startup help line = %q, want %q", got, want)
+	}
+}
+
+func TestPromptExecutorDisplaysStartupUpdateOnlyAtSubmission(t *testing.T) {
+	updates := make(chan startupUpdateResult, 1)
+	updates <- startupUpdateResult{info: &update.UpdateInfo{
+		CurrentVersion: "dev",
+		LatestVersion:  "1.8.1",
+		NeedsUpdate:    true,
+	}}
+
+	var order []string
+	executePromptInputWithNotice("/help", updates, false,
+		func(message string) { order = append(order, "notice: "+message) },
+		func(input string) { order = append(order, "execute: "+input) },
+	)
+
+	if len(order) != 2 || !strings.HasPrefix(order[0], "notice: Update available: 1.8.1") || order[1] != "execute: /help" {
+		t.Fatalf("prompt submission order = %v, want update notice before executing /help", order)
+	}
+}
+
+func TestPromptExecutorDoesNotWaitForStartupUpdate(t *testing.T) {
+	updates := make(chan startupUpdateResult)
+	executed := false
+	executePromptInputWithNotice("/help", updates, false,
+		func(string) { t.Fatal("should not display a notice before the check completes") },
+		func(string) { executed = true },
+	)
+	if !executed {
+		t.Fatal("prompt command did not execute while update check was pending")
+	}
+}
+
+func TestStartupUpdateNoticeKeepsNormalOutputBrief(t *testing.T) {
+	result := startupUpdateResult{info: &update.UpdateInfo{
+		CurrentVersion: "dev",
+		LatestVersion:  "1.8.1",
+		NeedsUpdate:    true,
+	}}
+	if got, want := startupUpdateNotice(result, false), "Update available: 1.8.1. Run /update to update."; got != want {
+		t.Fatalf("normal startup notice = %q, want %q", got, want)
+	}
+	if got := startupUpdateNotice(result, true); !strings.Contains(got, "current: dev") || !strings.Contains(got, "'/update'") {
+		t.Fatalf("debug startup notice = %q, want version details and update command", got)
+	}
+}
 
 func TestShutdownFinalizesSessionBeforeExit(t *testing.T) {
 	var calls []string

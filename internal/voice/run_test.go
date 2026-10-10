@@ -87,6 +87,53 @@ func TestVoiceAssetsAreEmbedded(t *testing.T) {
 	}
 }
 
+func TestVoiceAssetsExposeSessionTerminationActions(t *testing.T) {
+	page, err := webAssets.ReadFile("webui/index.html")
+	if err != nil {
+		t.Fatalf("read voice page asset: %v", err)
+	}
+	for _, expected := range []string{
+		`id="termination-panel"`,
+		`id="retry-button"`,
+		`id="close-voice-button"`,
+		"We ended this conversation due to inactivity. Would you like to try again?",
+	} {
+		if !strings.Contains(string(page), expected) {
+			t.Errorf("voice page is missing session termination UI %q", expected)
+		}
+	}
+
+	script, err := webAssets.ReadFile("webui/app.js")
+	if err != nil {
+		t.Fatalf("read voice script asset: %v", err)
+	}
+	for _, expected := range []string{
+		`event.item.name === "session_terminated"`,
+		"handleSessionTermination()",
+		`request("/api/session-terminated"`,
+	} {
+		if !strings.Contains(string(script), expected) {
+			t.Errorf("voice script is missing session termination behavior %q", expected)
+		}
+	}
+	if strings.Contains(string(script), "SESSION_TERMINATION_DISPLAY_MS") {
+		t.Fatal("voice script still automatically closes after session termination")
+	}
+
+	style, err := webAssets.ReadFile("webui/style.css")
+	if err != nil {
+		t.Fatalf("read voice stylesheet asset: %v", err)
+	}
+	for _, expected := range []string{
+		".termination-panel",
+		".termination-actions",
+	} {
+		if !strings.Contains(string(style), expected) {
+			t.Errorf("voice stylesheet is missing session termination styling %q", expected)
+		}
+	}
+}
+
 func TestRunBindsLoopbackAndClosesOnStop(t *testing.T) {
 	session := &fakeBrowserSession{}
 	opener := &fakeBrowserOpener{opened: make(chan string, 1), session: session}

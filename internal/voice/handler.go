@@ -19,8 +19,10 @@ import (
 const maxSDPOfferBytes = 1 << 20
 
 type Dependencies struct {
-	Proof     ProofProvider
-	Signaling SignalingClient
+	Proof               ProofProvider
+	Signaling           SignalingClient
+	OnSessionTerminated func()
+	OnMinimize          func() error
 }
 
 type localHandler struct {
@@ -135,6 +137,37 @@ func (h *localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.ended.Do(func() { close(h.stop) })
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	case "/api/minimize":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		if !h.authorize(w, r) {
+			return
+		}
+		if h.deps.OnMinimize == nil {
+			http.Error(w, "window control unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := h.deps.OnMinimize(); err != nil {
+			http.Error(w, "could not minimize voice window", http.StatusConflict)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	case "/api/session-terminated":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		if !h.authorize(w, r) {
+			return
+		}
+		if h.deps.OnSessionTerminated != nil {
+			h.deps.OnSessionTerminated()
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNoContent)
 	default:

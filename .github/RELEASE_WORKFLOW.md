@@ -8,7 +8,7 @@ Before starting a release:
 1. Run `./scripts/pre-release-check.sh` with the Go version required by `go.mod`.
 2. Confirm that the working tree is clean and the target version is new.
 3. Dispatch **Actions → Build and Release → Run workflow** with a semantic
-   version such as `1.7.1`, or run `./scripts/release.sh 1.7.1` after pushing
+   version such as `1.9.0`, or run `./scripts/release.sh 1.9.0` after pushing
    `master` (requires authenticated GitHub CLI).
 
 The workflow validates the version, runs the full test and cross-build checks,

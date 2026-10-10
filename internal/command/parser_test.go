@@ -130,3 +130,35 @@ func TestSpeakCommandRegistrationAndValidation(t *testing.T) {
 		t.Fatal("ValidateChainedCommand(... && /speak) succeeded, want a non-chainable error")
 	}
 }
+
+func TestImageCommandRegistrationAndValidation(t *testing.T) {
+	registry := GetCommandRegistry()
+	info, ok := registry.Commands["/image"]
+	if !ok {
+		t.Fatal("/image is missing from the command registry")
+	}
+	if info.Usage != "/image [idea]" || info.RequiresArgs || info.IsChainable {
+		t.Fatalf("/image metadata = %+v, want optional idea and non-chainable", info)
+	}
+
+	for _, input := range []string{"/image", "/image a bird flying"} {
+		parsed, err := Parse(input)
+		if err != nil {
+			t.Fatalf("Parse(%q) error = %v", input, err)
+		}
+		if err := ValidateCommand(parsed.Commands[0]); err != nil {
+			t.Fatalf("ValidateCommand(%q) error = %v", input, err)
+		}
+	}
+	if IsChainableCommand("/image") {
+		t.Fatal("/image must not be chainable")
+	}
+
+	chain, err := Parse("/search birds && /image a bird flying")
+	if err != nil {
+		t.Fatalf("Parse(image chain) error = %v", err)
+	}
+	if err := ValidateChainedCommand(chain); err == nil {
+		t.Fatal("ValidateChainedCommand(image chain) succeeded, want a non-chainable error")
+	}
+}

@@ -3,7 +3,10 @@ package chat
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"unicode/utf8"
 
 	"duckduckgo-chat-cli/internal/ui"
 
@@ -17,33 +20,41 @@ import (
 // StreamRenderer renders complete Markdown blocks as they arrive, so content
 // already written to the terminal never needs to be moved or repainted.
 type StreamRenderer struct {
-	renderer  *glamour.TermRenderer
-	modelName string
+	renderer      *glamour.TermRenderer
+	firstRenderer *glamour.TermRenderer
+	frame         *responseFrame
+	modelName     string
 }
 
 // NewStreamRenderer creates a renderer using the active CLI theme and terminal
 // width. The width is taken from stdout so wrapping matches the visible output.
-func NewStreamRenderer(modelName string) (*StreamRenderer, error) {
-	width := getTerminalWidthSafe()
+func NewStreamRenderer(modelName string, frameResponses bool) (*StreamRenderer, error) {
+	return newStreamRendererAtWidth(modelName, frameResponses, getTerminalWidthSafe())
+}
+
+func newStreamRendererAtWidth(modelName string, frameResponses bool, width int) (*StreamRenderer, error) {
 	theme := ui.CurrentTheme()
 	customStyles := styles.DarkStyleConfig
 	customStyles.Document.StylePrimitive.Color = stringToPtr(theme.Colors.Foreground)
 	customStyles.Heading.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
 	customStyles.H1.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
-	customStyles.H2.StylePrimitive.Color = stringToPtr(theme.Colors.Info)
-	customStyles.H3.StylePrimitive.Color = stringToPtr(theme.Colors.Success)
-	customStyles.H4.StylePrimitive.Color = stringToPtr(theme.Colors.Warning)
+	customStyles.H2.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.H3.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
+	customStyles.H4.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
 	customStyles.H5.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
-	customStyles.H6.StylePrimitive.Color = stringToPtr(theme.Colors.Info)
+	customStyles.H6.StylePrimitive.Color = stringToPtr(theme.Colors.Accent)
 	customStyles.H1.StylePrimitive.Bold = boolToPtr(true)
 	customStyles.H2.StylePrimitive.Bold = boolToPtr(true)
 	customStyles.H3.StylePrimitive.Bold = boolToPtr(true)
 	customStyles.H4.StylePrimitive.Bold = boolToPtr(true)
+	customStyles.H5.StylePrimitive.Bold = boolToPtr(true)
+	customStyles.H6.StylePrimitive.Bold = boolToPtr(true)
 	customStyles.H1.Prefix = ""
 	customStyles.H2.Prefix = ""
 	customStyles.H3.Prefix = ""
 	customStyles.H4.Prefix = ""
 	customStyles.H5.Prefix = ""
+	customStyles.H6.Prefix = ""
 	customStyles.H1.Suffix = ""
 	customStyles.H1.BackgroundColor = nil
 	customStyles.HorizontalRule.Color = stringToPtr(theme.Colors.Muted)
@@ -56,27 +67,62 @@ func NewStreamRenderer(modelName string) (*StreamRenderer, error) {
 	customStyles.CodeBlock.Color = stringToPtr(theme.Colors.Foreground)
 	customStyles.CodeBlock.Chroma = themeChroma(theme.Colors)
 
+	var frame *responseFrame
+	if frameResponses && term.IsTerminal(int(os.Stdout.Fd())) {
+		frame = newResponseFrame(modelName, width)
+	}
 	wrapWidth := width - 4
 	if wrapWidth < 8 {
 		wrapWidth = 8
+	}
+	if frame != nil {
+		wrapWidth = frame.contentWidth
 	}
 	colorProfile := termenv.EnvColorProfile()
 	if !term.IsTerminal(int(os.Stdout.Fd())) || termenv.EnvNoColor() {
 		colorProfile = termenv.Ascii
 	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStyles(customStyles),
-		glamour.WithWordWrap(wrapWidth),
-		glamour.WithColorProfile(colorProfile),
-	)
+	newRenderer := func(width int) (*glamour.TermRenderer, error) {
+		return glamour.NewTermRenderer(
+			glamour.WithStyles(customStyles),
+			glamour.WithWordWrap(width),
+			glamour.WithColorProfile(colorProfile),
+		)
+	}
+	renderer, err := newRenderer(wrapWidth)
 	if err != nil {
 		return nil, err
 	}
+	var firstRenderer *glamour.TermRenderer
+	if frame == nil {
+		firstLineWidth := wrapWidth - utf8.RuneCountInString(modelName) - len(": ")
+		if firstLineWidth < 8 {
+			firstLineWidth = 8
+		}
+		firstRenderer, err = newRenderer(firstLineWidth)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &StreamRenderer{
-		renderer:  renderer,
-		modelName: modelName,
+		renderer:      renderer,
+		firstRenderer: firstRenderer,
+		frame:         frame,
+		modelName:     modelName,
 	}, nil
+}
+
+func renderMarkdownAtWidth(markdown, modelName string, width int, framed bool) {
+	renderer, err := newStreamRendererAtWidth(modelName, framed, width)
+	if err != nil {
+		fmt.Printf("%s: %s\n", modelName, markdown)
+		return
+	}
+	chunks := make(chan string, 1)
+	chunks <- markdown
+	close(chunks)
+	renderer.ProcessStream(chunks)
 }
 
 func themeChroma(palette ui.Palette) *ansi.Chroma {
@@ -117,41 +163,28 @@ func themeChroma(palette ui.Palette) *ansi.Chroma {
 }
 
 // RenderStream renders a streamed answer and returns the original Markdown.
-func RenderStream(stream <-chan string, modelName string, spinner *ui.Spinner) string {
-	renderer, err := NewStreamRenderer(modelName)
+func RenderStream(stream <-chan string, modelName string, spinner *ui.Spinner, frameResponses bool) string {
+	return RenderStreamWithView(stream, modelName, spinner, frameResponses, nil)
+}
+
+// RenderStreamWithView also repaints the in-progress answer on SIGWINCH when
+// the interactive prompt has temporarily handed control to its executor.
+func RenderStreamWithView(stream <-chan string, modelName string, spinner *ui.Spinner, frameResponses bool, view *ConversationView) string {
+	renderer, err := NewStreamRenderer(modelName, frameResponses)
 	if err != nil {
 		return renderStreamFallback(stream, modelName, spinner)
+	}
+	if view != nil && term.IsTerminal(int(os.Stdout.Fd())) {
+		return renderer.processResponsiveStream(stream, spinner, frameResponses, view)
 	}
 	return renderer.processStream(stream, spinner)
 }
 
-// ProcessStream progressively renders completed Markdown blocks.
-func (sr *StreamRenderer) ProcessStream(stream <-chan string) string {
-	return sr.processStream(stream, nil)
-}
+func (sr *StreamRenderer) processResponsiveStream(stream <-chan string, spinner *ui.Spinner, framed bool, view *ConversationView) string {
+	resize := make(chan os.Signal, 1)
+	signal.Notify(resize, syscall.SIGWINCH)
+	defer signal.Stop(resize)
 
-func (sr *StreamRenderer) processStream(stream <-chan string, spinner *ui.Spinner) string {
-	return processMarkdownStream(stream, sr.modelName, spinner, func(piece markdownPiece, previous bool) {
-		sr.renderPiece(piece, previous)
-	})
-}
-
-func (sr *StreamRenderer) renderPiece(piece markdownPiece, previous bool) {
-	rendered, err := sr.renderer.Render(piece.text)
-	if err != nil {
-		rendered = piece.text
-	}
-	writeRenderedPiece(rendered, previous, piece.continuing)
-}
-
-// renderStreamFallback keeps streaming usable if Glamour cannot initialize.
-func renderStreamFallback(stream <-chan string, modelName string, spinner *ui.Spinner) string {
-	return processMarkdownStream(stream, modelName, spinner, func(piece markdownPiece, previous bool) {
-		writeRenderedPiece(piece.text, previous, piece.continuing)
-	})
-}
-
-func processMarkdownStream(stream <-chan string, modelName string, spinner *ui.Spinner, renderPiece func(markdownPiece, bool)) string {
 	var content strings.Builder
 	var blocks markdownBlockStream
 	contentStarted := false
@@ -163,8 +196,114 @@ func processMarkdownStream(stream <-chan string, modelName string, spinner *ui.S
 		if spinner != nil {
 			spinner.Stop()
 		}
-		if modelName != "" {
-			ui.AccentColor.Printf("%s:\n", modelName)
+		if sr.frame == nil && sr.modelName != "" {
+			ui.AccentColor.Printf("%s: ", sr.modelName)
+		}
+		contentStarted = true
+	}
+	for stream != nil {
+		select {
+		case chunk, ok := <-stream:
+			if !ok {
+				stream = nil
+				break
+			}
+			content.WriteString(chunk)
+			for _, piece := range blocks.Push(chunk) {
+				startContent()
+				sr.renderPiece(piece, renderedAny)
+				renderedAny = true
+			}
+		case <-resize:
+			if spinner != nil {
+				spinner.ClearForRedraw()
+			}
+			width := getTerminalWidthSafe()
+			view.Redraw(width)
+			newRenderer, err := newStreamRendererAtWidth(sr.modelName, framed, width)
+			if err != nil {
+				continue
+			}
+			*sr = *newRenderer
+			blocks = markdownBlockStream{}
+			renderedAny = false
+			contentStarted = false
+			for _, piece := range blocks.Push(content.String()) {
+				startContent()
+				sr.renderPiece(piece, renderedAny)
+				renderedAny = true
+			}
+			if !renderedAny && spinner != nil {
+				spinner.ResumeAfterRedraw()
+			}
+		}
+	}
+	for _, piece := range blocks.Flush() {
+		startContent()
+		sr.renderPiece(piece, renderedAny)
+		renderedAny = true
+	}
+	if spinner != nil {
+		spinner.Stop()
+	}
+	if sr.frame != nil {
+		sr.frame.Close()
+	}
+	return content.String()
+}
+
+// ProcessStream progressively renders completed Markdown blocks.
+func (sr *StreamRenderer) ProcessStream(stream <-chan string) string {
+	return sr.processStream(stream, nil)
+}
+
+func (sr *StreamRenderer) processStream(stream <-chan string, spinner *ui.Spinner) string {
+	content := processMarkdownStream(stream, sr.modelName, spinner, sr.frame != nil, func(piece markdownPiece, previous bool) {
+		sr.renderPiece(piece, previous)
+	})
+	if sr.frame != nil {
+		sr.frame.Close()
+	}
+	return content
+}
+
+func (sr *StreamRenderer) renderPiece(piece markdownPiece, previous bool) {
+	renderer := sr.renderer
+	if !previous && sr.firstRenderer != nil {
+		renderer = sr.firstRenderer
+	}
+	rendered, err := renderer.Render(piece.text)
+	if err != nil {
+		rendered = piece.text
+	}
+	if sr.frame != nil {
+		sr.frame.Write(rendered, previous)
+		return
+	}
+	writeRenderedPiece(rendered, previous)
+}
+
+// renderStreamFallback keeps streaming usable if Glamour cannot initialize.
+func renderStreamFallback(stream <-chan string, modelName string, spinner *ui.Spinner) string {
+	return processMarkdownStream(stream, modelName, spinner, false, func(piece markdownPiece, previous bool) {
+		writeRenderedPiece(piece.text, previous)
+	})
+}
+
+func processMarkdownStream(stream <-chan string, modelName string, spinner *ui.Spinner, framed bool, renderPiece func(markdownPiece, bool)) string {
+	var content strings.Builder
+	var blocks markdownBlockStream
+	contentStarted := false
+	renderedAny := false
+	startContent := func() {
+		if contentStarted {
+			return
+		}
+		if spinner != nil {
+			spinner.Stop()
+		}
+		if modelName != "" && !framed {
+			ui.AccentColor.Printf("%s: ", modelName)
 		}
 		contentStarted = true
 	}
@@ -186,18 +325,15 @@ func processMarkdownStream(stream <-chan string, modelName string, spinner *ui.S
 	if spinner != nil {
 		spinner.Stop()
 	}
-	if !renderedAny {
-		fmt.Println("No response received.")
-	}
 	return content.String()
 }
 
-func writeRenderedPiece(rendered string, previous, continuing bool) {
+func writeRenderedPiece(rendered string, previous bool) {
 	rendered = strings.Trim(rendered, "\n\r")
 	if rendered == "" {
 		return
 	}
-	if previous && !continuing {
+	if previous {
 		fmt.Println()
 	}
 	fmt.Print(rendered)

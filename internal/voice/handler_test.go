@@ -187,6 +187,45 @@ func TestHandlerRejectsUnauthorizedOrForeignOrigin(t *testing.T) {
 	}
 }
 
+func TestHandlerSessionTerminationNotificationKeepsVoiceWindowAlive(t *testing.T) {
+	handler := newTestHandler(t, &testProofProvider{}, &testSignalingClient{})
+	local := handler.(*localHandler)
+	for i := 0; i < 2; i++ {
+		response := doVoiceRequest(handler, http.MethodPost, "/api/session-terminated", testVoiceToken, testVoiceOrigin, "", "")
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("session termination notification status = %d, want %d", response.Code, http.StatusNoContent)
+		}
+	}
+	select {
+	case <-local.stop:
+		t.Fatal("session termination notification stopped the voice window")
+	default:
+	}
+}
+
+func TestHandlerReportsEverySessionTermination(t *testing.T) {
+	notifications := 0
+	handler, err := NewHandler(Dependencies{
+		Proof:     &testProofProvider{},
+		Signaling: &testSignalingClient{},
+		OnSessionTerminated: func() {
+			notifications++
+		},
+	}, testVoiceToken, testVoiceOrigin)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		response := doVoiceRequest(handler, http.MethodPost, "/api/session-terminated", testVoiceToken, testVoiceOrigin, "", "")
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("session termination notification status = %d, want %d", response.Code, http.StatusNoContent)
+		}
+	}
+	if notifications != 2 {
+		t.Fatalf("CLI notifications = %d, want one per ended voice session", notifications)
+	}
+}
+
 func TestHandlerServesICEAndNegotiatesSDP(t *testing.T) {
 	proof := &testProofProvider{proofs: []*chat.DynamicHeaders{testProof("proof-one")}}
 	signaling := &testSignalingClient{

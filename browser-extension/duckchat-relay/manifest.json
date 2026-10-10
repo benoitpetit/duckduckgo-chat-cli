@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "DuckChat CLI browser retry",
+  "version": "1.0.1",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyUOOdlPwmlm3a5Pk2bSh0bbkmDi0UozlGPxLBShAkpv8GnLMwUoBFmaQhb9xOJRm5mZgH/bIumIlX+Qy2z4/T8ONMgXHvOc/phdykYkNnaZPt5W9D1cJ3LwAhlS21EgHJ7KwWzxu3s2s9ioFrhan00tflCRf0/szORnt/J5S58wSu8p6ruO6XU8lxB1vdOnwOY/ODc3dSuuZChHL6rqrw7+zpXkRkR9qyH+u3KtqEgG9y2uQHwt+HRdG5nhrdUxLOOSXVjUpHZZtFKwlcebLehzE/lhz1daBUeW9VRe0lOOtSaR5kM8mEBKAGFq8WM20NKIbcpVTlIAAWNqmGs7c3wIDAQAB",
+  "description": "Retries a Duck.ai CLI request through the active Duck.ai page session.",
+  "permissions": ["scripting", "browsingData"],
+  "host_permissions": [
+    "https://duck.ai/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://duck.ai/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

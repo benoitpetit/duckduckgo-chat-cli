@@ -23,6 +23,7 @@ fi
 
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 mkdir -p "$BUILD_DIR"
+BUILD_DIR="$(cd -- "$BUILD_DIR" && pwd)"
 find "$BUILD_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 
 echo "🚀 Building DuckDuckGo Chat CLI v$VERSION..."
@@ -54,10 +55,10 @@ done
 
 echo "📚 Creating release archive..."
 archive="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
+rm -f "$archive"
 zip -j "$archive" "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64 \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64.sha256 \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe.sha256
-
 echo "✅ Build v$VERSION complete! Files available in $BUILD_DIR:"
 ls -lh "$BUILD_DIR"

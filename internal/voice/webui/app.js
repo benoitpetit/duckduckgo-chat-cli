@@ -8,25 +8,33 @@ const ui = {
   connection: document.querySelector("#connection-state"),
   controls: document.querySelector("#controls"),
   duck: document.querySelector("#duck-stage"),
+  terminationPanel: document.querySelector("#termination-panel"),
+  terminationMessage: document.querySelector("#termination-message"),
+  subtitleSlot: document.querySelector("#subtitle-slot"),
+  retry: document.querySelector("#retry-button"),
+  closeVoice: document.querySelector("#close-voice-button"),
   voiceState: document.querySelector("#voice-state"),
   error: document.querySelector("#error-message"),
   start: document.querySelector("#start-button"),
   startLabel: document.querySelector("#start-button .button-label"),
+  minimize: document.querySelector("#minimize-button"),
   mute: document.querySelector("#mute-button"),
   muteLabel: document.querySelector("#mute-button .button-label"),
   end: document.querySelector("#end-button"),
   endLabel: document.querySelector("#end-button .button-label"),
   audioEnable: document.querySelector("#audio-enable-button"),
   audio: document.querySelector("#remote-audio"),
-  subtitle: document.querySelector("#subtitle-panel"),
-  subtitleSpeaker: document.querySelector("#subtitle-speaker"),
-  transcript: document.querySelector("#assistant-transcript"),
+  userSubtitle: document.querySelector("#user-subtitle-panel"),
+  userTranscript: document.querySelector("#user-transcript"),
+  assistantSubtitle: document.querySelector("#assistant-subtitle-panel"),
+  assistantTranscript: document.querySelector("#assistant-transcript"),
 };
 
 let peer = null;
 let channel = null;
 let microphone = null;
 let remoteAudioTrack = null;
+let readinessSoundAttempt = 0;
 let muted = false;
 let ended = false;
 let sessionAttempt = 0;
@@ -96,7 +104,7 @@ function showNextAssistantCaption() {
   if (!assistantOutputActive && !captionCatchUpActive) return;
 
   const caption = captionQueue.shift();
-  setSubtitle("Duck.ai", caption.text);
+  setSubtitle("assistant", caption.text);
   captionTimer = setTimeout(() => {
     captionTimer = null;
     if (captionQueue.length > 0) {
@@ -122,8 +130,50 @@ function markVoiceConnectionReady() {
 
   setConnection("connected", "Connected");
   setDuck("listening");
+  if (readinessSoundAttempt !== sessionAttempt) {
+    readinessSoundAttempt = sessionAttempt;
+    playReadinessChime();
+  }
   showError("");
   return true;
+}
+
+function playReadinessChime(reverse = false) {
+  const notes = reverse
+    ? [{ frequency: 880, duration: 0.16 }, { frequency: 660, duration: 0.12 }]
+    : [{ frequency: 660, duration: 0.12 }, { frequency: 880, duration: 0.16 }];
+  playToneSequence(notes, 0.045);
+}
+
+function playToneSequence(notes, volume) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (typeof AudioContext !== "function") return;
+
+  let context;
+  try {
+    context = new AudioContext();
+    let startAt = context.currentTime + 0.02;
+
+    for (const note of notes) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const endAt = startAt + note.duration;
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(note.frequency, startAt);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(startAt);
+      oscillator.stop(endAt);
+      startAt = endAt + 0.02;
+    }
+
+    window.setTimeout(() => { void context.close().catch(() => {}); }, 500);
+  } catch (_) {
+    if (context) void context.close().catch(() => {});
+  }
 }
 
 function setDuck(state) {
@@ -136,6 +186,7 @@ function setDuck(state) {
     thinking: "Thinking…",
     speaking: "Speaking",
     error: "Check the connection",
+    "session-terminated": "Voice chat ended",
     ended: "Voice session ended",
   };
   const label = labels[state] || labels.idle;
@@ -144,36 +195,68 @@ function setDuck(state) {
   ui.duck.setAttribute("aria-label", `Duck.ai mascot. ${label}`);
 }
 
+function showTerminationPanel(message) {
+  if (ended) return false;
+  ended = true;
+  sessionAttempt += 1;
+  clearSubtitles();
+  stopMedia();
+  ui.controls.hidden = true;
+  ui.subtitleSlot.hidden = true;
+  ui.terminationPanel.hidden = false;
+  ui.terminationMessage.textContent = message;
+  showError("");
+  setConnection("idle", "Voice chat ended");
+  setDuck("session-terminated");
+  return true;
+}
+
+function handleSessionTermination() {
+  if (!showTerminationPanel("We ended this conversation due to inactivity. Would you like to try again?")) return;
+  void request("/api/session-terminated", { method: "POST" }).catch(() => {});
+}
+
+function endActiveSession() {
+  if (showTerminationPanel("Voice chat ended. Would you like to try again?")) {
+    playReadinessChime(true);
+  }
+}
+
 function showError(message) {
   ui.error.textContent = message;
   ui.error.hidden = !message;
 }
 
 function setSubtitle(speaker, text) {
-  if (subtitleHideTimer) clearTimeout(subtitleHideTimer);
-  subtitleHideTimer = null;
-  ui.subtitleSpeaker.textContent = speaker;
-  ui.subtitle.dataset.speaker = speaker === "You" ? "user" : "assistant";
-  ui.transcript.textContent = text;
-  ui.subtitle.hidden = !text.trim();
+  const isUser = speaker === "user";
+  if (!isUser && subtitleHideTimer) {
+    clearTimeout(subtitleHideTimer);
+    subtitleHideTimer = null;
+  }
+  const panel = isUser ? ui.userSubtitle : ui.assistantSubtitle;
+  const transcript = isUser ? ui.userTranscript : ui.assistantTranscript;
+  panel.dataset.speaker = speaker;
+  transcript.textContent = text;
+  panel.hidden = !text.trim();
 }
 
 function showUserTranscript(transcript) {
   const text = transcript.trim();
   if (!text) return;
   inputTranscript = text;
-  setSubtitle("You", text);
+  setSubtitle("user", text);
 }
 
 function appendUserTranscript(delta) {
   if (typeof delta !== "string" || delta.length === 0) return;
   inputTranscript += delta;
-  setSubtitle("You", inputTranscript);
+  setSubtitle("user", inputTranscript);
 }
 
 function setControlsMode(mode) {
   ui.controls.dataset.mode = mode;
   ui.start.hidden = mode !== "idle";
+  ui.minimize.hidden = mode !== "active";
   ui.mute.hidden = mode !== "active";
   ui.end.hidden = mode === "idle";
 
@@ -189,7 +272,7 @@ function appendAssistantTranscript(delta) {
   if (typeof delta !== "string" || delta.length === 0) return;
   if (!assistantTranscriptStarted) {
     assistantTranscriptStarted = true;
-    setSubtitle("Duck.ai", "");
+    setSubtitle("assistant", "");
   }
   captionTranscript += delta;
   captionBuffer += delta;
@@ -211,7 +294,7 @@ function finishAssistantTranscript(item) {
 
 function showAssistantSubtitle() {
   if (captionQueue.length > 0) showNextAssistantCaption();
-  if (ui.transcript.textContent.trim()) ui.subtitle.hidden = false;
+  if (ui.assistantTranscript.textContent.trim()) ui.assistantSubtitle.hidden = false;
 }
 
 function scheduleSubtitleHide() {
@@ -219,12 +302,12 @@ function scheduleSubtitleHide() {
   subtitleHideTimer = setTimeout(() => {
     subtitleHideTimer = null;
     if (!assistantOutputActive && !captionCatchUpActive && !captionTimer && captionQueue.length === 0) {
-      setSubtitle(ui.subtitleSpeaker.textContent, "");
+      setSubtitle("assistant", "");
     }
   }, 1800);
 }
 
-function clearAssistantSubtitle(preserveSubtitle = false) {
+function clearSubtitles(preserveUserTranscript = false) {
   if (subtitleHideTimer) clearTimeout(subtitleHideTimer);
   if (captionTimer) clearTimeout(captionTimer);
   subtitleHideTimer = null;
@@ -236,11 +319,10 @@ function clearAssistantSubtitle(preserveSubtitle = false) {
   captionTranscript = "";
   captionBuffer = "";
   captionQueue = [];
-  if (!preserveSubtitle) {
-    ui.subtitleSpeaker.textContent = "Duck.ai";
-    ui.subtitle.dataset.speaker = "assistant";
-    ui.transcript.textContent = "";
-    ui.subtitle.hidden = true;
+  setSubtitle("assistant", "");
+  if (!preserveUserTranscript) {
+    inputTranscript = "";
+    setSubtitle("user", "");
   }
 }
 
@@ -255,6 +337,7 @@ function toggleMute() {
   if (!microphone || ended) return false;
   muted = !muted;
   applyMicrophoneState();
+  playToneSequence([{ frequency: 520, duration: 0.1 }], 0.035);
   return true;
 }
 
@@ -317,7 +400,7 @@ function releaseAssistantMicrophoneGate() {
 }
 
 function stopMedia() {
-  clearAssistantSubtitle();
+  clearSubtitles();
   if (assistantAudioGateTimer) clearTimeout(assistantAudioGateTimer);
   assistantAudioGateTimer = null;
   assistantAudioGateActive = false;
@@ -370,6 +453,14 @@ async function request(path, options = {}) {
   return response;
 }
 
+async function minimizeVoiceWindow() {
+  try {
+    await request("/api/minimize", { method: "POST" });
+  } catch (error) {
+    showError(error.message || "Could not minimize the voice window.");
+  }
+}
+
 function isCurrentAttempt(attempt) {
   return !ended && attempt === sessionAttempt;
 }
@@ -387,14 +478,14 @@ function handleVoiceEvent(raw) {
   switch (event.type) {
     case "input_audio_buffer.speech_started":
       inputTranscript = "";
-      clearAssistantSubtitle();
+      clearSubtitles();
       setDuck("user-speaking");
       break;
     case "input_audio_buffer.speech_stopped":
       setDuck("thinking");
       break;
     case "response.created":
-      clearAssistantSubtitle(ui.subtitle.dataset.speaker === "user");
+      clearSubtitles(Boolean(ui.userTranscript.textContent.trim()));
       captionTranscript = "";
       setDuck("thinking");
       break;
@@ -428,13 +519,13 @@ function handleVoiceEvent(raw) {
       if (!ended) setDuck("listening");
       break;
     case "output_audio_buffer.cleared":
-      clearAssistantSubtitle();
+      clearSubtitles();
       releaseAssistantMicrophoneGate();
       if (!ended) setDuck("listening");
       break;
     case "response.done":
       if (event.response && event.response.status === "failed") {
-        clearAssistantSubtitle();
+        clearSubtitles();
         releaseAssistantMicrophoneGate();
         showError("Duck.ai could not respond. Please try again.");
         setDuck("listening");
@@ -448,7 +539,7 @@ function handleVoiceEvent(raw) {
       break;
     case "conversation.item.added":
       if (event.item && event.item.type === "function_call" && event.item.name === "session_terminated") {
-        void endSession(true);
+        handleSessionTermination();
       }
       break;
     default:
@@ -514,7 +605,7 @@ async function startSession() {
         setConnection("connecting", "Connecting…");
         setDuck("connecting");
       } else if (peer.connectionState === "failed") {
-        clearAssistantSubtitle();
+        clearSubtitles();
         setConnection("error", "Connection interrupted");
         setDuck("error");
         showError("The audio connection failed. End the call and try again.");
@@ -556,7 +647,7 @@ async function startSession() {
     };
     channel.onclose = () => {
       if (ended) return;
-      clearAssistantSubtitle();
+      clearSubtitles();
       setConnection("error", "Connection closed");
       setDuck("error");
       showError("The voice connection closed. End the call and try again.");
@@ -599,23 +690,37 @@ async function startSession() {
 }
 
 async function endSession(sendStop = true) {
-  if (ended) return;
-  ended = true;
-  sessionAttempt += 1;
-  clearAssistantSubtitle();
-  stopMedia();
-  setConnection("idle", "Ended");
-  setDuck("ended");
-  setControlsMode("ended");
-  showError("");
+  if (!ended) {
+    ended = true;
+    sessionAttempt += 1;
+    clearSubtitles();
+    stopMedia();
+    setConnection("idle", "Ended");
+    setDuck("ended");
+    setControlsMode("ended");
+    showError("");
+  }
   if (sendStop && token) {
     try { await request("/api/stop", { method: "POST" }); } catch (_) { /* the CLI may already be stopping */ }
   }
 }
 
+function retrySession() {
+  if (!ended) return;
+  ended = false;
+  ui.terminationPanel.hidden = true;
+  ui.controls.hidden = false;
+  ui.subtitleSlot.hidden = false;
+  setControlsMode("idle");
+  void startSession();
+}
+
 ui.start.addEventListener("click", () => void startSession());
+ui.minimize.addEventListener("click", () => void minimizeVoiceWindow());
 ui.mute.addEventListener("click", toggleMute);
-ui.end.addEventListener("click", () => void endSession(true));
+ui.end.addEventListener("click", endActiveSession);
+ui.retry.addEventListener("click", retrySession);
+ui.closeVoice.addEventListener("click", () => void endSession(true));
 ui.audioEnable.addEventListener("click", () => void playRemoteAudio());
 window.addEventListener("keydown", (event) => {
   if (event.key.toLowerCase() !== "m" || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;

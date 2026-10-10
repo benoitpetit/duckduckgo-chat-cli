@@ -25,8 +25,18 @@ type browserSessionDone interface {
 	Done() <-chan struct{}
 }
 
+// BrowserWindowController exposes visibility controls without closing the
+// browser or ending its local voice server and media session.
+type BrowserWindowController interface {
+	MinimizeWindow() error
+	RestoreWindow() error
+}
+
 type activeRunState struct {
-	cancel context.CancelFunc
+	cancel          context.CancelFunc
+	visibilityMu    sync.Mutex
+	window          BrowserWindowController
+	windowMinimized bool
 }
 
 var activeRunMu sync.Mutex
@@ -144,6 +154,15 @@ func Run(ctx context.Context, deps Dependencies, opener BrowserOpener) (runErr e
 	if browser == nil {
 		return fmt.Errorf("open Duck.ai voice interface: browser opener returned no session")
 	}
+	if controller, ok := browser.(BrowserWindowController); ok {
+		activeRunMu.Lock()
+		if activeRun == state {
+			state.visibilityMu.Lock()
+			state.window = controller
+			state.visibilityMu.Unlock()
+		}
+		activeRunMu.Unlock()
+	}
 
 	var browserDone <-chan struct{}
 	if session, ok := browser.(browserSessionDone); ok {
@@ -173,6 +192,89 @@ func StopActive() bool {
 	}
 	state.cancel()
 	return true
+}
+
+// Active reports whether a voice launch or session is in progress.
+func Active() bool {
+	activeRunMu.Lock()
+	defer activeRunMu.Unlock()
+	return activeRun != nil
+}
+
+// MinimizeActive hides the Chromium window while keeping its session alive.
+func MinimizeActive() error { return setActiveWindowVisibility(true) }
+
+// RestoreActive makes a minimized Chromium voice window visible again.
+func RestoreActive() error {
+	activeRunMu.Lock()
+	state := activeRun
+	activeRunMu.Unlock()
+	if state == nil {
+		return fmt.Errorf("no active voice session")
+	}
+	state.visibilityMu.Lock()
+	defer state.visibilityMu.Unlock()
+	if state.window == nil {
+		return fmt.Errorf("voice window is not ready")
+	}
+	if err := state.window.RestoreWindow(); err != nil {
+		return fmt.Errorf("restore voice window: %w", err)
+	}
+	state.windowMinimized = false
+	return nil
+}
+
+// ToggleActiveVisibility minimizes or restores the active voice window.
+func ToggleActiveVisibility() error {
+	activeRunMu.Lock()
+	state := activeRun
+	activeRunMu.Unlock()
+	if state == nil {
+		return fmt.Errorf("no active voice session")
+	}
+	state.visibilityMu.Lock()
+	defer state.visibilityMu.Unlock()
+	if state.window == nil {
+		return fmt.Errorf("voice window is not ready")
+	}
+	minimize := !state.windowMinimized
+	if minimize {
+		if err := state.window.MinimizeWindow(); err != nil {
+			return fmt.Errorf("minimize voice window: %w", err)
+		}
+	} else {
+		if err := state.window.RestoreWindow(); err != nil {
+			return fmt.Errorf("restore voice window: %w", err)
+		}
+	}
+	state.windowMinimized = minimize
+	return nil
+}
+
+func setActiveWindowVisibility(minimize bool) error {
+	activeRunMu.Lock()
+	state := activeRun
+	activeRunMu.Unlock()
+	if state == nil {
+		return fmt.Errorf("no active voice session")
+	}
+	state.visibilityMu.Lock()
+	defer state.visibilityMu.Unlock()
+	if state.window == nil {
+		return fmt.Errorf("voice window is not ready")
+	}
+	if minimize == state.windowMinimized {
+		return nil
+	}
+	if minimize {
+		if err := state.window.MinimizeWindow(); err != nil {
+			return fmt.Errorf("minimize voice window: %w", err)
+		}
+	} else if err := state.window.RestoreWindow(); err != nil {
+		return fmt.Errorf("restore voice window: %w", err)
+	}
+	state.windowMinimized = minimize
+	return nil
 }
 
 func newAccessToken() (string, error) {

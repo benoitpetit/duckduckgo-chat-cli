@@ -42,6 +42,7 @@
 - Run the optional HTTP API on `127.0.0.1` for local integrations. An API key is required before binding beyond the local machine.
 - Use command menus, autocompletion, saved prompts, and formatted output on Linux, Windows, and macOS.
 - Enable Duck.ai's native web search for citations or use image generation.
+- Keep DuckChat available from the system tray after the interactive terminal closes, with global shortcuts for text and voice chat.
 
 ## Screenshots
 
@@ -157,6 +158,28 @@ history.
 
 Start the interactive chat by running the binary without options. At the `You:` prompt, type `/help` to see the available chat commands. The separate `duckchat --help` option lists command-line flags.
 
+### System tray and global shortcuts
+
+Starting the normal interactive CLI starts or reuses one background DuckChat
+service after terms are accepted. The service stays in the system tray when the
+terminal closes; it does not start automatically at OS login. The tray menu can
+open a text chat in a new terminal, open or restore voice chat, minimize the
+voice window to the tray, edit shortcuts, or quit the service. The voice
+window's **Hide** control also minimizes it while keeping the call and
+microphone active.
+
+The default shortcuts are **Ctrl+Alt+T** for text chat and **Ctrl+Alt+V** for
+voice chat. Change them in `/config` → **Chat Shortcuts** or in the tray menu's
+**Configure shortcuts** action. The service reloads saved shortcuts right
+away. Linux uses the XDG GlobalShortcuts portal on Wayland and X11 key grabs on
+X11; if the desktop has no supported global-shortcut backend, tray actions
+remain available and the tray status reports that shortcuts are unavailable.
+Windows uses registered system hotkeys. macOS may ask for Accessibility/Input
+Monitoring permission before global shortcuts can be registered.
+
+`--prompt`, `--help`, and `--version` do not start the background service. Use
+**Quit DuckChat** from the tray menu when you want to stop the service.
+
 ### Typical workflow
 
 <details>
@@ -238,7 +261,7 @@ You: /load session_12345
 | `/dashboard <action>`                         | `/dashboard on`                                            | Start or stop the local usage dashboard, open its app window, or show its status (`on`, `off`, `open`, `status`) |
 | `/api [port]`                                 | `/api` or `/api 8080`                                      | Start or stop the API server                                                                          |
 | `/model`                                      | `/model` or `/model 2`                                     | Change AI model (interactive)                                                                         |
-| `/clear`                                      | `/clear`                                                   | Reset conversation context (with session save)                                                        |
+| `/clear`                                      | `/clear`                                                   | Save the conversation, then reset its context and CLI Duck.ai session                                  |
 | `/export`                                     | `/export`                                                  | Export content (interactive)                                                                          |
 | `/copy`                                       | `/copy`                                                    | Copy to clipboard (interactive)                                                                       |
 | `/history`                                    | `/history`                                                 | Display conversation history                                                                          |
@@ -289,6 +312,7 @@ The tables show configuration field names; the saved JSON keys use snake_case.
 | Option         | Description                                                      | Default              | Range              |
 | -------------- | ---------------------------------------------------------------- | -------------------- | ------------------ |
 | `DefaultModel` | Starting AI model                                                | gpt-6-luna           | 8 models available |
+| `Appearance.FrameResponses` | Frame model answers in interactive terminals; narrow terminals use a compact rail, very narrow terminals stay unframed; configurable in `/config` | true | true/false |
 | `GlobalPrompt` | Instructions prepended to the first message of each conversation | ""                   | Any text           |
 | `ExportDir`    | Export directory                                                 | ~/Documents/duckchat | Any valid path     |
 | `ShowMenu`     | Display commands on start                                        | false                 | true/false         |
@@ -332,20 +356,23 @@ Native Web Search is separate. When enabled, Duck.ai can decide whether a prompt
 Chat requests use Chrome or Chromium in the background and do not open a
 separate browser window.
 
-When Duck.ai answers with HTTP 429, the interactive CLI treats the browser as a
-last resort and opens `https://duck.ai/` in your default browser so you can
-continue the conversation there. The rate-limit error is still reported, and the
-CLI stays usable.
+When Duck.ai answers with HTTP 429, the CLI resets its isolated headless
+browser profile, request cookies, and conversation identity, then makes one
+fresh request. If Duck.ai still returns 429, the CLI reports the refusal. A
+Duck.ai challenge (HTTP 418) is reported separately without printing its
+opaque response data. Neither case opens the user's browser or requires an
+extension.
 
-A cooldown stops a burst of consecutive rate-limited messages from opening one
-tab per message: after the first launch, further 429s only print a reminder
-until the cooldown expires. Turn the fallback off in `/config`, or set
-`rate_limit.open_browser` to `false` in `config.json`.
-
-| Option                      | Default | Description                                                              |
-| --------------------------- | ------- | ------------------------------------------------------------------------ |
-| `RateLimit.OpenBrowser`     | `true`  | Open duck.ai in the default browser as a last resort on HTTP 429         |
-| `RateLimit.CooldownMinutes` | `10`    | Minimum delay between two automatic browser launches (1 or more)         |
+`/clear` performs the same local session reset even when the conversation is
+already empty. The proof browser uses a temporary profile separate from your
+default Chrome profile, so `/clear` does not remove data or sign you out in
+your regular browser. The CLI carries cookies from the proof browser with the
+corresponding request in memory; it does not copy Chrome profile files.
+Duck.ai may still reject an isolated headless session even if chat works in
+your regular browser. Clearing the headless profile does not guarantee that
+Duck.ai will accept it. The old `rate_limit.open_browser` setting is ignored.
+If you installed the earlier DuckChat CLI Chrome extension, you can remove it
+from `chrome://extensions`; the CLI no longer uses it.
 
 ### File and image support
 
@@ -371,10 +398,13 @@ described above.
 
 ### Voice conversation
 
-Run `/speak` in the interactive CLI to open a compact Chrome/Chromium app window
+Run `/speak` in the interactive CLI to open or restore a compact Chrome/Chromium app window
 (480 × 500 pixels by default, without the tab strip). Select **Start** and allow
 microphone access when prompted. Use **Mute** to mute or unmute the microphone
-and **End** to close the call. Adjust the window width and height in
+and **End** to end the current call while keeping its retry window open. Use
+**Minimize** to hide the window in the tray without stopping the session, and
+**Close** to leave the voice session. `/speak` waits until that voice window is
+closed. Adjust the window width and height in
 `/config` → **Audio Agent Speak**.
 
 The voice window shows live user and assistant transcripts. The CLI does not save
@@ -504,10 +534,10 @@ continue using the CLI. Press Ctrl-C again when the prompt is idle to exit.
 
 The local build and verification scripts are also used by GitHub Actions:
 
-- Build locally with `./scripts/build.sh 1.8.0`.
+- Build locally with `./scripts/build.sh 1.9.0`.
 - Run `./scripts/pre-release-check.sh` before a release.
-- To publish from GitHub, open **Actions → Build and Release → Run workflow** and enter a version such as `1.8.0`.
-- After pushing a clean `master`, run `./scripts/release.sh 1.8.0` with an authenticated GitHub CLI.
+- To publish from GitHub, open **Actions → Build and Release → Run workflow** and enter a version such as `1.9.0`.
+- After pushing a clean `master`, run `./scripts/release.sh 1.9.0` with an authenticated GitHub CLI.
 - The Windows `.exe` includes `docs/images/logo.png` as its application icon. Linux and macOS command-line binaries have no application icon.
 
 ### Development documentation

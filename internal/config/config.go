@@ -13,6 +13,7 @@ import (
 	"duckduckgo-chat-cli/internal/interfaces"
 	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/security"
+	"duckduckgo-chat-cli/internal/shortcut"
 	"duckduckgo-chat-cli/internal/ui"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -50,9 +51,10 @@ type ToolsConfig struct {
 	ImageGeneration bool `json:"image_generation"`
 }
 
-// AppearanceConfig contains the terminal theme selected for the CLI.
+// AppearanceConfig contains the terminal theme and response presentation settings.
 type AppearanceConfig struct {
-	Theme string `json:"theme"`
+	Theme          string `json:"theme"`
+	FrameResponses bool   `json:"frame_responses"`
 }
 
 // SpeakConfig controls the Chromium window used for live Duck.ai voice sessions.
@@ -60,6 +62,29 @@ type SpeakConfig struct {
 	WindowWidth   int `json:"window_width"`
 	WindowHeight  int `json:"window_height"`
 	SchemaVersion int `json:"schema_version,omitempty"`
+}
+
+// TrayConfig stores global shortcuts used by the resident tray service.
+type TrayConfig struct {
+	TextShortcut  string `json:"text_shortcut"`
+	VoiceShortcut string `json:"voice_shortcut"`
+}
+
+func defaultTrayConfig() TrayConfig {
+	return TrayConfig{TextShortcut: "Ctrl+Alt+T", VoiceShortcut: "Ctrl+Alt+V"}
+}
+
+func normalizeTrayConfig(cfg *TrayConfig) {
+	defaults := defaultTrayConfig()
+	if _, err := shortcut.ParseShortcut(cfg.TextShortcut); err != nil {
+		cfg.TextShortcut = defaults.TextShortcut
+	}
+	if _, err := shortcut.ParseShortcut(cfg.VoiceShortcut); err != nil {
+		cfg.VoiceShortcut = defaults.VoiceShortcut
+	}
+	if err := shortcut.ValidateShortcuts(cfg.TextShortcut, cfg.VoiceShortcut); err != nil {
+		*cfg = defaults
+	}
 }
 
 func defaultSpeakConfig() SpeakConfig {
@@ -93,16 +118,16 @@ func normalizeSpeakConfig(cfg *SpeakConfig) {
 	}
 }
 
-// RateLimitConfig controls the last-resort fallback used when Duck.ai answers
-// with HTTP 429. Opening the browser is on by default so an interactive user
-// can keep working on duck.ai directly instead of staring at a dead CLI.
+// RateLimitConfig keeps legacy browser fallback settings readable. Automatic
+// browser opening is no longer supported; existing open_browser values are
+// ignored by chat sessions.
 type RateLimitConfig struct {
 	OpenBrowser     bool `json:"open_browser"`
 	CooldownMinutes int  `json:"cooldown_minutes"`
 }
 
 func defaultRateLimitConfig() RateLimitConfig {
-	return RateLimitConfig{OpenBrowser: true, CooldownMinutes: 10}
+	return RateLimitConfig{OpenBrowser: false, CooldownMinutes: 10}
 }
 
 func normalizeRateLimitConfig(cfg *RateLimitConfig) {
@@ -156,6 +181,7 @@ type Config struct {
 	API              APIConfig         `json:"api"`
 	Tools            ToolsConfig       `json:"tools"`
 	Speak            SpeakConfig       `json:"speak"`
+	Tray             TrayConfig        `json:"tray"`
 	RateLimit        RateLimitConfig   `json:"rate_limit"`
 	Dashboard        DashboardConfig   `json:"dashboard"`
 	ShowMenu         bool              `json:"show_menu"`
@@ -169,6 +195,7 @@ func Initialize() *Config {
 	normalizeAppearanceConfig(&cfg.Appearance)
 	ui.SetTheme(cfg.Appearance.Theme)
 	normalizeSpeakConfig(&cfg.Speak)
+	normalizeTrayConfig(&cfg.Tray)
 	normalizeRateLimitConfig(&cfg.RateLimit)
 	normalizeDashboardConfig(&cfg.Dashboard)
 	if cfg.DefaultModel == "" {
@@ -235,11 +262,12 @@ func loadConfig() *Config {
 		DefaultModel:     string(models.Default()),
 		ExportDir:        defaultExportPath(),
 		LastUpdateTime:   time.Now(),
-		Appearance:       AppearanceConfig{Theme: string(ui.ThemeOfficial)},
+		Appearance:       AppearanceConfig{Theme: string(ui.ThemeOfficial), FrameResponses: true},
 		ConfirmLongInput: true, // default to enabled for safety
 		Search:           SearchConfig{IncludeSnippet: true},
 		Library:          LibraryConfig{Enabled: true},
 		Speak:            SpeakConfig{},
+		Tray:             defaultTrayConfig(),
 		RateLimit:        defaultRateLimitConfig(),
 		Dashboard:        defaultDashboardConfig(),
 		Prompts:          make(map[string]string),
@@ -369,6 +397,8 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			Help:    "Current settings are shown as defaults. Choose an option to edit.",
 			Options: []string{
 				"Theme",
+				"Response Frame",
+				"Chat Shortcuts",
 				"Default Model",
 				"Export Directory",
 				"Search Settings",
@@ -393,6 +423,10 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 		switch choice {
 		case "Theme":
 			handleThemeSettings(cfg)
+		case "Response Frame":
+			handleResponseFrameSettings(cfg)
+		case "Chat Shortcuts":
+			HandleShortcutConfiguration(cfg)
 		case "Default Model":
 			handleModelChange(cfg, chatSession)
 		case "Export Directory":
@@ -423,6 +457,86 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) {
 			ui.Errorln("Invalid choice. Please try again.")
 		}
 	}
+}
+
+func handleResponseFrameSettings(cfg *Config) {
+	previous := cfg.Appearance.FrameResponses
+	enabled := previous
+	prompt := &survey.Confirm{
+		Message: "Frame model responses?",
+		Default: previous,
+		Help:    "Frames responses in interactive terminals; narrow terminals use a compact rail, very narrow terminals stay unframed.",
+	}
+	if err := survey.AskOne(prompt, &enabled); err != nil {
+		ui.Warningln("Response frame setting canceled.")
+		return
+	}
+	cfg.Appearance.FrameResponses = enabled
+	if err := saveConfig(cfg); err != nil {
+		cfg.Appearance.FrameResponses = previous
+		ui.Errorln("Could not save response frame setting: %v", err)
+		return
+	}
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	ui.AIln("Response frame %s.", status)
+}
+
+// HandleShortcutConfiguration edits and saves the text and voice chat shortcuts.
+// It returns true only after both bindings have been validated and saved.
+func HandleShortcutConfiguration(cfg *Config) bool {
+	if cfg == nil {
+		return false
+	}
+	previous := cfg.Tray
+	textShortcut, err := askShortcut("Text chat shortcut", previous.TextShortcut, nil)
+	if err != nil {
+		ui.Warningln("Shortcut settings canceled.")
+		return false
+	}
+	voiceShortcut, err := askShortcut("Voice chat shortcut", previous.VoiceShortcut, func(value string) error {
+		return shortcut.ValidateShortcuts(textShortcut, value)
+	})
+	if err != nil {
+		ui.Warningln("Shortcut settings canceled.")
+		return false
+	}
+	cfg.Tray = TrayConfig{TextShortcut: textShortcut, VoiceShortcut: voiceShortcut}
+	if err := SaveConfig(cfg); err != nil {
+		cfg.Tray = previous
+		ui.Errorln("Could not save shortcut settings: %v", err)
+		return false
+	}
+	ui.AIln("Chat shortcuts saved: text %s, voice %s", cfg.Tray.TextShortcut, cfg.Tray.VoiceShortcut)
+	return true
+}
+
+func askShortcut(message, current string, validatePair func(string) error) (string, error) {
+	value := current
+	prompt := &survey.Input{
+		Message: message,
+		Default: current,
+		Help:    "Use modifiers such as Ctrl, Alt, Shift, or Super with one letter, number, Space, or F1-F12 key.",
+	}
+	validate := func(answer interface{}) error {
+		candidate, ok := answer.(string)
+		if !ok {
+			return fmt.Errorf("shortcut must be text")
+		}
+		if _, err := shortcut.ParseShortcut(candidate); err != nil {
+			return err
+		}
+		if validatePair != nil {
+			return validatePair(candidate)
+		}
+		return nil
+	}
+	if err := survey.AskOne(prompt, &value, survey.WithValidator(validate)); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 func handleThemeSettings(cfg *Config) {

@@ -2,38 +2,27 @@ package chat
 
 import (
 	"strings"
-	"unicode"
 )
 
 type markdownPiece struct {
-	text       string
-	continuing bool
+	text string
 }
 
 // markdownBlockStream keeps Markdown constructs intact while allowing plain
-// prose to be rendered sentence by sentence as it arrives.
+// prose to be rendered paragraph by paragraph as it arrives.
 type markdownBlockStream struct {
-	line              strings.Builder
-	block             strings.Builder
-	fence             rune
-	fenceSize         int
-	paragraphStreamed bool
+	line      strings.Builder
+	block     strings.Builder
+	fence     rune
+	fenceSize int
 }
 
-// Push adds stream text and returns complete prose sentences or Markdown blocks.
+// Push adds stream text and returns complete Markdown paragraphs or blocks.
 func (s *markdownBlockStream) Push(chunk string) []markdownPiece {
 	var ready []markdownPiece
 	for _, r := range chunk {
 		if r != '\n' {
 			s.line.WriteRune(r)
-			if s.fence == 0 && s.block.Len() == 0 {
-				if sentence, rest, ok := s.takePlainSentence(); ok {
-					ready = append(ready, markdownPiece{text: sentence, continuing: s.paragraphStreamed})
-					s.paragraphStreamed = true
-					s.line.Reset()
-					s.line.WriteString(rest)
-				}
-			}
 			continue
 		}
 
@@ -47,32 +36,26 @@ func (s *markdownBlockStream) Push(chunk string) []markdownPiece {
 				s.fence = 0
 				s.fenceSize = 0
 				ready = append(ready, markdownPiece{text: s.takeBlock()})
-				s.paragraphStreamed = false
 			}
 			continue
 		}
 
 		if marker, size, ok := markdownFence(line); ok {
 			if s.hasContent() {
-				ready = append(ready, markdownPiece{text: s.takeBlock(), continuing: s.paragraphStreamed})
+				ready = append(ready, markdownPiece{text: s.takeBlock()})
 			}
-			s.paragraphStreamed = false
 			s.block.WriteString(fullLine)
 			s.fence = marker
 			s.fenceSize = size
 			continue
 		}
-		if s.paragraphStreamed && isMarkdownBlockLine(line) {
-			s.paragraphStreamed = false
-		}
 
 		if strings.TrimSpace(line) == "" {
 			if s.hasContent() {
-				ready = append(ready, markdownPiece{text: s.takeBlock(), continuing: s.paragraphStreamed})
+				ready = append(ready, markdownPiece{text: s.takeBlock()})
 			} else {
 				s.block.Reset()
 			}
-			s.paragraphStreamed = false
 			continue
 		}
 
@@ -91,49 +74,7 @@ func (s *markdownBlockStream) Flush() []markdownPiece {
 		s.block.Reset()
 		return nil
 	}
-	return []markdownPiece{{text: s.takeBlock(), continuing: s.paragraphStreamed}}
-}
-
-func (s *markdownBlockStream) takePlainSentence() (sentence, rest string, ok bool) {
-	runes := []rune(s.line.String())
-	for i := 1; i < len(runes); i++ {
-		if !unicode.IsSpace(runes[i]) {
-			continue
-		}
-		completeSentence := strings.ContainsRune(".!?", runes[i-1])
-		if !completeSentence && i < 72 {
-			continue
-		}
-		candidate := strings.TrimSpace(string(runes[:i]))
-		if !isPlainMarkdownText(candidate) {
-			return "", "", false
-		}
-		return candidate, string(runes[i:]), true
-	}
-	return "", "", false
-}
-
-func isPlainMarkdownText(text string) bool {
-	text = strings.TrimSpace(text)
-	if text == "" || strings.ContainsAny(text, "`*_[]!~|<>\\") {
-		return false
-	}
-	return !isMarkdownBlockLine(text)
-}
-
-func isMarkdownBlockLine(line string) bool {
-	line = strings.TrimLeft(line, " ")
-	if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ">") || strings.HasPrefix(line, "|") {
-		return true
-	}
-	if len(line) >= 2 && strings.ContainsRune("-*+", rune(line[0])) && unicode.IsSpace(rune(line[1])) {
-		return true
-	}
-	index := 0
-	for index < len(line) && line[index] >= '0' && line[index] <= '9' {
-		index++
-	}
-	return index > 0 && index+1 < len(line) && (line[index] == '.' || line[index] == ')') && unicode.IsSpace(rune(line[index+1]))
+	return []markdownPiece{{text: s.takeBlock()}}
 }
 
 func (s *markdownBlockStream) hasContent() bool {

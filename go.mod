@@ -1,20 +1,29 @@
 module duckduckgo-chat-cli
 
+replace github.com/c-bata/go-prompt => ./third_party/go-prompt
+
 go 1.26
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
+	github.com/AshBuk/go-wlportal v1.3.0
 	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/atotto/clipboard v0.1.4
+	github.com/benoitpetit/agent-spinner v0.0.0-20260409185017-1b976a61382c
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/charmbracelet/glamour v0.10.0
+	github.com/charmbracelet/x/ansi v0.11.4
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
 	github.com/chromedp/chromedp v0.14.0
 	github.com/fatih/color v1.18.0
 	github.com/gin-gonic/gin v1.10.1
+	github.com/gogpu/systray v0.3.0
+	github.com/jezek/xgb v1.3.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.0
 	github.com/swaggo/swag v1.16.6
+	golang.design/x/hotkey v0.6.1
+	golang.design/x/mainthread v0.3.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/term v0.44.0
 )
@@ -23,6 +32,8 @@ require (
 	github.com/clipperhouse/displaywidth v0.7.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.4.0 // indirect
+	github.com/go-webgpu/goffi v0.6.3 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 )
@@ -37,7 +48,6 @@ require (
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
-	github.com/charmbracelet/x/ansi v0.11.4 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.14 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20260122224438-b01af16209d9 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
@@ -90,7 +100,7 @@ require (
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.39.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect

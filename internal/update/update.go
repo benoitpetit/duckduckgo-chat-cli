@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"duckduckgo-chat-cli/internal/ui"
-
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
 )
@@ -93,7 +91,10 @@ func GetBinaryName(version, osName, arch string) string {
 // CheckForUpdates checks if there's a new version available
 func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 	color.Yellow("Checking for updates...")
+	return checkForUpdates(currentVersion, true)
+}
 
+func checkForUpdates(currentVersion string, verbose bool) (*UpdateInfo, error) {
 	// Get latest release info
 	release, err := fetchLatestRelease()
 	if err != nil {
@@ -111,7 +112,9 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 	}
 
 	if !updateInfo.NeedsUpdate {
-		color.Green("✅ You are already using the latest version (%s)", cleanCurrentVersion)
+		if verbose {
+			color.Green("✅ You are already using the latest version (%s)", cleanCurrentVersion)
+		}
 		return updateInfo, nil
 	}
 
@@ -131,7 +134,9 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 
 	if downloadURL == "" {
 		// Try to find an asset with a similar name pattern
-		color.Yellow("⚠️  Exact binary name not found, looking for alternatives...")
+		if verbose {
+			color.Yellow("⚠️  Exact binary name not found, looking for alternatives...")
+		}
 		for _, asset := range release.Assets {
 			if strings.Contains(asset.Name, osName) && strings.Contains(asset.Name, arch) {
 				downloadURL = asset.BrowserDownloadURL
@@ -142,7 +147,9 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 						break
 					}
 				}
-				color.Yellow("✅ Found alternative binary: %s", binaryName)
+				if verbose {
+					color.Yellow("✅ Found alternative binary: %s", binaryName)
+				}
 				break
 			}
 		}
@@ -162,7 +169,9 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 	updateInfo.SHA256URL = sha256URL
 	updateInfo.BinaryName = binaryName
 
-	color.Yellow("New version available: %s (current: %s)", cleanLatestVersion, cleanCurrentVersion)
+	if verbose {
+		color.Yellow("New version available: %s (current: %s)", cleanLatestVersion, cleanCurrentVersion)
+	}
 
 	return updateInfo, nil
 }
@@ -558,29 +567,21 @@ func UpdateLastCheckTime() {
 	_, _ = file.WriteString(time.Now().Format(time.RFC3339))
 }
 
-// CheckForUpdatesAtStartup checks for updates at startup and shows a prompt
-func CheckForUpdatesAtStartup(currentVersion string) {
+// CheckForUpdatesAtStartup checks for updates without writing to the terminal.
+// Callers can defer displaying the result until the prompt is not rendering.
+func CheckForUpdatesAtStartup(currentVersion string) (*UpdateInfo, error) {
 	// Always check for updates if this is a development version
 	isDev := strings.Contains(currentVersion, "dev") || strings.Contains(currentVersion, "test")
 
 	if !isDev && !ShouldCheckForUpdates() {
-		return
+		return nil, nil
 	}
 
-	updateInfo, err := CheckForUpdates(currentVersion)
+	updateInfo, err := checkForUpdates(currentVersion, false)
 	if err != nil {
-		// Silently fail for startup check
-		return
+		return nil, err
 	}
 
 	UpdateLastCheckTime()
-
-	if updateInfo.NeedsUpdate {
-		color.Yellow("\nA new version is available!")
-		color.Yellow("   Current: %s", updateInfo.CurrentVersion)
-		color.Yellow("   Latest:  %s", updateInfo.LatestVersion)
-		color.Cyan("Run '/update' to update to the latest version.")
-		ui.Mutedln("   Or use '/update --force' to update without confirmation.")
-		ui.Systemln("")
-	}
+	return updateInfo, nil
 }

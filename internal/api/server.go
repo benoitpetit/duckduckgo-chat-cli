@@ -79,12 +79,11 @@ func StartServer(chatSession *chat.Chat, cfg *config.Config, port int) {
 		IdleTimeout:  120 * time.Second,
 	}
 	server = srv
+	ui.Debugln("Starting API server on %s", srv.Addr)
+	ui.Debugln("API documentation: http://%s/doc/index.html", srv.Addr)
+	ui.Debugln("API base URL: http://%s/api/v1", srv.Addr)
 
 	go func() {
-		ui.Systemln("Starting API server on %s", srv.Addr)
-		ui.Systemln("API Documentation available at: http://%s/doc/index.html", srv.Addr)
-		ui.Systemln("API Base URL: http://%s/api/v1", srv.Addr)
-
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			ui.Errorln("API server error: %v", err)
 			serverMu.Lock()

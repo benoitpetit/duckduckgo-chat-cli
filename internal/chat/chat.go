@@ -26,6 +26,7 @@ import (
 
 	"duckduckgo-chat-cli/internal/activity"
 	"duckduckgo-chat-cli/internal/analytics"
+	"duckduckgo-chat-cli/internal/browserrelay"
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
@@ -42,6 +43,7 @@ import (
 
 type Chat struct {
 	Activity      *activity.Hub
+	Display       *ConversationView
 	OldVqd        string
 	NewVqd        string
 	VqdHash1      string // x-vqd-hash-1 header (full VQD hash)
@@ -51,6 +53,7 @@ type Chat struct {
 	Messages      []Message
 	pendingImages []media.ImageAttachment
 	Client        *http.Client
+	BrowserRetry  BrowserRetryer
 	CookieJar     *cookiejar.Jar
 	LastHash      string
 	RetryCount    int
@@ -62,18 +65,28 @@ type Chat struct {
 	SessionID                  string
 	ConversationStartTime      time.Time
 	suppressSensitiveDebugLogs bool
+	suppressDebugPayload       bool
 
 	// Native Duck.ai tools are opt-in because their wire protocol is not
 	// public API and may change independently of the chat endpoint.
-	NativeToolsEnabled    bool
-	NativeWebSearch       bool
-	NativeImageGeneration bool
-	GeneratedImageDir     string
-	requestMu             sync.Mutex
-	requestCancel         context.CancelFunc
-	rateLimitFallbackOpen time.Time
-	durableStreamMu       sync.Mutex
-	durableConversation   *DurableStream
+	NativeToolsEnabled                bool
+	NativeWebSearch                   bool
+	NativeImageGeneration             bool
+	GeneratedImageDir                 string
+	requestMu                         sync.Mutex
+	requestCancel                     context.CancelFunc
+	rateLimitFallbackOpen             time.Time
+	rateLimitBrowserOpenedThisAttempt bool
+	retryProofTimeout                 time.Duration
+	visibleProofBrowserFactory        proofBrowserFactory
+	durableStreamMu                   sync.Mutex
+	durableConversation               *DurableStream
+}
+
+// BrowserRetryer runs a final Duck.ai request through the signed-in page
+// session. Keeping this as an interface allows tests to use an isolated fake.
+type BrowserRetryer interface {
+	Do(context.Context, browserrelay.Request) (*http.Response, bool, error)
 }
 
 type Message struct {
@@ -83,7 +96,12 @@ type Message struct {
 	Timestamp time.Time               `json:"-"`
 }
 
-var ErrRateLimited = errors.New("Duck.ai rate limit reached (429). No retry was sent. Try again later or check your usage limits. If this seems unexpected on a shared VPN or network, try changing your network/IP to troubleshoot.")
+var ErrRateLimited = errors.New("Duck.ai rate limit reached (HTTP 429). Try again later.")
+var ErrDuckAIChallenge = errors.New("Duck.ai rejected this automated browser session (HTTP 418, ERR_CHALLENGE). The CLI cannot continue this request.")
+var errRetryProofCapture = errors.New("fresh Duck.ai proof capture failed")
+var errEmptyResponse = errors.New("Duck.ai returned no assistant response")
+
+const defaultRetryProofTimeout = 15 * time.Second
 
 // RateLimitError keeps safe, actionable information from a 429 response while
 // remaining compatible with callers that check errors.Is(err, ErrRateLimited).
@@ -109,6 +127,16 @@ func (e *RateLimitError) Error() string {
 
 func (e *RateLimitError) Is(target error) bool {
 	return target == ErrRateLimited
+}
+
+func recoveryErrorDetail(err error) string {
+	if errors.Is(err, ErrRateLimited) {
+		return "Duck.ai still reports HTTP 429 in that browser session"
+	}
+	if err == nil {
+		return "unknown error"
+	}
+	return err.Error()
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
@@ -209,7 +237,7 @@ func InitializeSession(cfg *config.Config) *Chat {
 		ui.Warningln("Unknown configured model; using %s", model)
 	}
 	chat := NewChat("", "", "", "", model, cfg)
-	ui.AIln("Chat initialized with model: %s", model)
+	ui.Debugln("Chat initialized with model: %s", model)
 	setTerminalTitle(fmt.Sprintf("DuckDuckGo Chat - %s", model))
 	return chat
 }
@@ -224,16 +252,7 @@ func setTerminalTitle(title string) {
 }
 
 func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg *config.Config) *Chat {
-	jar, _ := cookiejar.New(nil)
-
-	// Set required cookies avec les cookies minimum nécessaires
-	u, _ := url.Parse("https://duck.ai")
-	cookies := []*http.Cookie{
-		{Name: "5", Value: "1", Domain: ".duck.ai"},
-		{Name: "dcm", Value: "3", Domain: ".duck.ai"},
-		{Name: "dcs", Value: "1", Domain: ".duck.ai"},
-	}
-	jar.SetCookies(u, cookies)
+	jar := newDuckAICookieJar()
 
 	// Generate unique session ID
 	sessionID := fmt.Sprintf("session_%d", time.Now().UnixNano())
@@ -247,7 +266,7 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	}
 
 	// Use all headers like the real web browser
-	ui.AIln("Using VQD with all required headers like web browser")
+	ui.Debugln("Using VQD with all required headers like web browser")
 
 	chat := &Chat{
 		OldVqd:    vqd,       // x-vqd-4 value
@@ -261,8 +280,12 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 		// Streaming requests are bounded by their request context rather than a
 		// short client-wide timeout. This keeps long responses and image
 		// generation cancellable without truncating healthy streams.
-		Client:     &http.Client{Jar: jar},
-		RetryCount: 0,
+		Client: &http.Client{Jar: jar},
+		// Keep all automatic recovery inside the isolated headless browser.
+		// Legacy rate_limit.open_browser settings are intentionally ignored.
+		BrowserRetry:               nil,
+		RetryCount:                 0,
+		visibleProofBrowserFactory: nil,
 
 		// Initialize new intelligent features
 		Analytics:             analytics,
@@ -280,7 +303,7 @@ func NewChat(vqd, vqdHash1, feSignals, feVersion string, model models.Model, cfg
 	// Record initial model
 	analytics.RecordModelChange(string(model))
 
-	ui.AIln("Intelligent features enabled: Analytics, Context Optimization, History Management")
+	ui.Debugln("Intelligent features enabled: Analytics, Context Optimization, History Management")
 
 	return chat
 }
@@ -342,6 +365,38 @@ func (c *Chat) resetDurableConversation() {
 	c.durableStreamMu.Unlock()
 }
 
+// resetRateLimitSession clears Duck.ai site data in the running headless
+// browser, then discards HTTP cookies and the durable conversation identity.
+func (c *Chat) resetRateLimitSession() error {
+	return c.resetRateLimitSessionContext(context.Background())
+}
+
+func (c *Chat) resetRateLimitSessionContext(ctx context.Context) error {
+	resetCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := sharedDuckAIBrowser.ClearSiteData(resetCtx); err != nil {
+		return fmt.Errorf("could not clear Duck.ai browser site data: %w", err)
+	}
+
+	jar := newDuckAICookieJar()
+	c.CookieJar = jar
+	if c.Client != nil {
+		c.Client.Jar = jar
+	}
+	c.NewVqd = ""
+	c.OldVqd = ""
+	c.VqdHash1 = ""
+	c.FeSignals = ""
+	c.FeVersion = ""
+	c.resetDurableConversation()
+	return nil
+}
+
+func newDuckAICookieJar() *cookiejar.Jar {
+	jar, _ := cookiejar.New(nil)
+	return jar
+}
+
 func randomRequestID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -372,28 +427,22 @@ func (c *Chat) Clear(cfg *config.Config) error {
 			return err
 		}
 	}
+	if err := c.resetRateLimitSession(); err != nil {
+		return err
+	}
+	c.Messages = []Message{}
+	c.pendingImages = nil
+	if c.Display != nil {
+		c.Display.Clear()
+	}
+	c.RetryCount = 0
+	c.rateLimitFallbackOpen = time.Time{}
+	c.rateLimitBrowserOpenedThisAttempt = false
+	c.SessionID = fmt.Sprintf("session_%d", time.Now().UnixNano())
+	c.ConversationStartTime = time.Now()
 
 	clearTerminal()
-
-	if len(c.Messages) > 0 {
-		c.Messages = []Message{}
-		c.NewVqd = ""
-		c.OldVqd = ""
-		c.VqdHash1 = ""
-		c.FeSignals = ""
-		c.FeVersion = ""
-		c.RetryCount = 0
-
-		// Generate new session ID for the fresh start
-		c.SessionID = fmt.Sprintf("session_%d", time.Now().UnixNano())
-		c.ConversationStartTime = time.Now()
-
-		ui.AIln("Chat history and context cleared")
-	} else {
-		ui.Warningln("Chat is already empty")
-	}
-	c.resetDurableConversation()
-	c.pendingImages = nil
+	ui.AIln("Chat history and Duck.ai session cleared")
 
 	if cfg.ShowMenu {
 		PrintWelcomeMessage()
@@ -433,26 +482,50 @@ func ProcessInputWithContext(c *Chat, contextContent, prompt string, cfg *config
 }
 
 func processInputWithRoleLengths(c *Chat, input string, cfg *config.Config, userContentLength, contextContentLength int) {
+	if c.Display != nil {
+		c.Display.SetHeader("DuckDuckGo AI Chat CLI · " + models.DisplayName(c.Model))
+		c.Display.SetFramed(cfg.Appearance.FrameResponses)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	c.setRequestCancel(cancel)
 	defer c.clearRequestCancel()
 	modelLabel := func() string { return shortenModelName(string(c.Model)) }
-	modelPrefix := ui.AccentColor.Sprint(modelLabel() + ":")
-	withModel := func(label string) string {
-		return modelPrefix + " " + label
+	spinner := ui.StartSpinnerWithModel(ui.AccentColor.Sprint(modelLabel()))
+	defer spinner.Stop()
+	debugTrace := &requestDebugTrace{}
+	if ui.DebugEnabled() {
+		debugTrace.RecordProgress(ProgressUpdate{Stage: ui.ProgressConnecting, Label: "Connecting to Duck.ai"})
 	}
-	spinner := ui.StartSpinner(withModel("Connecting to Duck.ai"))
+	recordProgress := func(update ProgressUpdate) {
+		spinner.SetProgress(update.Stage, update.Label)
+		if ui.DebugEnabled() {
+			debugTrace.RecordProgress(update)
+		}
+	}
+	recordEvent := func(event StreamEvent) {
+		if !ui.DebugEnabled() {
+			return
+		}
+		debugTrace.RecordEvent(event)
+	}
 	fetch := func(ctx context.Context, content string) (<-chan string, <-chan error, error) {
-		return c.FetchStreamWithErrorsAndProgress(ctx, content, func(label string) {
-			spinner.SetLabel(withModel(label))
-		})
+		return c.FetchStreamWithErrorsAndProgressEvents(ctx, content, recordProgress, recordEvent)
 	}
-	_, err := processInputWithTokenRoles(ctx, c, input, cfg, func(stream <-chan string) string {
-		return RenderStream(stream, shortenModelName(string(c.Model)), spinner)
+	response, err := processInputWithTokenRoles(ctx, c, input, cfg, func(stream <-chan string) string {
+		return RenderStreamWithView(stream, shortenModelName(string(c.Model)), spinner, cfg.Appearance.FrameResponses, c.Display)
 	}, fetch, userContentLength, contextContentLength)
+	if err == nil && c.Display != nil {
+		c.Display.RecordAssistant(modelLabel(), response)
+	}
 	spinner.Stop()
+	if ui.DebugEnabled() {
+		for _, entry := range debugTrace.Snapshot() {
+			ui.Debugln("%s", entry)
+		}
+	}
 	if err != nil {
-		c.reportChatFailure(cfg, err, time.Now(), openDefaultBrowser)
+		c.reportChatFailure(ctx, err)
 	}
 }
 
@@ -666,6 +739,9 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 			}
 		}
 	}
+	if streamErr == nil && strings.TrimSpace(finalResponse) == "" {
+		streamErr = errEmptyResponse
+	}
 	if streamErr != nil {
 		if c.Activity != nil {
 			c.Activity.Publish(activity.Event{Category: "request", Status: "failed", Summary: "Chat response stream failed", Model: usedModel, OperationID: requestActivity.OperationID})
@@ -739,13 +815,23 @@ func (c *Chat) FetchStreamWithErrors(ctx context.Context, content string) (<-cha
 
 // FetchStreamWithErrorsAndProgress also reports Duck.ai tool and status events
 // to an optional terminal progress callback while preserving response text.
-func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content string, onProgress func(string)) (<-chan string, <-chan error, error) {
-	events, err := c.FetchEventStreamContext(ctx, content)
+func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content string, onProgress func(ProgressUpdate)) (<-chan string, <-chan error, error) {
+	return c.fetchStreamWithErrorsAndProgress(ctx, content, onProgress, nil)
+}
+
+// FetchStreamWithErrorsAndProgressEvents also exposes structured stream events
+// to callers that need diagnostics while keeping response rendering separate.
+func (c *Chat) FetchStreamWithErrorsAndProgressEvents(ctx context.Context, content string, onProgress func(ProgressUpdate), onEvent func(StreamEvent)) (<-chan string, <-chan error, error) {
+	return c.fetchStreamWithErrorsAndProgress(ctx, content, onProgress, onEvent)
+}
+
+func (c *Chat) fetchStreamWithErrorsAndProgress(ctx context.Context, content string, onProgress func(ProgressUpdate), onEvent func(StreamEvent)) (<-chan string, <-chan error, error) {
+	events, err := c.fetchEventStreamContextWithProgress(ctx, content, onProgress)
 	if err != nil {
 		return nil, nil, err
 	}
 	if onProgress != nil {
-		onProgress("Preparing response")
+		onProgress(ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Preparing response"})
 	}
 
 	stream := make(chan string)
@@ -754,17 +840,27 @@ func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content str
 		defer close(stream)
 		defer close(streamErrors)
 		var latestImage *StreamEvent
+		var seenSources sourceProgressTracker
+		var responseProgress responseProgressTracker
 		for event := range events {
+			if onEvent != nil {
+				onEvent(event)
+			}
 			switch event.Type {
 			case "status", "tool":
 				if onProgress != nil {
-					if label := streamProgressLabel(event); label != "" {
-						onProgress(label)
+					if update, ok := progressUpdateForEvent(event); ok {
+						onProgress(update)
 					}
 				}
 			case "error":
 				streamErrors <- errors.New(event.Message)
 			case "message":
+				if onProgress != nil {
+					if update, ok := responseProgress.Add(event); ok {
+						onProgress(update)
+					}
+				}
 				if event.Message != "" {
 					select {
 					case stream <- event.Message:
@@ -774,6 +870,9 @@ func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content str
 				}
 			case "source":
 				if event.SourceURL != "" {
+					if count, added := seenSources.Add(event.SourceURL); added && onProgress != nil {
+						onProgress(sourceProgressUpdate(count))
+					}
 					select {
 					case stream <- formatSourceEvent(event):
 					case <-ctx.Done():
@@ -781,8 +880,10 @@ func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content str
 					}
 				}
 			case "image":
-				if onProgress != nil && (event.ImageBase64 != "" || strings.Contains(strings.ToLower(event.ToolName), "image")) {
-					onProgress("Generating image")
+				if onProgress != nil {
+					if update, ok := progressUpdateForEvent(event); ok {
+						onProgress(update)
+					}
 				}
 				if event.ImageBase64 != "" {
 					imageCopy := event
@@ -799,12 +900,18 @@ func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content str
 		if latestImage != nil {
 			path, err := c.saveGeneratedImage(*latestImage)
 			if err != nil {
+				if onEvent != nil {
+					onEvent(StreamEvent{Type: "image_save_failed", ToolResult: err.Error()})
+				}
 				select {
 				case stream <- fmt.Sprintf("\n\nImage generated but could not be saved: %v\n", err):
 				case <-ctx.Done():
 					return
 				}
 			} else {
+				if onEvent != nil {
+					onEvent(StreamEvent{Type: "image_saved", ImageURL: path})
+				}
 				select {
 				case stream <- fmt.Sprintf("\n\nImage generated: %s\n", path):
 				case <-ctx.Done():
@@ -817,28 +924,11 @@ func (c *Chat) FetchStreamWithErrorsAndProgress(ctx context.Context, content str
 	return stream, streamErrors, nil
 }
 
-func streamProgressLabel(event StreamEvent) string {
-	if event.Type == "status" {
-		return event.Status
+func sourceProgressLabel(count int) string {
+	if count == 1 {
+		return "Found 1 web source"
 	}
-	name := strings.ToLower(event.ToolName)
-	state := strings.ToLower(event.State)
-	if strings.Contains(name, "search") || strings.Contains(name, "web") {
-		if state == "result" || state == "complete" || state == "completed" {
-			return "Writing response"
-		}
-		return "Searching the web"
-	}
-	if strings.Contains(name, "image") {
-		return "Generating image"
-	}
-	if state == "result" || state == "complete" || state == "completed" {
-		return "Writing response"
-	}
-	if event.ToolName != "" && (state == "call" || state == "partial-call" || state == "calling") {
-		return "Using " + event.ToolName
-	}
-	return ""
+	return fmt.Sprintf("Found %d web sources", count)
 }
 
 func formatSourceEvent(event StreamEvent) string {
@@ -857,7 +947,11 @@ func (c *Chat) FetchEventStream(content string) (<-chan StreamEvent, error) {
 }
 
 func (c *Chat) FetchEventStreamContext(ctx context.Context, content string) (<-chan StreamEvent, error) {
-	resp, err := c.FetchContext(ctx, content)
+	return c.fetchEventStreamContextWithProgress(ctx, content, nil)
+}
+
+func (c *Chat) fetchEventStreamContextWithProgress(ctx context.Context, content string, onProgress func(ProgressUpdate)) (<-chan StreamEvent, error) {
+	resp, err := c.fetchContext(ctx, content, 0, onProgress)
 	if err != nil {
 		return nil, err
 	}
@@ -1077,18 +1171,61 @@ func (c *Chat) Fetch(content string) (*http.Response, error) {
 	return c.FetchContext(context.Background(), content)
 }
 
-func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response, error) {
-	c.RetryCount = 0
-	return c.fetchContext(ctx, content, 0)
+func retryProgress(onProgress func(ProgressUpdate), update ProgressUpdate, fallbackMessage string) {
+	if onProgress != nil {
+		onProgress(update)
+		return
+	}
+	if fallbackMessage != "" {
+		ui.Warningln("%s", fallbackMessage)
+	}
 }
 
-func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*http.Response, error) {
+func (c *Chat) FetchContext(ctx context.Context, content string) (*http.Response, error) {
+	c.RetryCount = 0
+	return c.fetchContext(ctx, content, 0, nil)
+}
+
+func (c *Chat) fetchContext(ctx context.Context, content string, retries int, onProgress func(ProgressUpdate)) (*http.Response, error) {
+	if retries == 0 {
+		c.rateLimitBrowserOpenedThisAttempt = false
+	}
 	startTime := time.Now()
 	// Duck.ai's proof is generated by its frontend and must be captured from
 	// a real browser request. It is rotated frequently, so refresh it for
 	// every chat request instead of reusing the old DuckDuckGo token.
-	headers, err := getCurrentDuckAIHeaders(ctx)
+	proofCtx := ctx
+	var cancelProof context.CancelFunc
+	if retries > 0 {
+		timeout := c.retryProofTimeout
+		if timeout <= 0 {
+			timeout = defaultRetryProofTimeout
+		}
+		proofCtx, cancelProof = context.WithTimeout(ctx, timeout)
+	}
+	headers, err := getCurrentDuckAIHeaders(proofCtx)
+	if cancelProof != nil {
+		cancelProof()
+	}
 	if err != nil {
+		if retries == 0 && errors.Is(err, ErrRateLimited) && ctx.Err() == nil &&
+			c.BrowserRetry == nil && c.visibleProofBrowserFactory == nil {
+			retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Clearing Duck.ai site data"}, "Duck.ai refused this browser session; clearing its site data and retrying once.")
+			if resetErr := c.resetRateLimitSessionContext(ctx); resetErr != nil {
+				return nil, fmt.Errorf("%w; could not reset local session: %v", err, resetErr)
+			}
+			c.RetryCount = 1
+			return c.fetchContext(ctx, content, 1, onProgress)
+		}
+		if retries > 0 && errors.Is(err, ErrRateLimited) {
+			return nil, err
+		}
+		if retries > 0 && ctx.Err() == nil {
+			return nil, fmt.Errorf("%w: %w", errRetryProofCapture, err)
+		}
+		if retries == 0 && errors.Is(err, ErrRateLimited) && c.visibleProofBrowserFactory != nil && ctx.Err() == nil {
+			return c.fetchViaCleanBrowser(ctx, content, onProgress, err)
+		}
 		return nil, err
 	}
 	c.NewVqd = ""
@@ -1097,6 +1234,16 @@ func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*
 	c.FeVersion = headers.FeVersion
 	if c.VqdHash1 == "" {
 		return nil, fmt.Errorf("Duck.ai returned an empty X-Vqd-Hash-1 proof")
+	}
+	if len(headers.BrowserCookies) > 0 {
+		if c.CookieJar == nil {
+			c.CookieJar = newDuckAICookieJar()
+		}
+		site, _ := url.Parse(models.ChatURL)
+		c.CookieJar.SetCookies(site, headers.BrowserCookies)
+		if c.Client != nil {
+			c.Client.Jar = c.CookieJar
+		}
 	}
 
 	durableStream, err := c.durableStreamForRequest()
@@ -1111,7 +1258,7 @@ func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*
 		return nil, fmt.Errorf("error marshaling payload: %v", err)
 	}
 
-	if shouldLogRequestDetails(c) {
+	if shouldLogRequestPayload(c) {
 		debugPayload, debugErr := marshalDebugPayload(payload)
 		if debugErr != nil {
 			color.Yellow("Could not marshal redacted debug payload: %v", debugErr)
@@ -1160,20 +1307,81 @@ func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*
 
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error sending request: %v", err)
+		return nil, fmt.Errorf("error sending request: %w", err)
+	}
+	return c.handleFetchResponse(ctx, resp, req, content, jsonPayload, retries, onProgress, startTime)
+}
+
+func (c *Chat) fetchViaCleanBrowser(ctx context.Context, content string, onProgress func(ProgressUpdate), initialErr error) (*http.Response, error) {
+	durableStream, err := c.durableStreamForRequest()
+	if err != nil {
+		return nil, fmt.Errorf("%w; could not prepare clean browser request: %v", initialErr, err)
+	}
+	payload, err := json.Marshal(c.buildPayload(durableStream))
+	if err != nil {
+		return nil, fmt.Errorf("%w; could not encode clean browser request: %v", initialErr, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, models.ChatURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("%w; could not create clean browser request: %v", initialErr, err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	if c.BrowserRetry != nil {
+		retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Opening Duck.ai in Chrome"}, "")
+		browserResponse, opened, browserErr := c.BrowserRetry.Do(ctx, browserrelay.Request{
+			URL: req.URL.String(), Method: req.Method,
+			Header: browserrelay.FilterRequestHeaders(req.Header),
+			Body:   append([]byte(nil), payload...),
+		})
+		if opened {
+			c.rateLimitBrowserOpenedThisAttempt = true
+		}
+		if browserErr != nil {
+			return nil, fmt.Errorf("%w; Chrome retry failed: %w", initialErr, browserErr)
+		}
+		if browserResponse == nil {
+			return nil, fmt.Errorf("%w; Chrome retry returned no response", initialErr)
+		}
+		return c.handleFetchResponse(ctx, browserResponse, req, content, payload, 2, onProgress, time.Now())
+	}
+	response, err := c.tryVisibleBrowserRequest(ctx, req, payload, onProgress)
+	if err != nil {
+		return nil, fmt.Errorf("%w; clean browser retry failed: %s", initialErr, recoveryErrorDetail(err))
+	}
+	return c.handleFetchResponse(ctx, response, req, content, payload, 2, onProgress, time.Now())
+}
+
+func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req *http.Request, content string, jsonPayload []byte, retries int, onProgress func(ProgressUpdate), startTime time.Time) (*http.Response, error) {
+	// The browser-backed request is the final 429 recovery step. A failed
+	// fresh proof capture also reaches it from the first-attempt branch below.
+	// Both paths use the same status and SSE handling as a normal response.
+	if resp.StatusCode == http.StatusTooManyRequests && retries == 1 && (c.BrowserRetry != nil || c.visibleProofBrowserFactory != nil) {
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		rateLimitErr := &RateLimitError{
+			Code:       rateLimitErrorCode(body),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
+		browserResponse, browserErr := c.browserRetryResponse(ctx, req, jsonPayload, rateLimitErr, onProgress, true)
+		if browserErr != nil {
+			return nil, fmt.Errorf("%w; %w", rateLimitErr, browserErr)
+		}
+		resp = browserResponse
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		challenge := resp.StatusCode == http.StatusTeapot || rateLimitErrorCode(body) == "ERR_CHALLENGE"
 		if shouldLogRequestDetails(c) {
 			color.Red("Request Headers: %+v", redactDebugHeaders(req.Header))
 			color.Red("Response Headers: %+v", redactDebugHeaders(resp.Header))
 			color.Red("Response Status: %d", resp.StatusCode)
-			if resp.StatusCode == http.StatusTooManyRequests {
+			if resp.StatusCode == http.StatusTooManyRequests || challenge {
 				if code := rateLimitErrorCode(body); code != "" {
-					color.Red("Rate limit error code: %s", code)
+					color.Red("Duck.ai error code: %s", code)
 				}
 			} else {
 				color.Red("Response Body: %s", string(body))
@@ -1181,12 +1389,10 @@ func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*
 		}
 
 		bodyText := string(body)
-		retryableProofFailure := resp.StatusCode == http.StatusTeapot ||
-			strings.Contains(bodyText, "ERR_INVALID_VQD") ||
-			strings.Contains(bodyText, "ERR_CHALLENGE")
+		retryableProofFailure := strings.Contains(bodyText, "ERR_INVALID_VQD")
 		if c.Analytics != nil && (retryableProofFailure || resp.StatusCode == http.StatusTooManyRequests) {
 			errorType := "unknown"
-			if resp.StatusCode == http.StatusTeapot || strings.Contains(bodyText, "ERR_CHALLENGE") {
+			if challenge {
 				errorType = "418"
 			} else if resp.StatusCode == http.StatusTooManyRequests {
 				errorType = "429"
@@ -1195,31 +1401,78 @@ func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*
 			c.Analytics.RecordChatInteraction(duration, false, errorType)
 			c.Analytics.RecordModelInteraction(string(c.Model), duration, false, errorType)
 		}
+		if challenge {
+			c.RetryCount = 0
+			return nil, ErrDuckAIChallenge
+		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.RetryCount = 0
-			return nil, &RateLimitError{
+			rateLimitErr := &RateLimitError{
 				Code:       rateLimitErrorCode(body),
 				RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 			}
+			if retries < 1 {
+				if rateLimitErr.RetryAfter > 0 {
+					retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Waiting for Duck.ai retry window"}, "")
+					if err := waitRetryAfter(ctx, rateLimitErr.RetryAfter); err != nil {
+						return nil, fmt.Errorf("%w; retry canceled: %w", rateLimitErr, err)
+					}
+				}
+				// The automatic path uses one local reset and one fresh request.
+				// A second send with the rejected proof can only add another
+				// request to a session Duck.ai already refused.
+				if c.BrowserRetry != nil || c.visibleProofBrowserFactory != nil {
+					pageResponse, pageErr := c.tryProofBrowserRequest(ctx, req, jsonPayload, onProgress)
+					if pageErr == nil {
+						return c.handleFetchResponse(ctx, pageResponse, req, content, jsonPayload, retries+2, onProgress, startTime)
+					}
+					if ctx.Err() != nil {
+						return nil, fmt.Errorf("%w; browser retry canceled: %w", rateLimitErr, ctx.Err())
+					}
+					if !errors.Is(pageErr, errBrowserPageRequestUnavailable) {
+						ui.Debugln("Duck.ai in-page retry did not succeed: %v", pageErr)
+					}
+				}
+				retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Clearing Duck.ai site data"}, "429 received; clearing Duck.ai site data and retrying once.")
+				if err := c.resetRateLimitSessionContext(ctx); err != nil {
+					return nil, fmt.Errorf("%w; could not clear local session data before retry: %v", rateLimitErr, err)
+				}
+				c.RetryCount = retries + 1
+				if c.Activity != nil {
+					c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Duck.ai rate limit; resetting local site data and retrying once", Model: string(c.Model)})
+				}
+				retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressConnecting, Label: "Retrying after site data reset"}, "")
+				response, retryErr := c.fetchContext(ctx, content, retries+1, onProgress)
+				if errors.Is(retryErr, errRetryProofCapture) && ctx.Err() == nil && (c.BrowserRetry != nil || c.visibleProofBrowserFactory != nil) {
+					browserResponse, browserErr := c.browserRetryResponse(ctx, req, jsonPayload, rateLimitErr, onProgress, false)
+					if browserErr != nil {
+						return nil, fmt.Errorf("%w; fresh proof unavailable (%s); %w", rateLimitErr, recoveryErrorDetail(retryErr), browserErr)
+					}
+					return c.handleFetchResponse(ctx, browserResponse, req, content, jsonPayload, retries+2, onProgress, startTime)
+				}
+				if retryErr != nil && !errors.Is(retryErr, ErrRateLimited) {
+					return nil, fmt.Errorf("%w; retry failed: %w", rateLimitErr, retryErr)
+				}
+				return response, retryErr
+			}
+			return nil, rateLimitErr
 		}
 
-		// Only retry when Duck.ai explicitly rejected the rotating proof or
-		// returned its challenge status. A generic 400 can indicate a bad
-		// payload (for example an unsupported image format), and a 429 is a
-		// rate limit; refreshing proof and replaying either request is harmful.
+		// A generic 400 can indicate a bad payload (for example an unsupported
+		// image format), so only explicit proof or challenge failures are retried.
 		if retryableProofFailure && retries < 1 {
 			c.RetryCount = retries + 1
 			if c.Activity != nil {
 				c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Duck.ai proof rejected; refreshing and retrying once", Model: string(c.Model)})
 			}
-			ui.Warningln("Duck.ai rejected the request proof (HTTP %d); retrying once with a fresh proof...", resp.StatusCode)
+			retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressConnecting, Label: "Refreshing Duck.ai proof"}, fmt.Sprintf("Duck.ai rejected the request proof (HTTP %d); retrying once with a fresh proof...", resp.StatusCode))
 			if c.Analytics != nil {
 				c.Analytics.RecordVQDRefresh()
 			}
 			// FetchContext captures a fresh proof at the start of every attempt.
 			// Do not perform a separate capture here, which would waste a proof
 			// and add another browser bootstrap before the actual retry.
-			return c.fetchContext(ctx, content, retries+1)
+			return c.fetchContext(ctx, content, retries+1, onProgress)
 		}
 		c.RetryCount = 0
 		return nil, fmt.Errorf("%d: Failed to send message. %s. Body: %s", resp.StatusCode, resp.Status, string(body))
@@ -1233,6 +1486,152 @@ func (c *Chat) fetchContext(ctx context.Context, content string, retries int) (*
 	c.RetryCount = 0
 
 	return resp, nil
+}
+
+func (c *Chat) browserRetryResponse(ctx context.Context, req *http.Request, jsonPayload []byte, rateLimitErr *RateLimitError, onProgress func(ProgressUpdate), waitForWindow bool) (*http.Response, error) {
+	if waitForWindow && rateLimitErr.RetryAfter > 0 {
+		retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Waiting for Duck.ai retry window"}, "")
+		if err := waitRetryAfter(ctx, rateLimitErr.RetryAfter); err != nil {
+			return nil, fmt.Errorf("browser retry canceled: %w", err)
+		}
+	}
+	pageResponse, pageErr := c.tryProofBrowserRequest(ctx, req, jsonPayload, onProgress)
+	if pageErr == nil {
+		return pageResponse, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var visibleErr error
+	if c.BrowserRetry == nil && c.visibleProofBrowserFactory != nil {
+		visibleResponse, err := c.tryVisibleBrowserRequest(ctx, req, jsonPayload, onProgress)
+		if err == nil {
+			return visibleResponse, nil
+		}
+		visibleErr = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	if c.BrowserRetry == nil {
+		if visibleErr != nil {
+			return nil, fmt.Errorf("clean browser retry failed: %s", recoveryErrorDetail(visibleErr))
+		}
+		return nil, pageErr
+	}
+	retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Opening Duck.ai in Chrome"}, "Duck.ai is still rate limiting the CLI; clearing its Chrome site data and retrying once.")
+	if c.Activity != nil {
+		c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Duck.ai rate limit; trying one request through the browser session", Model: string(c.Model)})
+	}
+	retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressConnecting, Label: "Retrying with the Chrome Duck.ai session"}, "")
+	response, opened, err := c.BrowserRetry.Do(ctx, browserrelay.Request{
+		URL: req.URL.String(), Method: req.Method,
+		Header: browserrelay.FilterRequestHeaders(req.Header),
+		Body:   append([]byte(nil), jsonPayload...),
+	})
+	if opened {
+		c.rateLimitBrowserOpenedThisAttempt = true
+	}
+	if err != nil {
+		if visibleErr != nil {
+			return nil, fmt.Errorf("clean browser retry failed (%s); browser session retry failed: %w", recoveryErrorDetail(visibleErr), err)
+		}
+		if pageErr != nil && !errors.Is(pageErr, errBrowserPageRequestUnavailable) {
+			return nil, fmt.Errorf("temporary browser retry failed (%s); browser session retry failed: %w", recoveryErrorDetail(pageErr), err)
+		}
+		return nil, fmt.Errorf("browser session retry failed: %w", err)
+	}
+	if response == nil {
+		return nil, errors.New("browser session retry returned no response")
+	}
+	return response, nil
+}
+
+func (c *Chat) tryProofBrowserRequest(ctx context.Context, req *http.Request, jsonPayload []byte, onProgress func(ProgressUpdate)) (*http.Response, error) {
+	retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressConnecting, Label: "Retrying in the Duck.ai browser session"}, "")
+	response, err := sharedDuckAIBrowser.PageRequest(ctx, browserrelay.Request{
+		URL: req.URL.String(), Method: req.Method,
+		Header: browserrelay.FilterRequestHeaders(req.Header),
+		Body:   append([]byte(nil), jsonPayload...),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if response == nil {
+		return nil, errors.New("Duck.ai browser page returned no response")
+	}
+	if response.StatusCode == http.StatusOK {
+		return response, nil
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		return nil, &RateLimitError{Code: rateLimitErrorCode(body)}
+	}
+	return nil, fmt.Errorf("Duck.ai browser page returned HTTP %d", response.StatusCode)
+}
+
+func (c *Chat) tryVisibleBrowserRequest(ctx context.Context, req *http.Request, jsonPayload []byte, onProgress func(ProgressUpdate)) (*http.Response, error) {
+	retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressPreparing, Label: "Opening a clean Duck.ai browser"}, "")
+	bootstrapCtx, cancelBootstrap := context.WithTimeout(ctx, defaultRetryProofTimeout)
+	defer cancelBootstrap()
+	browser, err := c.visibleProofBrowserFactory(bootstrapCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := browser.Close(); closeErr != nil {
+			ui.Debugln("Could not close temporary Duck.ai browser: %v", closeErr)
+		}
+	}()
+	headers, err := browser.Capture(bootstrapCtx)
+	if err != nil {
+		return nil, fmt.Errorf("clean Duck.ai browser could not capture a proof: %w", err)
+	}
+	if headers == nil || headers.VqdHash1 == "" {
+		return nil, errors.New("clean Duck.ai browser returned no request proof")
+	}
+	requester, ok := browser.(browserPageRequester)
+	if !ok {
+		return nil, errBrowserPageRequestUnavailable
+	}
+	requestHeaders := browserrelay.FilterRequestHeaders(req.Header)
+	requestHeaders.Set("x-vqd-hash-1", headers.VqdHash1)
+	if headers.FeSignals != "" {
+		requestHeaders.Set("x-fe-signals", headers.FeSignals)
+	} else {
+		requestHeaders.Del("x-fe-signals")
+	}
+	if headers.FeVersion != "" {
+		requestHeaders.Set("x-fe-version", headers.FeVersion)
+	} else {
+		requestHeaders.Del("x-fe-version")
+	}
+	if headers.JourneyID != "" {
+		requestHeaders.Set("x-ddg-journey-id", headers.JourneyID)
+	} else {
+		requestHeaders.Del("x-ddg-journey-id")
+	}
+	retryProgress(onProgress, ProgressUpdate{Stage: ui.ProgressConnecting, Label: "Retrying in a clean Duck.ai browser"}, "")
+	response, err := requester.Request(ctx, browserrelay.Request{
+		URL: req.URL.String(), Method: req.Method,
+		Header: requestHeaders, Body: append([]byte(nil), jsonPayload...),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if response == nil {
+		return nil, errors.New("clean Duck.ai browser returned no response")
+	}
+	if response.StatusCode == http.StatusOK {
+		return response, nil
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		return nil, &RateLimitError{Code: rateLimitErrorCode(body)}
+	}
+	return nil, fmt.Errorf("clean Duck.ai browser returned HTTP %d", response.StatusCode)
 }
 
 func (c *Chat) buildPayload(durableStream *DurableStream) ChatPayload {
@@ -1329,6 +1728,10 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 
 func shouldLogRequestDetails(c *Chat) bool {
 	return os.Getenv("DEBUG") == "true" && (c == nil || !c.suppressSensitiveDebugLogs)
+}
+
+func shouldLogRequestPayload(c *Chat) bool {
+	return shouldLogRequestDetails(c) && (c == nil || !c.suppressDebugPayload)
 }
 
 func marshalDebugPayload(payload ChatPayload) ([]byte, error) {

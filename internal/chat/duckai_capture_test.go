@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/chromedp/chromedp"
 )
 
 type fakeProofBrowser struct {
@@ -20,6 +22,99 @@ type fakeProofBrowser struct {
 	gate      <-chan struct{}
 	started   chan<- struct{}
 	errors    []error
+}
+
+type cleanableProofBrowser struct {
+	fakeProofBrowser
+	clears int
+}
+
+func (b *cleanableProofBrowser) ClearSiteData(context.Context) error {
+	b.clears++
+	return nil
+}
+
+func TestSiteDataResetKeepsHeadlessBrowserRunning(t *testing.T) {
+	browser := &cleanableProofBrowser{}
+	manager := newBrowserManager(func(context.Context) (proofBrowser, error) { return browser, nil })
+	if _, err := manager.Capture(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ClearSiteData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Capture(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls, _, closed := browser.stats(); calls != 2 || closed != 0 || browser.clears != 1 {
+		t.Fatalf("captures=%d closes=%d clears=%d, want 2, 0, 1", calls, closed, browser.clears)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRateLimitedCaptureKeepsBrowserForSiteDataReset(t *testing.T) {
+	browser := &cleanableProofBrowser{fakeProofBrowser: fakeProofBrowser{errors: []error{&RateLimitError{Code: "ERR_RATE_LIMIT"}}}}
+	manager := newBrowserManager(func(context.Context) (proofBrowser, error) { return browser, nil })
+	if _, err := manager.Capture(context.Background()); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("Capture() error=%v, want rate limit", err)
+	}
+	if _, _, closed := browser.stats(); closed != 0 {
+		t.Fatalf("browser closed on 429 before site data reset")
+	}
+	if err := manager.ClearSiteData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Capture(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if browser.clears != 1 {
+		t.Fatalf("site data clears=%d, want 1", browser.clears)
+	}
+	_ = manager.Close()
+}
+
+func TestChromeSiteDataResetKeepsBrowserAndTabAlive(t *testing.T) {
+	if os.Getenv("DUCKAI_BROWSER_RESET_TEST") != "1" {
+		t.Skip("set DUCKAI_BROWSER_RESET_TEST=1 to exercise local headless Chrome")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	created, err := newChromedpProofBrowser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	browser := created.(*chromedpProofBrowser)
+	defer browser.Close()
+	if err := browser.ensureTarget(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, finishFirst := proofCaptureContext(browser.targetCtx, ctx)
+	if err := chromedp.Run(first, chromedp.Navigate("about:blank")); err != nil {
+		finishFirst()
+		t.Fatal(err)
+	}
+	finishFirst()
+	second, finishSecond := proofCaptureContext(browser.targetCtx, ctx)
+	var tabStillWorks bool
+	if err := chromedp.Run(second, chromedp.Evaluate(`document.location.href === 'about:blank'`, &tabStillWorks)); err != nil {
+		finishSecond()
+		t.Fatalf("second request on the same tab: %v", err)
+	}
+	finishSecond()
+	if !tabStillWorks {
+		t.Fatal("the tab was lost after the first request context ended")
+	}
+	if err := browser.ClearSiteData(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if browser.browserCtx.Err() != nil || browser.targetCtx.Err() != nil {
+		t.Fatal("site data reset closed the headless browser or tab")
+	}
+	if err := chromedp.Run(browser.targetCtx, chromedp.Navigate("about:blank")); err != nil {
+		t.Fatalf("reuse tab after site data reset: %v", err)
+	}
 }
 
 func (b *fakeProofBrowser) Capture(ctx context.Context) (*DynamicHeaders, error) {
@@ -83,6 +178,39 @@ func TestNormalBrowserUserAgentKeepsInstalledVersion(t *testing.T) {
 	}
 	if got := normalBrowserUserAgent(want); got != want {
 		t.Fatalf("normalBrowserUserAgent() changed regular Chrome UA to %q", got)
+	}
+}
+
+func TestDuckAIPageRateLimitMessage(t *testing.T) {
+	for _, text := range []string{
+		"Trop de requêtes. Veuillez faire une courte pause et réessayer.",
+		"Too many requests. Please take a short break and try again.",
+		"ERR_RATE_LIMIT",
+	} {
+		if !duckAIPageRateLimited(text) {
+			t.Errorf("rate-limit page text %q was not recognized", text)
+		}
+	}
+	if duckAIPageRateLimited("Your chat is ready. Ask anything.") {
+		t.Fatal("normal chat page was classified as rate limited")
+	}
+}
+
+func TestProofCaptureContextPreservesCallerDeadline(t *testing.T) {
+	parent, cancelParent := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelParent()
+	target, cancelTarget := context.WithCancel(context.Background())
+	defer cancelTarget()
+
+	captureCtx, cleanup := proofCaptureContext(target, parent)
+	defer cleanup()
+	select {
+	case <-captureCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("capture context did not follow its parent")
+	}
+	if got := context.Cause(captureCtx); !errors.Is(got, context.DeadlineExceeded) {
+		t.Fatalf("capture context cause = %v, want parent deadline exceeded", got)
 	}
 }
 
@@ -395,6 +523,26 @@ func TestLiveProofCaptureReusesBrowserAndRefreshesHeaders(t *testing.T) {
 		t.Fatal("second live proof capture returned an empty X-Vqd-Hash-1")
 	}
 	t.Logf("live proof capture durations: cold=%s warm=%s", coldDuration.Round(time.Millisecond), warmDuration.Round(time.Millisecond))
+}
+
+func TestLiveVisibleProofCapture(t *testing.T) {
+	if os.Getenv("DUCKAI_VISIBLE_LIVE_TEST") != "1" {
+		t.Skip("set DUCKAI_VISIBLE_LIVE_TEST=1 to capture a proof in a visible temporary Chrome profile")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	browser, err := newVisibleChromedpProofBrowser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer browser.Close()
+	headers, err := browser.Capture(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headers.VqdHash1 == "" {
+		t.Fatal("visible Chrome did not produce a Duck.ai proof")
+	}
 }
 
 type fixedHeadersProofBrowser struct {

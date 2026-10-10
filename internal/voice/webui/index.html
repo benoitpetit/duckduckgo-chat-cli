@@ -38,9 +38,11 @@
       <p id="voice-state" class="voice-state" role="status" aria-live="polite">Starting voice session…</p>
     </section>
 
-    <div class="subtitle-slot">
-      <div id="subtitle-panel" class="subtitle-panel" data-speaker="assistant" role="status" aria-label="Voice transcription" aria-live="polite" aria-atomic="false" hidden>
-        <span id="subtitle-speaker" class="subtitle-speaker">Duck.ai</span>
+    <div id="subtitle-slot" class="subtitle-slot">
+      <div id="user-subtitle-panel" class="subtitle-panel" data-speaker="user" role="status" aria-label="Your transcription" aria-live="polite" aria-atomic="false" hidden>
+        <p id="user-transcript" class="subtitle-text"></p>
+      </div>
+      <div id="assistant-subtitle-panel" class="subtitle-panel" data-speaker="assistant" role="status" aria-label="Assistant transcription" aria-live="polite" aria-atomic="false" hidden>
         <p id="assistant-transcript" class="subtitle-text"></p>
       </div>
     </div>
@@ -48,10 +50,33 @@
     <p id="error-message" class="error-message" role="alert" hidden></p>
     <button id="audio-enable-button" class="audio-enable" type="button" hidden>Enable audio</button>
 
+    <section id="termination-panel" class="termination-panel" aria-labelledby="termination-message" role="status" aria-live="polite" hidden>
+      <div class="termination-message">
+        <span class="termination-message-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3 2" /></svg>
+        </span>
+        <p id="termination-message" class="termination-message-text">We ended this conversation due to inactivity. Would you like to try again?</p>
+      </div>
+      <div class="termination-actions">
+        <button id="retry-button" class="button button-start button-retry" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M20 12a8 8 0 0 0-14-5L4 9m0 3a8 8 0 0 0 14 5l2-2" /></svg>
+          <span>Try again</span>
+        </button>
+        <button id="close-voice-button" class="button button-secondary" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          <span>Close</span>
+        </button>
+      </div>
+    </section>
+
     <div id="controls" class="controls" data-mode="idle" aria-label="Voice controls">
       <button id="start-button" class="button button-start" type="button" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 10 6-10 6z" /></svg>
         <span class="button-label">Start</span>
+      </button>
+      <button id="minimize-button" class="button button-secondary button-minimize" type="button" aria-label="Minimize voice window to tray" title="Minimize to tray" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m-5-5 5 5 5-5M4 20h16" /></svg>
+        <span>Minimize</span>
       </button>
       <button id="mute-button" class="button button-mute" type="button" aria-label="Mute microphone (M)" aria-keyshortcuts="M" aria-pressed="false" hidden disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true">

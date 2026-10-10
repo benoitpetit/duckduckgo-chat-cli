@@ -24,6 +24,8 @@ const chromiumAppStartURL = "data:text/html,%3C!doctype%20html%3E%3Ctitle%3EDuck
 
 type chromiumSession struct {
 	ctx             context.Context
+	windowWidth     int
+	windowHeight    int
 	cancelBrowser   context.CancelFunc
 	cancelAllocator context.CancelFunc
 	browserLost     <-chan struct{}
@@ -82,6 +84,8 @@ func (opener ChromiumOpener) Open(ctx context.Context, address string) (BrowserS
 	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx)
 	session := &chromiumSession{
 		ctx:             browserCtx,
+		windowWidth:     width,
+		windowHeight:    height,
 		cancelBrowser:   cancelBrowser,
 		cancelAllocator: cancelAllocator,
 	}
@@ -155,6 +159,37 @@ func setChromiumWindowSize(ctx context.Context, browserContext *chromedp.Context
 		Height:      int64(height),
 		WindowState: cdpbrowser.WindowStateNormal,
 	}).Do(browserExecutorCtx)
+}
+
+func (s *chromiumSession) MinimizeWindow() error {
+	return s.setWindowState(cdpbrowser.WindowStateMinimized)
+}
+
+func (s *chromiumSession) RestoreWindow() error {
+	return s.setWindowState(cdpbrowser.WindowStateNormal)
+}
+
+func (s *chromiumSession) setWindowState(state cdpbrowser.WindowState) error {
+	if s.ctx.Err() != nil {
+		return fmt.Errorf("voice browser is no longer running")
+	}
+	chromedpContext := chromedp.FromContext(s.ctx)
+	if chromedpContext == nil || chromedpContext.Browser == nil || chromedpContext.Target == nil {
+		return fmt.Errorf("voice browser window is not available")
+	}
+	requestCtx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+	browserExecutorCtx := cdp.WithExecutor(requestCtx, chromedpContext.Browser)
+	windowID, _, err := cdpbrowser.GetWindowForTarget().WithTargetID(chromedpContext.Target.TargetID).Do(browserExecutorCtx)
+	if err != nil {
+		return err
+	}
+	bounds := &cdpbrowser.Bounds{WindowState: state}
+	if state == cdpbrowser.WindowStateNormal {
+		bounds.Width = int64(s.windowWidth)
+		bounds.Height = int64(s.windowHeight)
+	}
+	return cdpbrowser.SetWindowBounds(windowID, bounds).Do(browserExecutorCtx)
 }
 
 func (s *chromiumSession) Close() error {

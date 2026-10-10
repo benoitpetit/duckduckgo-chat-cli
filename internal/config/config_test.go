@@ -188,6 +188,54 @@ func TestInitializeAddsSpeakWindowDefaultsToLegacyConfig(t *testing.T) {
 	}
 }
 
+func TestInitializeAddsTrayShortcutDefaultsToLegacyConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"default_model":"gpt-5.6-luna"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().Tray
+	want := TrayConfig{TextShortcut: "Ctrl+Alt+T", VoiceShortcut: "Ctrl+Alt+V"}
+	if got != want {
+		t.Fatalf("Tray config = %+v, want defaults %+v", got, want)
+	}
+}
+
+func TestInitializePreservesValidTrayShortcutsAndResetsDuplicates(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	configDir := filepath.Join(root, "duckduckgo-chat-cli")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"tray":{"text_shortcut":"Shift+Ctrl+T","voice_shortcut":"Alt+Ctrl+V"}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Initialize().Tray
+	want := TrayConfig{TextShortcut: "Shift+Ctrl+T", VoiceShortcut: "Alt+Ctrl+V"}
+	if got != want {
+		t.Fatalf("valid Tray config = %+v, want %+v", got, want)
+	}
+
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"tray":{"text_shortcut":"Ctrl+Alt+T","voice_shortcut":"alt+ctrl+t"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = Initialize().Tray
+	want = TrayConfig{TextShortcut: "Ctrl+Alt+T", VoiceShortcut: "Ctrl+Alt+V"}
+	if got != want {
+		t.Fatalf("duplicate Tray config = %+v, want safe defaults %+v", got, want)
+	}
+}
+
 func TestInitializeNormalizesSpeakWindowSizeAndPreservesChoices(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
@@ -236,7 +284,7 @@ func TestInitializeAddsRateLimitDefaultsToLegacyConfig(t *testing.T) {
 	}
 
 	got := Initialize().RateLimit
-	want := RateLimitConfig{OpenBrowser: true, CooldownMinutes: 10}
+	want := RateLimitConfig{OpenBrowser: false, CooldownMinutes: 10}
 	if got != want {
 		t.Fatalf("RateLimit config = %+v, want %+v", got, want)
 	}

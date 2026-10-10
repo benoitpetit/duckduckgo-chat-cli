@@ -26,6 +26,7 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/dashboard"
 	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/tray"
 	"duckduckgo-chat-cli/internal/ui"
 	"duckduckgo-chat-cli/internal/update"
 	"duckduckgo-chat-cli/internal/voice"
@@ -52,6 +53,57 @@ var dashboardHistory *dashboard.HistoryStore
 var dashboardActivity *activity.Hub
 var cliShutdown func()
 var executorMu sync.Mutex
+var interactiveChild bool
+
+type trayServiceRuntime struct {
+	mu            sync.Mutex
+	configured    *config.Config
+	voiceStarting bool
+	voiceError    string
+	voiceDone     chan struct{}
+}
+
+type startupUpdateResult struct {
+	info *update.UpdateInfo
+	err  error
+}
+
+func startupUpdateNotice(result startupUpdateResult, debug bool) string {
+	if result.err != nil {
+		if debug {
+			return "Update check failed: " + result.err.Error()
+		}
+		return ""
+	}
+	if result.info == nil {
+		return ""
+	}
+	if !result.info.NeedsUpdate {
+		if debug {
+			return fmt.Sprintf("Update check complete: %s is current.", result.info.CurrentVersion)
+		}
+		return ""
+	}
+	if debug {
+		return fmt.Sprintf("New version available: %s (current: %s). Run '/update' to update, or '/update --force' to skip confirmation.", result.info.LatestVersion, result.info.CurrentVersion)
+	}
+	return fmt.Sprintf("Update available: %s. Run /update to update.", result.info.LatestVersion)
+}
+
+func executePromptInputWithNotice(input string, updates <-chan startupUpdateResult, debug bool, announce func(string), execute func(string)) {
+	select {
+	case result, ok := <-updates:
+		if ok {
+			if message := startupUpdateNotice(result, debug); message != "" && announce != nil {
+				announce(message)
+			}
+		}
+	default:
+	}
+	if execute != nil {
+		execute(input)
+	}
+}
 
 // themeConsoleWriter adapts go-prompt's fixed ANSI colors to the active CLI
 // palette. The theme is resolved for every redraw, so /config applies at once.
@@ -444,7 +496,263 @@ func printOneShotError(options cliOptions, message string) {
 	fmt.Fprintln(os.Stderr, "duckchat:", message)
 }
 
+func runResidentTrayService() error {
+	cfg = config.Initialize()
+	if !cfg.TOSAccepted {
+		return fmt.Errorf("terms of service must be accepted before the tray service can start")
+	}
+	serviceRuntime := &trayServiceRuntime{configured: cfg}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	serviceErr := tray.RunService(ctx, tray.ServiceOptions{
+		HandleAction:   serviceRuntime.handleAction,
+		LoadTrayConfig: serviceRuntime.trayConfig,
+		RunTray: func(ctx context.Context, dispatch tray.TrayActionDispatcher, reloads <-chan config.TrayConfig) error {
+			return tray.RunTray(ctx, serviceRuntime.trayConfig(), dispatch, reloads)
+		},
+	})
+	serviceRuntime.stopVoice()
+	if shutdownErr := chat.ShutdownBrowser(); serviceErr == nil {
+		serviceErr = shutdownErr
+	}
+	return serviceErr
+}
+
+func (service *trayServiceRuntime) trayConfig() config.TrayConfig {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.configured == nil {
+		return config.TrayConfig{}
+	}
+	return service.configured.Tray
+}
+
+func (service *trayServiceRuntime) handleAction(ctx context.Context, action tray.Action) (tray.Response, error) {
+	switch action {
+	case tray.ActionOpenTextChat:
+		executable, err := os.Executable()
+		if err != nil {
+			return tray.Response{}, err
+		}
+		if err := tray.LaunchTerminal(executable, "--interactive-child"); err != nil {
+			return tray.Response{}, err
+		}
+		return tray.Response{Message: "Text chat opened"}, nil
+	case tray.ActionOpenOrShowVoice:
+		return service.openOrShowVoice(ctx)
+	case tray.ActionToggleVoice:
+		if service.isVoiceStarting() && !voice.Active() {
+			return tray.Response{VoiceActive: true, Message: "Voice chat is starting"}, nil
+		}
+		if err := voice.ToggleActiveVisibility(); err != nil {
+			return tray.Response{}, err
+		}
+		return tray.Response{VoiceActive: true}, nil
+	case tray.ActionMinimizeVoice:
+		if err := voice.MinimizeActive(); err != nil {
+			return tray.Response{}, err
+		}
+		return tray.Response{VoiceActive: true, Message: "Voice chat minimized to tray"}, nil
+	case tray.ActionConfigureShort:
+		executable, err := os.Executable()
+		if err != nil {
+			return tray.Response{}, err
+		}
+		if err := tray.LaunchTerminal(executable, "--configure-shortcuts"); err != nil {
+			return tray.Response{}, err
+		}
+		return tray.Response{Message: "Shortcut settings opened"}, nil
+	case tray.ActionReloadConfig:
+		updated := config.Initialize()
+		service.mu.Lock()
+		service.configured = updated
+		cfg = updated
+		service.mu.Unlock()
+		return tray.Response{Message: "Configuration reloaded"}, nil
+	case tray.ActionVoiceStatus:
+		return service.voiceStatus(), nil
+	case tray.ActionQuitService:
+		voice.StopActive()
+		return tray.Response{Message: "DuckChat tray service is stopping"}, nil
+	case tray.ActionServiceStatus:
+		return tray.Response{}, nil
+	default:
+		return tray.Response{}, fmt.Errorf("unsupported tray action %q", action)
+	}
+}
+
+func (service *trayServiceRuntime) isVoiceStarting() bool {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	return service.voiceStarting
+}
+
+func (service *trayServiceRuntime) voiceStatus() tray.Response {
+	service.mu.Lock()
+	starting := service.voiceStarting
+	lastError := service.voiceError
+	service.mu.Unlock()
+	active := starting || voice.Active()
+	if !active && lastError != "" {
+		return tray.Response{Error: lastError}
+	}
+	return tray.Response{VoiceActive: active}
+}
+
+func (service *trayServiceRuntime) openOrShowVoice(ctx context.Context) (tray.Response, error) {
+	if voice.Active() {
+		if err := voice.RestoreActive(); err != nil && !service.isVoiceStarting() {
+			return tray.Response{}, err
+		}
+		return tray.Response{VoiceActive: true, Message: "Voice chat is open"}, nil
+	}
+	service.mu.Lock()
+	if service.voiceStarting {
+		service.mu.Unlock()
+		return tray.Response{VoiceActive: true, Message: "Voice chat is starting"}, nil
+	}
+	if service.configured == nil {
+		service.mu.Unlock()
+		return tray.Response{}, fmt.Errorf("tray service configuration is unavailable")
+	}
+	configuration := *service.configured
+	service.voiceStarting = true
+	service.voiceError = ""
+	done := make(chan struct{})
+	service.voiceDone = done
+	service.mu.Unlock()
+	go func() {
+		defer close(done)
+		chatSession = chat.InitializeSession(&configuration)
+		err := voice.Run(ctx, voiceDependencies(), voice.ChromiumOpener{Settings: configuration.Speak})
+		if shutdownErr := chat.ShutdownBrowser(); err == nil {
+			err = shutdownErr
+		}
+		service.mu.Lock()
+		service.voiceStarting = false
+		service.voiceDone = nil
+		if err != nil {
+			service.voiceError = err.Error()
+		} else {
+			service.voiceError = ""
+		}
+		service.mu.Unlock()
+	}()
+	return tray.Response{VoiceActive: true, Message: "Voice chat is starting"}, nil
+}
+
+func (service *trayServiceRuntime) stopVoice() {
+	voice.StopActive()
+	service.mu.Lock()
+	done := service.voiceDone
+	service.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+
+func voiceDependencies() voice.Dependencies {
+	return voice.Dependencies{
+		Proof:      voice.CurrentProofProvider{},
+		Signaling:  &voice.DuckAIClient{HTTPClient: http.DefaultClient, BaseURL: "https://duck.ai"},
+		OnMinimize: voice.MinimizeActive,
+		OnSessionTerminated: func() {
+			ui.Warningln("\nVoice chat ended due to inactivity.")
+			ui.Mutedln("Choose Try again in the voice window to reconnect, or Close to return here.")
+		},
+	}
+}
+
+func runVoiceInProcess(ctx context.Context) {
+	if err := voice.Run(ctx, voiceDependencies(), voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
+		ui.Errorln("Voice session failed: %v", err)
+	}
+}
+
+func runSpeakCommand() {
+	executable, err := os.Executable()
+	if err != nil {
+		ui.Warningln("Tray service is unavailable; starting voice chat in this CLI: %v", err)
+		runVoiceInProcess(context.Background())
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	err = tray.EnsureService(ctx, executable)
+	cancel()
+	if err != nil {
+		ui.Warningln("Tray service is unavailable; starting voice chat in this CLI: %v", err)
+		runVoiceInProcess(context.Background())
+		return
+	}
+	startResponse, err := tray.Send(context.Background(), tray.ActionOpenOrShowVoice)
+	if err != nil {
+		ui.Warningln("Tray service could not start voice chat; starting locally: %v", err)
+		runVoiceInProcess(context.Background())
+		return
+	}
+	if startResponse.Error != "" {
+		ui.Errorln("Voice session failed: %s", startResponse.Error)
+		return
+	}
+	for {
+		status, err := tray.Send(context.Background(), tray.ActionVoiceStatus)
+		if err != nil {
+			if endpoint, endpointErr := tray.EndpointPath(); endpointErr == nil {
+				if _, statErr := os.Stat(endpoint); os.IsNotExist(statErr) {
+					return
+				}
+			}
+			ui.Errorln("Could not check the voice session: %v", err)
+			return
+		}
+		if status.Error != "" {
+			ui.Errorln("Voice session failed: %s", status.Error)
+			return
+		}
+		if !status.VoiceActive {
+			return
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+}
+
+func runShortcutConfiguration() {
+	cfg = config.Initialize()
+	if !config.AcceptTermsOfService(cfg) {
+		ui.Warningln("You must accept the terms to use this app. Exiting.")
+		return
+	}
+	if !config.HandleShortcutConfiguration(cfg) {
+		return
+	}
+	response, err := tray.Send(context.Background(), tray.ActionReloadConfig)
+	if err != nil || response.Error != "" {
+		if err != nil {
+			ui.Warningln("Shortcuts were saved, but the tray service could not reload them: %v", err)
+		} else {
+			ui.Warningln("Shortcuts were saved, but the tray service could not reload them: %s", response.Error)
+		}
+	}
+}
+
 func main() {
+	if len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "--tray-service":
+			if err := runResidentTrayService(); err != nil {
+				fmt.Fprintln(os.Stderr, "duckchat tray service:", err)
+				os.Exit(1)
+			}
+			return
+		case "--interactive-child":
+			interactiveChild = true
+			runInteractive()
+			return
+		case "--configure-shortcuts":
+			runShortcutConfiguration()
+			return
+		}
+	}
 	options, err := parseCLIOptions(os.Args[1:])
 	if err != nil {
 		if slices.Contains(os.Args[1:], "--json") {
@@ -553,19 +861,42 @@ func runInteractive() {
 		}
 	}()
 
-	ui.Systemln("Welcome to DuckDuckGo AI Chat CLI!")
-
 	cfg = config.Initialize()
+	if ui.DebugEnabled() {
+		ui.Systemln("Welcome to DuckDuckGo AI Chat CLI!")
+	} else {
+		model := models.GetModel(cfg.DefaultModel)
+		ui.Systemln("DuckDuckGo AI Chat CLI · %s", models.DisplayName(model))
+		ui.Mutedln("%s", startupHelpLine())
+	}
 	models.CheckChromeVersion()
 
 	if !config.AcceptTermsOfService(cfg) {
 		ui.Warningln("You must accept the terms to use this app. Exiting.")
 		return
 	}
+	if !interactiveChild {
+		if executable, err := os.Executable(); err != nil {
+			ui.Warningln("Tray service could not start: %v", err)
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			err := tray.EnsureService(ctx, executable)
+			cancel()
+			if err != nil {
+				ui.Warningln("Tray service could not start: %v", err)
+			}
+		}
+	}
 
 	dashboardActivity = activity.NewHub()
 	dashboardActivity.SetConversationContentEnabled(cfg.Dashboard.ShowConversationContent)
 	chatSession = chat.InitializeSession(cfg)
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		chatSession.Display = chat.NewConversationView(
+			"DuckDuckGo AI Chat CLI · "+models.DisplayName(chatSession.Model),
+			startupHelpLine(), cfg.Appearance.FrameResponses,
+		)
+	}
 	chatSession.Activity = dashboardActivity
 	dashboardActivity.Publish(activity.Event{Category: "session", Status: "info", Summary: "CLI session started", Model: string(chatSession.Model)})
 	dashboardHistory = dashboard.NewHistoryStore(config.DashboardHistoryPath(), cfg.Dashboard.RetentionDays)
@@ -622,7 +953,7 @@ func runInteractive() {
 			ui.Warningln("Local dashboard could not start: %v", err)
 		} else {
 			dashboardActivity.Publish(activity.Event{Category: "dashboard", Status: "info", Summary: "Local dashboard started"})
-			ui.AIln("Local dashboard: %s", address)
+			ui.Debugln("Local dashboard started: %s", address)
 		}
 	}
 
@@ -630,13 +961,26 @@ func runInteractive() {
 		api.StartServer(chatSession, cfg, cfg.API.Port)
 	}
 
-	// Do not block the first prompt on the optional GitHub update check.
-	go update.CheckForUpdatesAtStartup(Version)
+	// Keep background update checks away from the terminal while go-prompt is
+	// drawing the prompt and its completion menu. The result is shown only when
+	// a submitted command has returned control to the executor.
+	startupUpdateResults := make(chan startupUpdateResult, 1)
+	if ui.DebugEnabled() {
+		ui.Debugln("Checking for updates in background")
+	}
+	go func() {
+		info, err := update.CheckForUpdatesAtStartup(Version)
+		startupUpdateResults <- startupUpdateResult{info: info, err: err}
+	}()
 
-	if cfg.ShowMenu {
+	if ui.DebugEnabled() {
+		if cfg.ShowMenu {
+			chat.PrintWelcomeMessage()
+		} else {
+			chat.PrintCommands()
+		}
+	} else if cfg.ShowMenu {
 		chat.PrintWelcomeMessage()
-	} else {
-		chat.PrintCommands()
 	}
 
 	// Handle interrupts only after the shared finalizer exists.
@@ -666,10 +1010,27 @@ func runInteractive() {
 	}()
 
 	p := prompt.New(
-		executor,
+		func(input string) {
+			executePromptInputWithNotice(input, startupUpdateResults, ui.DebugEnabled(), func(message string) {
+				ui.Mutedln("%s", message)
+			}, executor)
+		},
 		completer,
 		prompt.OptionWriter(newThemeConsoleWriter()),
 		prompt.OptionMaxSuggestion(8),
+		prompt.OptionInitialBufferText("/"),
+		prompt.OptionResizeCallback(func(size *prompt.WinSize) {
+			if chatSession != nil && chatSession.Display != nil && size != nil {
+				chatSession.Display.SetHeader("DuckDuckGo AI Chat CLI · " + models.DisplayName(chatSession.Model))
+				chatSession.Display.SetFramed(cfg.Appearance.FrameResponses)
+				width := int(size.Col)
+				if width <= 0 {
+					width = 80
+				}
+				chatSession.Display.Redraw(width)
+			}
+		}),
+		prompt.OptionShowCompletionAtStart(),
 		prompt.OptionTitle("duckduckgo-chat-cli"),
 		prompt.OptionPrefix("You: "),
 		prompt.OptionPrefixTextColor(prompt.Blue),
@@ -694,11 +1055,18 @@ func runInteractive() {
 
 }
 
+func startupHelpLine() string {
+	return "/help · /model · /search · /image · /exit"
+}
+
 func executor(input string) {
 	executorMu.Lock()
 	defer executorMu.Unlock()
 	if input == "" {
 		return
+	}
+	if chatSession != nil && chatSession.Display != nil {
+		chatSession.Display.RecordUser(input)
 	}
 	if strings.HasPrefix(strings.TrimSpace(input), "/") {
 		input = strings.TrimSpace(input)
@@ -855,6 +1223,8 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		}
 	case cmd.Type == "/history":
 		chat.PrintHistory(chatSession)
+	case cmd.Type == "/image":
+		trackActivity("image", "Image generation", func() { chat.HandleImageCommand(chatSession, cmd.Args, cfg) })
 	case cmd.Type == "/search":
 		trackActivity("search", "Search operation", func() { chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, nil) })
 	case cmd.Type == "/file":
@@ -868,8 +1238,18 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 	case cmd.Type == "/copy":
 		chat.HandleCopyCommand(chatSession)
 	case cmd.Type == "/config":
+		previousTrayConfig := cfg.Tray
 		config.HandleConfiguration(cfg, chatSession)
 		refreshDashboardSettings(cfg)
+		if cfg.Tray != previousTrayConfig {
+			if response, err := tray.Send(context.Background(), tray.ActionReloadConfig); err != nil || response.Error != "" {
+				if err != nil {
+					ui.Warningln("Chat shortcuts were saved, but the tray service could not reload them: %v", err)
+				} else {
+					ui.Warningln("Chat shortcuts were saved, but the tray service could not reload them: %s", response.Error)
+				}
+			}
+		}
 	case cmd.Type == "/model":
 		newModel := models.HandleModelChange(chatSession, cmd.Args)
 		if newModel != "" {
@@ -919,13 +1299,7 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		ui.Mutedln("Go version: %s", runtime.Version())
 		ui.Mutedln("OS/Arch: %s/%s", runtime.GOOS, runtime.GOARCH)
 	case cmd.Type == "/speak":
-		deps := voice.Dependencies{
-			Proof:     voice.CurrentProofProvider{},
-			Signaling: &voice.DuckAIClient{HTTPClient: http.DefaultClient, BaseURL: "https://duck.ai"},
-		}
-		if err := voice.Run(context.Background(), deps, voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
-			ui.Errorln("Voice session failed: %v", err)
-		}
+		runSpeakCommand()
 	case cmd.Type == "/stats":
 		// Show current session analytics
 		if chatSession != nil {

@@ -141,7 +141,6 @@ button { font: inherit; }
 .duck-stage[data-state="speaking"] .speak-bar-one { animation: voice-bar .62s ease-in-out infinite alternate; }
 .duck-stage[data-state="speaking"] .speak-bar-two { animation: voice-bar .74s ease-in-out .12s infinite alternate; }
 .duck-stage[data-state="speaking"] .speak-bar-three { animation: voice-bar .68s ease-in-out .22s infinite alternate; }
-
 .voice-state {
   min-height: 24px;
   margin: 12px 0 0;
@@ -154,6 +153,7 @@ button { font: inherit; }
 
 .voice-state[data-state="listening"], .voice-state[data-state="user-speaking"] { color: var(--green); }
 .voice-state[data-state="speaking"] { color: var(--amber); }
+.voice-state[data-state="session-terminated"] { color: var(--amber); }
 .voice-state[data-state="error"] { color: var(--red); }
 .voice-state[data-state="thinking"] { color: #c4b28f; }
 
@@ -162,7 +162,10 @@ button { font: inherit; }
   width: 100%;
   min-width: 0;
   min-height: 84px;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 8px;
   margin: 0 0 10px;
 }
 
@@ -173,7 +176,6 @@ button { font: inherit; }
   min-height: 60px;
   max-height: 88px;
   align-items: flex-start;
-  gap: 10px;
   padding: 11px 13px;
   overflow: hidden;
   border: 1px solid #ffffff16;
@@ -183,28 +185,10 @@ button { font: inherit; }
   box-shadow: inset 0 1px #ffffff06;
 }
 
-.subtitle-panel[data-speaker="user"] { border-left-color: var(--amber); }
-.subtitle-panel[data-speaker="user"] { background: linear-gradient(115deg, #211e17 0%, #111617 72%); }
-
-.subtitle-speaker {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  margin-top: 1px;
-  padding: 4px 7px;
-  border: 1px solid #85c9a729;
-  border-radius: 999px;
-  color: var(--green);
-  background: #85c9a710;
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: .035em;
-  line-height: 1;
+.subtitle-panel[data-speaker="user"] {
+  border-left-color: var(--amber);
+  background: linear-gradient(115deg, #211e17 0%, #111617 72%);
 }
-
-.subtitle-speaker::before { width: 5px; height: 5px; flex: none; border-radius: 50%; background: currentColor; content: ""; }
-.subtitle-panel[data-speaker="user"] .subtitle-speaker { color: var(--amber); border-color: #dcb87829; background: #dcb87810; }
 
 .subtitle-text {
   flex: 1 1 auto;
@@ -221,6 +205,8 @@ button { font: inherit; }
   overscroll-behavior-y: contain;
 }
 
+.subtitle-panel[data-speaker="user"] .subtitle-text { color: #f0e4cf; }
+
 .error-message {
   max-width: 100%;
   margin: 0 0 10px;
@@ -229,6 +215,78 @@ button { font: inherit; }
   line-height: 1.45;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.termination-panel {
+  display: grid;
+  width: min(100%, 376px);
+  gap: 12px;
+  margin: 0 auto 10px;
+}
+
+.termination-message {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0;
+  padding: 13px 15px;
+  border: 1px solid #ffffff16;
+  border-left: 2px solid var(--amber);
+  border-radius: 14px;
+  background: linear-gradient(115deg, #211e17 0%, #111617 72%);
+  box-shadow: inset 0 1px #ffffff06;
+}
+
+.termination-message-icon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: none;
+  place-items: center;
+  border: 1px solid #dcb87835;
+  border-radius: 50%;
+  color: var(--amber);
+  background: #dcb87810;
+}
+
+.termination-message-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.termination-message-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.termination-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.termination-actions .button { width: 100%; grid-column: auto; }
+
+.button-retry svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.button-secondary {
+  border-color: #ffffff1a;
+  color: #d6dfdc;
+  background: #1a2324;
 }
 
 .audio-enable {
@@ -294,6 +352,8 @@ button { font: inherit; }
 .mic-slash { opacity: 0; transition: opacity .14s ease; }
 .button-mute[data-muted="true"] .mic-slash { opacity: 1; }
 .button-end { color: #f0a198; border-color: #573632; background: #281d1d; }
+.controls[data-mode="active"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.button-minimize { gap: 5px; padding: 0 8px; font-size: 11px; }
 .controls[data-mode="idle"] .button-start,
 .controls[data-mode="starting"] .button-end,
 .controls[data-mode="ended"] .button-end { grid-column: 1 / -1; }

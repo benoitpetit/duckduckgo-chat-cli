@@ -250,12 +250,13 @@ func TestBuildPayloadUsesLowReasoningForTinfoilModels(t *testing.T) {
 
 func TestParseSSEEventLine(t *testing.T) {
 	tests := []struct {
-		name      string
-		line      string
-		typ       string
-		message   string
-		sourceURL string
-		imageURL  string
+		name        string
+		line        string
+		typ         string
+		message     string
+		sourceURL   string
+		sourceTitle string
+		imageURL    string
 	}{
 		{
 			name:    "assistant message",
@@ -264,10 +265,11 @@ func TestParseSSEEventLine(t *testing.T) {
 			message: "hello",
 		},
 		{
-			name:      "source citation",
-			line:      `data: {"role":"source","source":{"url":"https://example.com","title":"Example"}}`,
-			typ:       "source",
-			sourceURL: "https://example.com",
+			name:        "source citation",
+			line:        `data: {"role":"source","source":{"url":"https://example.com","title":"Example"}}`,
+			typ:         "source",
+			sourceURL:   "https://example.com",
+			sourceTitle: "Example",
 		},
 		{
 			name:     "generated image",
@@ -302,6 +304,9 @@ func TestParseSSEEventLine(t *testing.T) {
 			if event.SourceURL != tt.sourceURL {
 				t.Fatalf("source URL = %q, want %q", event.SourceURL, tt.sourceURL)
 			}
+			if event.SourceTitle != tt.sourceTitle {
+				t.Fatalf("source title = %q, want %q", event.SourceTitle, tt.sourceTitle)
+			}
 			if event.ImageURL != tt.imageURL {
 				t.Fatalf("image URL = %q, want %q", event.ImageURL, tt.imageURL)
 			}
@@ -332,5 +337,19 @@ func TestFetchStreamFormatsNativeSources(t *testing.T) {
 	formatted := formatSourceEvent(event)
 	if formatted != "\n\nSource: [Example](https://example.com)\n" {
 		t.Fatal("source formatting lost the citation URL")
+	}
+}
+
+func TestSourceProgressLabelShowsCount(t *testing.T) {
+	for _, test := range []struct {
+		count int
+		want  string
+	}{
+		{count: 1, want: "Found 1 web source"},
+		{count: 3, want: "Found 3 web sources"},
+	} {
+		if got := sourceProgressLabel(test.count); got != test.want {
+			t.Errorf("sourceProgressLabel(%d) = %q, want %q", test.count, got, test.want)
+		}
 	}
 }

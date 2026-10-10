@@ -3,9 +3,7 @@ package chat
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 
 	"duckduckgo-chat-cli/internal/ui"
@@ -181,9 +179,8 @@ func RenderStreamWithView(stream <-chan string, modelName string, spinner *ui.Sp
 }
 
 func (sr *StreamRenderer) processResponsiveStream(stream <-chan string, spinner *ui.Spinner, framed bool, view *ConversationView) string {
-	resize := make(chan os.Signal, 1)
-	signal.Notify(resize, syscall.SIGWINCH)
-	defer signal.Stop(resize)
+	resize, stopResize := subscribeTerminalResize()
+	defer stopResize()
 
 	var content strings.Builder
 	var blocks markdownBlockStream

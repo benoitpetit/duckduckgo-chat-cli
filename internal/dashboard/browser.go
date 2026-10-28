@@ -10,7 +10,6 @@ import (
 	"duckduckgo-chat-cli/internal/chat"
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
 )
 
@@ -58,9 +57,9 @@ func OpenChromiumApp(ctx context.Context, address string) (*ChromiumWindow, erro
 	window := &ChromiumWindow{cancelBrowser: cancelBrowser, cancelAllocator: cancelAllocator}
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
 	stopOnStartupCancel := context.AfterFunc(startupCtx, cancelBrowser)
-	err = chromedp.Run(browserCtx)
+	err = chromedp.Do(browserCtx)
 	if err == nil {
-		err = chromedp.Run(browserCtx, chromedp.Navigate(address))
+		err = chromedp.Do(browserCtx, chromedp.Navigate(address))
 	}
 	startupActive := stopOnStartupCancel()
 	startupErr := startupCtx.Err()
@@ -83,12 +82,12 @@ func OpenChromiumApp(ctx context.Context, address string) (*ChromiumWindow, erro
 	}
 	window.browserLost = cdpContext.Browser.LostConnection
 	window.done = monitorDashboardChromiumDone(browserCtx, window.browserLost)
-	browserExecutorCtx := cdp.WithExecutor(browserCtx, cdpContext.Browser)
-	windowID, _, err := cdpbrowser.GetWindowForTarget().WithTargetID(cdpContext.Target.TargetID).Do(browserExecutorCtx)
+	wr, err := chromedp.CallBrowser(browserCtx, cdpbrowser.GetWindowForTarget, cdpbrowser.GetWindowForTargetParams{TargetID: cdpContext.Target.TargetID})
 	if err == nil {
-		err = cdpbrowser.SetWindowBounds(windowID, &cdpbrowser.Bounds{
-			Width: 1280, Height: 900, WindowState: cdpbrowser.WindowStateNormal,
-		}).Do(browserExecutorCtx)
+		_, err = chromedp.CallBrowser(browserCtx, cdpbrowser.SetWindowBounds, cdpbrowser.SetWindowBoundsParams{
+			WindowID: wr.WindowID,
+			Bounds:   &cdpbrowser.Bounds{Width: 1280, Height: 900, WindowState: cdpbrowser.WindowStateNormal},
+		})
 	}
 	if err != nil {
 		_ = window.Close()

@@ -44,6 +44,10 @@ updates:
       minor-and-patch:
         patterns:
           - "*"
+        # chromedp/cdproto ship breaking API changes even on minor bumps (0.x),
+        # so they are kept out of the grouped PR and handled manually.
+        exclude-patterns:
+          - "github.com/chromedp/*"
         update-types:
           - "minor"
           - "patch"

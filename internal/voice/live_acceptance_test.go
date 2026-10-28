@@ -93,16 +93,24 @@ func makeFakeMicrophoneOffer(ctx context.Context, ice ICEConfiguration) (string,
     window.__voiceOfferReady = true;
   }
 })()`
-	err = chromedp.Run(browserCtx,
+	err = chromedp.Do(browserCtx,
 		chromedp.Navigate(defaultDuckAIBaseURL),
-		chromedp.Evaluate("window.__voiceIce = "+string(iceJSON)+"; window.__voiceOfferReady = false", nil),
-		chromedp.Evaluate(setup, nil),
-		chromedp.Poll("window.__voiceOfferReady === true", nil, chromedp.WithPollingTimeout(20*time.Second)),
-		chromedp.Evaluate("window.__voiceOfferError || ''", &offerErr),
-		chromedp.Evaluate("window.__voiceOffer || ''", &offer),
+		chromedp.Evaluate[chromedp.Void]("window.__voiceIce = "+string(iceJSON)+"; window.__voiceOfferReady = false"),
+		chromedp.Evaluate[chromedp.Void](setup),
+		chromedp.Poll[chromedp.Void]("window.__voiceOfferReady === true", chromedp.WithPollingTimeout(20*time.Second)),
 	)
 	if err != nil {
 		return "", err
+	}
+	if v, e := chromedp.Run(browserCtx, chromedp.Evaluate[string]("window.__voiceOfferError || ''")); e != nil {
+		return "", e
+	} else {
+		offerErr = v
+	}
+	if v, e := chromedp.Run(browserCtx, chromedp.Evaluate[string]("window.__voiceOffer || ''")); e != nil {
+		return "", e
+	} else {
+		offer = v
 	}
 	if offerErr != "" {
 		return "", errors.New(offerErr)

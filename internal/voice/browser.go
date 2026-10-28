@@ -12,7 +12,6 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
 )
 
@@ -91,7 +90,7 @@ func (opener ChromiumOpener) Open(ctx context.Context, address string) (BrowserS
 	}
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
 	stopOnStartupCancel := context.AfterFunc(startupCtx, cancelBrowser)
-	err = chromedp.Run(browserCtx)
+	err = chromedp.Do(browserCtx)
 	if err == nil {
 		chromedpContext := chromedp.FromContext(browserCtx)
 		if chromedpContext == nil || chromedpContext.Browser == nil {
@@ -99,15 +98,15 @@ func (opener ChromiumOpener) Open(ctx context.Context, address string) (BrowserS
 		} else {
 			// Grant microphone access only to the ephemeral loopback origin used by
 			// this Speak window, before loading its auto-starting page.
-			browserExecutorCtx := cdp.WithExecutor(startupCtx, chromedpContext.Browser)
-			err = cdpbrowser.SetPermission(
-				&cdpbrowser.PermissionDescriptor{Name: "microphone"},
-				cdpbrowser.PermissionSettingGranted,
-			).WithOrigin(origin).Do(browserExecutorCtx)
+			_, err = chromedp.CallBrowser(startupCtx, cdpbrowser.SetPermission, cdpbrowser.SetPermissionParams{
+				Permission: &cdpbrowser.PermissionDescriptor{Name: "microphone"},
+				Setting:    cdpbrowser.PermissionSettingGranted,
+				Origin:     origin,
+			})
 		}
 	}
 	if err == nil {
-		err = chromedp.Run(browserCtx, chromedp.Navigate(address))
+		err = chromedp.Do(browserCtx, chromedp.Navigate(address))
 	}
 	startupActive := stopOnStartupCancel()
 	startupErr := startupCtx.Err()
@@ -149,16 +148,20 @@ func setChromiumWindowSize(ctx context.Context, browserContext *chromedp.Context
 	if browserContext.Target == nil {
 		return fmt.Errorf("Chromium did not create a voice window target")
 	}
-	browserExecutorCtx := cdp.WithExecutor(ctx, browserContext.Browser)
-	windowID, _, err := cdpbrowser.GetWindowForTarget().WithTargetID(browserContext.Target.TargetID).Do(browserExecutorCtx)
+	res, err := chromedp.CallBrowser(ctx, cdpbrowser.GetWindowForTarget, cdpbrowser.GetWindowForTargetParams{TargetID: browserContext.Target.TargetID})
+	windowID := res.WindowID
 	if err != nil {
 		return err
 	}
-	return cdpbrowser.SetWindowBounds(windowID, &cdpbrowser.Bounds{
-		Width:       int64(width),
-		Height:      int64(height),
-		WindowState: cdpbrowser.WindowStateNormal,
-	}).Do(browserExecutorCtx)
+	_, err = chromedp.CallBrowser(ctx, cdpbrowser.SetWindowBounds, cdpbrowser.SetWindowBoundsParams{
+		WindowID: windowID,
+		Bounds: &cdpbrowser.Bounds{
+			Width:       int64(width),
+			Height:      int64(height),
+			WindowState: cdpbrowser.WindowStateNormal,
+		},
+	})
+	return err
 }
 
 func (s *chromiumSession) MinimizeWindow() error {
@@ -179,8 +182,8 @@ func (s *chromiumSession) setWindowState(state cdpbrowser.WindowState) error {
 	}
 	requestCtx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
 	defer cancel()
-	browserExecutorCtx := cdp.WithExecutor(requestCtx, chromedpContext.Browser)
-	windowID, _, err := cdpbrowser.GetWindowForTarget().WithTargetID(chromedpContext.Target.TargetID).Do(browserExecutorCtx)
+	res, err := chromedp.CallBrowser(requestCtx, cdpbrowser.GetWindowForTarget, cdpbrowser.GetWindowForTargetParams{TargetID: chromedpContext.Target.TargetID})
+	windowID := res.WindowID
 	if err != nil {
 		return err
 	}
@@ -189,7 +192,11 @@ func (s *chromiumSession) setWindowState(state cdpbrowser.WindowState) error {
 		bounds.Width = int64(s.windowWidth)
 		bounds.Height = int64(s.windowHeight)
 	}
-	return cdpbrowser.SetWindowBounds(windowID, bounds).Do(browserExecutorCtx)
+	_, err = chromedp.CallBrowser(requestCtx, cdpbrowser.SetWindowBounds, cdpbrowser.SetWindowBoundsParams{
+		WindowID: windowID,
+		Bounds:   bounds,
+	})
+	return err
 }
 
 func (s *chromiumSession) Close() error {

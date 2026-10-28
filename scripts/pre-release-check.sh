@@ -61,6 +61,11 @@ go test ./...
 
 echo "📦 Building the Linux target..."
 GOOS=linux GOARCH=amd64 go build -o "$TEMP_DIR/duckchat-linux-amd64" ./cmd/duckchat
+GOOS=linux GOARCH=arm64 go build -o "$TEMP_DIR/duckchat-linux-arm64" ./cmd/duckchat
+test -s "$TEMP_DIR/duckchat-linux-arm64" || fail "Linux ARM64 executable was not produced"
+if command -v file >/dev/null 2>&1; then
+  file "$TEMP_DIR/duckchat-linux-arm64" | grep -q 'ARM aarch64' || fail "Linux ARM64 output is not an AArch64 executable"
+fi
 echo "ℹ️ macOS binaries require native macOS runners and are built in the release workflow."
 
 echo "🪟 Building Windows executable with docs/images/logo.png..."
@@ -68,6 +73,13 @@ echo "🪟 Building Windows executable with docs/images/logo.png..."
 test -s "$TEMP_DIR/duckchat-windows-amd64.exe" || fail "Windows executable was not produced"
 if command -v file >/dev/null 2>&1; then
   file "$TEMP_DIR/duckchat-windows-amd64.exe" | grep -q 'PE32+' || fail "Windows output is not a PE32+ executable"
+fi
+
+echo "🪟 Building Windows ARM64 executable with docs/images/logo.png..."
+"$ROOT_DIR/scripts/build_windows_binary.sh" verify "$TEMP_DIR/duckchat-windows-arm64.exe" arm64
+test -s "$TEMP_DIR/duckchat-windows-arm64.exe" || fail "Windows ARM64 executable was not produced"
+if command -v file >/dev/null 2>&1; then
+  file "$TEMP_DIR/duckchat-windows-arm64.exe" | grep -q 'PE32+.*ARM64' || fail "Windows ARM64 output is not an ARM64 PE32+ executable"
 fi
 
 for required_file in README.md docs/BUILD.md go.mod scripts/build.sh scripts/build_windows_binary.sh .github/workflows/release.yml docs/images/logo.png; do

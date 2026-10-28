@@ -23,7 +23,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
-	cdpruntime "github.com/chromedp/cdproto/runtime"
+
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 )
@@ -214,7 +214,7 @@ func (b *chromedpProofBrowser) ensureTarget(parent context.Context) error {
 	b.targetCtx, b.cancelTarget = chromedp.NewContext(b.browserCtx)
 	cancelTarget := b.cancelTarget
 	stopOnCancel := context.AfterFunc(parent, cancelTarget)
-	err := chromedp.Run(b.targetCtx)
+	err := chromedp.Do(b.targetCtx)
 	stillActive := stopOnCancel()
 	if err == nil && parent.Err() == nil && stillActive {
 		return nil
@@ -242,20 +242,23 @@ func (b *chromedpProofBrowser) ClearSiteData(parent context.Context) error {
 	// reload after "Clear site data" starts without the old page state.
 	if b.targetCtx != nil {
 		targetCtx, targetCleanup := proofCaptureContext(b.targetCtx, resetParent)
-		if err := chromedp.Run(targetCtx, chromedp.Navigate("about:blank")); err != nil {
+		if err := chromedp.Do(targetCtx, chromedp.Navigate("about:blank")); err != nil {
 			targetCleanup()
 			return err
 		}
 		targetCleanup()
 	}
-	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		if err := storage.ClearDataForOrigin("https://duck.ai", "all").Do(ctx); err != nil {
+	return chromedp.Do(ctx, chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		if _, err := cdp.Call(ctx, t, storage.ClearDataForOrigin, storage.ClearDataForOriginParams{
+			Origin: "https://duck.ai", StorageTypes: "all",
+		}); err != nil {
 			return err
 		}
-		if err := network.ClearBrowserCookies().Do(ctx); err != nil {
+		if _, err := cdp.Call(ctx, t, network.ClearBrowserCookies, cdp.Empty{}); err != nil {
 			return err
 		}
-		return network.ClearBrowserCache().Do(ctx)
+		_, err := cdp.Call(ctx, t, network.ClearBrowserCache, cdp.Empty{})
+		return err
 	}))
 }
 
@@ -333,7 +336,7 @@ func newChromedpProofBrowserMode(startupCtx context.Context, headless bool) (pro
 		cancelAllocator: cancelAllocator,
 	}
 	stopOnStartupCancel := context.AfterFunc(startupCtx, cancelBrowser)
-	err = chromedp.Run(browserCtx)
+	err = chromedp.Do(browserCtx)
 	startupActive := stopOnStartupCancel()
 	if err != nil || !startupActive || startupCtx.Err() != nil {
 		if err == nil {
@@ -368,15 +371,26 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
 		err     error
 	}
 	captured := make(chan captureResult, 1)
-	chromedp.ListenTarget(ctx, func(event any) {
-		if paused, ok := event.(*fetch.EventRequestPaused); ok {
-			execCtx := cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target)
+	requestPausedEvents := chromedp.Events(ctx, fetch.RequestPaused)
+	go func() {
+		for ev, err := range requestPausedEvents {
+			if err != nil {
+				return
+			}
+			paused := ev
+			target := chromedp.FromContext(ctx).Target
+			if target == nil {
+				continue
+			}
 			if strings.Contains(paused.Request.URL, "/duckchat/v1/chat") {
 				headers := headersFromCDP(paused.Request.Headers)
-				// Listener callbacks run on chromedp's event loop. CDP
-				// commands issued directly here can deadlock the tab.
+				// CDP commands issued directly on the event loop can deadlock
+				// the tab, so run them in a goroutine.
 				go func() {
-					err := fetch.FailRequest(paused.RequestID, network.ErrorReasonAborted).Do(execCtx)
+					_, err := cdp.Call(ctx, target, fetch.FailRequest, fetch.FailRequestParams{
+						RequestID:   paused.RequestID,
+						ErrorReason: network.ErrorReasonAborted,
+					})
 					select {
 					case captured <- captureResult{headers: headers, err: err}:
 					case <-ctx.Done():
@@ -384,12 +398,15 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
 				}()
 				// The calibration request exists only to make Duck.ai compute
 				// the proof. Abort it before it consumes quota or a chat turn.
-				return
+				continue
 			}
-			go func() { _ = fetch.ContinueRequest(paused.RequestID).Do(execCtx) }()
-			return
+			go func() {
+				_, _ = cdp.Call(ctx, target, fetch.ContinueRequest, fetch.ContinueRequestParams{
+					RequestID: paused.RequestID,
+				})
+			}()
 		}
-	})
+	}()
 
 	setPrompt := `(function() {
   const ta = document.querySelector('textarea[name="user-prompt"]');
@@ -419,48 +436,79 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
   const button = document.querySelector('button[type="submit"]');
   return button && !button.disabled ? 'ready' : '';
 })()`
-	var result, state string
-	err := chromedp.Run(ctx,
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			_, err := page.AddScriptToEvaluateOnNewDocument(`
-Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-			`).Do(ctx)
+	var state string
+	err := chromedp.Do(ctx,
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{
+				Source: `Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`,
+			})
 			return err
 		}),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			_, _, _, userAgent, _, err := cdpbrowser.GetVersion().Do(ctx)
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			res, err := cdp.Call(ctx, t, cdpbrowser.GetVersion, cdp.Empty{})
 			if err != nil {
 				return err
 			}
 			// Duck.ai rejects the HeadlessChrome token even when its own page
 			// generated the proof. Keep the installed browser version intact.
-			return emulation.SetUserAgentOverride(normalBrowserUserAgent(userAgent)).Do(ctx)
+			_, err = cdp.Call(ctx, t, emulation.SetUserAgentOverride, emulation.SetUserAgentOverrideParams{
+				UserAgent: normalBrowserUserAgent(res.UserAgent),
+			})
+			return err
 		}),
-		network.Enable(),
-		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{
-			URLPattern:   "*duckchat/v1/chat*",
-			RequestStage: fetch.RequestStageRequest,
-		}}),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, network.Enable, network.EnableParams{})
+			return err
+		}),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, fetch.Enable, fetch.EnableParams{
+				Patterns: []*fetch.RequestPattern{{
+					URLPattern:   "*duckchat/v1/chat*",
+					RequestStage: fetch.RequestStageRequest,
+				}},
+			})
+			return err
+		}),
 		chromedp.Navigate("https://duck.ai/"),
-		chromedp.Poll(pageReady, &state, chromedp.WithPollingInterval(100*time.Millisecond)),
-		chromedp.ActionFunc(func(context.Context) error {
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			v, err := chromedp.Poll[string](pageReady, chromedp.WithPollingInterval(100*time.Millisecond))(ctx, t)
+			if err != nil {
+				return err
+			}
+			state = v
 			if state == "rate-limited" {
 				return &RateLimitError{Code: "ERR_RATE_LIMIT"}
 			}
 			return nil
 		}),
-		chromedp.Evaluate(setPrompt, &result),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := chromedp.Evaluate[string](setPrompt)(ctx, t)
+			if err != nil {
+				return err
+			}
+			return nil
+		}),
 		// Poll the first submit button only. chromedp.WaitEnabled applies its
 		// check to every matched node, so a page that also renders a hidden or
 		// permanently disabled submit variant would never satisfy it.
-		chromedp.Poll(submitState, &state, chromedp.WithPollingInterval(100*time.Millisecond)),
-		chromedp.ActionFunc(func(context.Context) error {
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			v, err := chromedp.Poll[string](submitState, chromedp.WithPollingInterval(100*time.Millisecond))(ctx, t)
+			if err != nil {
+				return err
+			}
+			state = v
 			if state == "rate-limited" {
 				return &RateLimitError{Code: "ERR_RATE_LIMIT"}
 			}
 			return nil
 		}),
-		chromedp.Evaluate(clickPrompt, &result),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := chromedp.Evaluate[string](clickPrompt)(ctx, t)
+			if err != nil {
+				return err
+			}
+			return nil
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("Duck.ai browser bootstrap failed: %w", err)
@@ -481,10 +529,15 @@ Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 			// The proof and the page's cookies belong to the same temporary Chrome
 			// profile. Carry both to the Go request without persisting profile data.
 			var cookies []*network.Cookie
-			err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-				var getErr error
-				cookies, getErr = network.GetCookies().WithURLs([]string{"https://duck.ai/duckchat/v1/chat"}).Do(ctx)
-				return getErr
+			err := chromedp.Do(ctx, chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+				res, err := cdp.Call(ctx, t, network.GetCookies, network.GetCookiesParams{
+					URLs: []string{"https://duck.ai/duckchat/v1/chat"},
+				})
+				if err != nil {
+					return err
+				}
+				cookies = res.Cookies
+				return nil
 			}))
 			if err != nil {
 				return nil, fmt.Errorf("read Duck.ai proof browser cookies: %w", err)
@@ -504,8 +557,7 @@ Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 			}
 			return headers, nil
 		case <-ticker.C:
-			var pageText string
-			if err := chromedp.Run(ctx, chromedp.Evaluate(`document.body?.innerText || ''`, &pageText)); err == nil && duckAIPageRateLimited(pageText) {
+			if v, err := chromedp.Run(ctx, chromedp.Evaluate[string](`document.body?.innerText || ''`)); err == nil && duckAIPageRateLimited(v) {
 				return nil, &RateLimitError{Code: "ERR_RATE_LIMIT"}
 			}
 		case <-ctx.Done():
@@ -577,21 +629,37 @@ func (b *chromedpProofBrowser) Request(parent context.Context, request browserre
 		Headers map[string]string `json:"headers"`
 		Body    string            `json:"body"`
 	}
-	err = chromedp.Run(ctx,
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			_, err := page.AddScriptToEvaluateOnNewDocument(`Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`).Do(ctx)
+	err = chromedp.Do(ctx,
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{
+				Source: `Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`,
+			})
 			return err
 		}),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			_, _, _, userAgent, _, err := cdpbrowser.GetVersion().Do(ctx)
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			res, err := cdp.Call(ctx, t, cdpbrowser.GetVersion, cdp.Empty{})
 			if err != nil {
 				return err
 			}
-			return emulation.SetUserAgentOverride(normalBrowserUserAgent(userAgent)).Do(ctx)
+			_, err = cdp.Call(ctx, t, emulation.SetUserAgentOverride, emulation.SetUserAgentOverrideParams{
+				UserAgent: normalBrowserUserAgent(res.UserAgent),
+			})
+			return err
 		}),
 		chromedp.Navigate("https://duck.ai/"),
-		chromedp.Evaluate(script, &result, func(params *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
-			return params.WithAwaitPromise(true)
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			v, err := chromedp.Evaluate[struct {
+				Status  int               `json:"status"`
+				Headers map[string]string `json:"headers"`
+				Body    string            `json:"body"`
+			}](script, chromedp.EvalAwaitPromise)(ctx, t)
+			if err != nil {
+				return err
+			}
+			result.Status = v.Status
+			result.Headers = v.Headers
+			result.Body = v.Body
+			return nil
 		}),
 	)
 	if err != nil {

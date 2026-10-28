@@ -15,6 +15,7 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/models"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
@@ -179,12 +180,19 @@ func TestLiveHeadlessChatAfterSiteDataReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("headless request before reset: %v", err)
 	}
-	if err := chromedp.Run(browser.browserCtx,
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			return storage.ClearDataForOrigin("https://duck.ai", "all").Do(ctx)
+	if err := chromedp.Do(browser.browserCtx,
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, storage.ClearDataForOrigin, storage.ClearDataForOriginParams{Origin: "https://duck.ai", StorageTypes: "all"})
+			return err
 		}),
-		chromedp.ActionFunc(func(ctx context.Context) error { return network.ClearBrowserCookies().Do(ctx) }),
-		chromedp.ActionFunc(func(ctx context.Context) error { return network.ClearBrowserCache().Do(ctx) }),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, network.ClearBrowserCookies, cdp.Empty{})
+			return err
+		}),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, network.ClearBrowserCache, cdp.Empty{})
+			return err
+		}),
 	); err != nil {
 		t.Fatalf("clear headless Duck.ai site data: %v", err)
 	}

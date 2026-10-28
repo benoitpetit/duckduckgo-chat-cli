@@ -87,20 +87,24 @@ func TestLiveVoiceSilenceDoesNotTriggerResponse(t *testing.T) {
     window.__voiceSetupReady = true;
   }
 })()`
-	if err := chromedp.Run(browserCtx,
+	if err := chromedp.Do(browserCtx,
 		chromedp.Navigate(defaultDuckAIBaseURL),
-		chromedp.Evaluate("window.__voiceIce = "+string(iceJSON)+"; window.__voiceSetupReady = false; window.__voiceDataChannelOpen = false", nil),
-		chromedp.Evaluate(setup, nil),
-		chromedp.Poll("window.__voiceSetupReady === true", nil, chromedp.WithPollingTimeout(20*time.Second)),
+		chromedp.Evaluate[chromedp.Void]("window.__voiceIce = "+string(iceJSON)+"; window.__voiceSetupReady = false; window.__voiceDataChannelOpen = false"),
+		chromedp.Evaluate[chromedp.Void](setup),
+		chromedp.Poll[chromedp.Void]("window.__voiceSetupReady === true", chromedp.WithPollingTimeout(20*time.Second)),
 	); err != nil {
 		t.Fatalf("create silent microphone offer: %v", err)
 	}
 	var offerErr, offer string
-	if err := chromedp.Run(browserCtx,
-		chromedp.Evaluate("window.__voiceError || ''", &offerErr),
-		chromedp.Evaluate("window.__voiceOffer || ''", &offer),
-	); err != nil {
+	if v, err := chromedp.Run(browserCtx, chromedp.Evaluate[string]("window.__voiceError || ''")); err != nil {
 		t.Fatalf("read silent microphone offer: %v", err)
+	} else {
+		offerErr = v
+	}
+	if v, err := chromedp.Run(browserCtx, chromedp.Evaluate[string]("window.__voiceOffer || ''")); err != nil {
+		t.Fatalf("read silent microphone offer: %v", err)
+	} else {
+		offer = v
 	}
 	if offerErr != "" {
 		t.Fatalf("create silent microphone offer: %s", offerErr)
@@ -116,31 +120,35 @@ func TestLiveVoiceSilenceDoesNotTriggerResponse(t *testing.T) {
 	applyAnswer := fmt.Sprintf(`window.__voicePeer.setRemoteDescription({type:"answer",sdp:%s})
   .then(() => { window.__voiceRemoteReady = true; })
   .catch(error => { window.__voiceError = String(error); window.__voiceRemoteReady = true; })`, encodedAnswer)
-	if err := chromedp.Run(browserCtx,
-		chromedp.Evaluate("window.__voiceRemoteReady = false", nil),
-		chromedp.Evaluate(applyAnswer, nil),
-		chromedp.Poll("window.__voiceRemoteReady === true", nil, chromedp.WithPollingTimeout(20*time.Second)),
-		chromedp.Poll("window.__voiceDataChannelOpen === true", nil, chromedp.WithPollingTimeout(20*time.Second)),
+	if err := chromedp.Do(browserCtx,
+		chromedp.Evaluate[chromedp.Void]("window.__voiceRemoteReady = false"),
+		chromedp.Evaluate[chromedp.Void](applyAnswer),
+		chromedp.Poll[chromedp.Void]("window.__voiceRemoteReady === true", chromedp.WithPollingTimeout(20*time.Second)),
+		chromedp.Poll[chromedp.Void]("window.__voiceDataChannelOpen === true", chromedp.WithPollingTimeout(20*time.Second)),
 	); err != nil {
 		t.Fatalf("connect silent voice session: %v", err)
 	}
 	var remoteErr string
-	if err := chromedp.Run(browserCtx, chromedp.Evaluate("window.__voiceError || ''", &remoteErr)); err != nil {
+	if v, err := chromedp.Run(browserCtx, chromedp.Evaluate[string]("window.__voiceError || ''")); err != nil {
 		t.Fatalf("read session connection state: %v", err)
+	} else {
+		remoteErr = v
 	}
 	if remoteErr != "" {
 		t.Fatalf("apply Duck.ai SDP answer: %s", remoteErr)
 	}
-	if err := chromedp.Run(browserCtx,
-		chromedp.Evaluate("window.__voiceSilenceDone = false; setTimeout(() => { window.__voiceSilenceDone = true; }, 10000)", nil),
-		chromedp.Poll("window.__voiceSilenceDone === true", nil, chromedp.WithPollingTimeout(15*time.Second)),
+	if err := chromedp.Do(browserCtx,
+		chromedp.Evaluate[chromedp.Void]("window.__voiceSilenceDone = false; setTimeout(() => { window.__voiceSilenceDone = true; }, 10000)"),
+		chromedp.Poll[chromedp.Void]("window.__voiceSilenceDone === true", chromedp.WithPollingTimeout(15*time.Second)),
 	); err != nil {
 		t.Fatalf("observe silent voice session: %v", err)
 	}
 
 	var events []string
-	if err := chromedp.Run(browserCtx, chromedp.Evaluate("window.__voiceEvents", &events)); err != nil {
+	if v, err := chromedp.Run(browserCtx, chromedp.Evaluate[[]string]("window.__voiceEvents")); err != nil {
 		t.Fatalf("read sanitized voice event types: %v", err)
+	} else {
+		events = v
 	}
 	for _, event := range events {
 		if event == "input_audio_buffer.speech_started" || event == "response.created" || event == "output_audio_buffer.started" {

@@ -104,7 +104,7 @@ jobs:
       id: security_scan
       run: |
         if ! command -v gosec &> /dev/null; then
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
         fi
         gosec -no-fail -fmt sarif -out results.sarif ./...
 
@@ -141,6 +141,15 @@ jobs:
           echo "❌ Linux AMD64 build failed"
           exit 1
         fi
+
+        GOOS=linux GOARCH=arm64 go build -o test_linux_arm64 ./cmd/duckchat
+        if [ -f "test_linux_arm64" ]; then
+          echo "✅ Linux ARM64 build successful"
+          rm test_linux_arm64
+        else
+          echo "❌ Linux ARM64 build failed"
+          exit 1
+        fi
         
         # Test Windows build
         GOOS=windows GOARCH=amd64 go build -o test_windows.exe ./cmd/duckchat
@@ -149,6 +158,15 @@ jobs:
           rm test_windows.exe
         else
           echo "❌ Windows AMD64 build failed"
+          exit 1
+        fi
+
+        GOOS=windows GOARCH=arm64 go build -o test_windows_arm64.exe ./cmd/duckchat
+        if [ -f "test_windows_arm64.exe" ]; then
+          echo "✅ Windows ARM64 build successful"
+          rm test_windows_arm64.exe
+        else
+          echo "❌ Windows ARM64 build failed"
           exit 1
         fi
         

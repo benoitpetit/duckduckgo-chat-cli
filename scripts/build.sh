@@ -34,9 +34,13 @@ LDFLAGS="-X main.Version=v$VERSION -X duckduckgo-chat-cli/internal/version.Curre
 
 echo "📦 Building Linux AMD64..."
 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_amd64" ./cmd/duckchat
+echo "📦 Building Linux ARM64..."
+GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_linux_arm64" ./cmd/duckchat
 
 echo "📦 Building Windows AMD64 with docs/images/logo.png application icon..."
 "$ROOT_DIR/scripts/build_windows_binary.sh" "$VERSION" "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe"
+echo "📦 Building Windows ARM64 with docs/images/logo.png application icon..."
+"$ROOT_DIR/scripts/build_windows_binary.sh" "$VERSION" "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_arm64.exe" arm64
 
 echo "ℹ️ macOS binaries are built on native macOS runners in the release workflow."
 
@@ -57,8 +61,12 @@ echo "📚 Creating release archive..."
 archive="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
 rm -f "$archive"
 zip -j "$archive" "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_arm64 \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_arm64.exe \
   "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_amd64.sha256 \
-  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe.sha256
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_linux_arm64.sha256 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_amd64.exe.sha256 \
+  "$BUILD_DIR"/duckduckgo-chat-cli_v"$VERSION"_windows_arm64.exe.sha256
 echo "✅ Build v$VERSION complete! Files available in $BUILD_DIR:"
 ls -lh "$BUILD_DIR"

@@ -37,10 +37,17 @@ func WebContentContext(parent context.Context, urlStr string) (*WebContentResult
 	defer cancel()
 
 	var content string
-	err := chromedp.Run(ctx,
+	err := chromedp.Do(ctx,
 		chromedp.Navigate(urlStr),
 		chromedp.Sleep(2*time.Second),
-		chromedp.Evaluate(extractionScript, &content),
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			v, err := chromedp.Evaluate[string](extractionScript)(ctx, t)
+			if err != nil {
+				return err
+			}
+			content = v
+			return nil
+		}),
 	)
 	if err != nil {
 		log.Printf("Error fetching content for URL %s: %v\n", urlStr, err)

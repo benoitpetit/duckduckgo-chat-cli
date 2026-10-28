@@ -87,9 +87,8 @@ func (s *scriptedCoordinateSurvey) Input(string) (string, error) {
 }
 
 func TestCoordinateMenuArmsDebateWithEditedRole(t *testing.T) {
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
 	c, cfg := newCoordinateTestChat(t)
+	configHome := os.Getenv("XDG_CONFIG_HOME")
 	prompts := &scriptedCoordinateSurvey{
 		choices: []string{"Algorithm", "Debate", "Debate rounds", "2 rounds", "Execution", "Parallel independent steps", "Agents", "Agent 2", "Edit role", "Back", "Back", "Use for next question"},
 		inputs:  []string{"Counterexample hunter"},
@@ -117,9 +116,8 @@ func TestCoordinateMenuArmsDebateWithEditedRole(t *testing.T) {
 }
 
 func TestCoordinateAgentEditsPersistBeforeArmingNextQuestion(t *testing.T) {
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
 	c, cfg := newCoordinateTestChat(t)
+	configHome := os.Getenv("XDG_CONFIG_HOME")
 	plan := coordinateTestPlan(CoordinateIndependent, 0)
 	plan.Agents = plan.Agents[:2]
 	var alternateModel models.Model
@@ -199,9 +197,8 @@ func TestCoordinateStrategyUpdatesOnlyAutomaticRoles(t *testing.T) {
 }
 
 func TestCoordinateStrategiesKeepSeparateAgentModelsAndRoles(t *testing.T) {
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
 	c, cfg := newCoordinateTestChat(t)
+	configHome := os.Getenv("XDG_CONFIG_HOME")
 	cfg.Coordinate = config.CoordinateConfig{
 		Strategy: string(CoordinateIndependent),
 		Agents: []config.CoordinateAgentConfig{

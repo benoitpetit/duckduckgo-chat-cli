@@ -32,6 +32,8 @@ func (p *fixedCoordinateRecoveryPrompt) ChooseRecovery(*CoordinateRun) (Coordina
 func newCoordinateTestChat(t *testing.T) (*Chat, *config.Config) {
 	t.Helper()
 	cfg := &config.Config{ExportDir: t.TempDir()}
+	// Isolate coordinate saves from the user's real config file.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg.Dashboard.RetentionDays = 90
 	chat := NewChat("", "", "", "", models.GPT6Luna, cfg)
 	chat.coordinateArchivePrompt = &fixedCoordinateArchivePrompt{}

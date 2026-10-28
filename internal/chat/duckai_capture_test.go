@@ -92,14 +92,16 @@ func TestChromeSiteDataResetKeepsBrowserAndTabAlive(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, finishFirst := proofCaptureContext(browser.targetCtx, ctx)
-	if err := chromedp.Run(first, chromedp.Navigate("about:blank")); err != nil {
+	if err := chromedp.Do(first, chromedp.Navigate("about:blank")); err != nil {
 		finishFirst()
 		t.Fatal(err)
 	}
 	finishFirst()
 	second, finishSecond := proofCaptureContext(browser.targetCtx, ctx)
 	var tabStillWorks bool
-	if err := chromedp.Run(second, chromedp.Evaluate(`document.location.href === 'about:blank'`, &tabStillWorks)); err != nil {
+	v, err := chromedp.Run(second, chromedp.Evaluate[bool](`document.location.href === 'about:blank'`))
+	tabStillWorks = v
+	if err != nil {
 		finishSecond()
 		t.Fatalf("second request on the same tab: %v", err)
 	}
@@ -113,7 +115,7 @@ func TestChromeSiteDataResetKeepsBrowserAndTabAlive(t *testing.T) {
 	if browser.browserCtx.Err() != nil || browser.targetCtx.Err() != nil {
 		t.Fatal("site data reset closed the headless browser or tab")
 	}
-	if err := chromedp.Run(browser.targetCtx, chromedp.Navigate("about:blank")); err != nil {
+	if err := chromedp.Do(browser.targetCtx, chromedp.Navigate("about:blank")); err != nil {
 		t.Fatalf("reuse tab after site data reset: %v", err)
 	}
 }

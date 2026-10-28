@@ -8,7 +8,7 @@
 </div>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.26 or newer">
+  <img src="https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.27 or newer">
   <a href="https://github.com/benoitpetit/duckduckgo-chat-cli/releases/latest">
     <img src="https://img.shields.io/github/v/release/benoitpetit/duckduckgo-chat-cli?style=flat-square" alt="Latest release">
   </a>
@@ -60,7 +60,7 @@ The dashboard screenshots use representative sample metrics.
 
 > **[Download the latest release](https://github.com/benoitpetit/duckduckgo-chat-cli/releases/latest)** for Linux, Windows, or macOS.
 
-Release builds are available for common desktop processors. Download the matching binary, then run it from a terminal. Chrome or Chromium is required for Duck.ai chat and voice; version 115.0.5790.110 or later is recommended. No browser extension or DuckDuckGo account is required.
+Release builds include AMD64 and ARM64 binaries for Linux and Windows, and AMD64 and ARM64 binaries for macOS. Download the asset matching your operating system and processor, then run it from a terminal. Chrome or Chromium is required for Duck.ai chat and voice; version 115.0.5790.110 or later is recommended. No browser extension or DuckDuckGo account is required.
 
 To build from source, see the [build and release guide](docs/BUILD.md).
 

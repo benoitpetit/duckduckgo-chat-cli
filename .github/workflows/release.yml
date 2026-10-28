@@ -133,27 +133,32 @@ jobs:
           cd "$BUILD_DIR"
           zip -r -FS "duckduckgo-chat-cli_v${VERSION}_release.zip" \
             "duckduckgo-chat-cli_v${VERSION}_linux_amd64" \
+            "duckduckgo-chat-cli_v${VERSION}_linux_arm64" \
             "duckduckgo-chat-cli_v${VERSION}_darwin_arm64" \
             "duckduckgo-chat-cli_v${VERSION}_darwin_amd64" \
             "duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe" \
+            "duckduckgo-chat-cli_v${VERSION}_windows_arm64.exe" \
             "duckduckgo-chat-cli_v${VERSION}_linux_amd64.sha256" \
+            "duckduckgo-chat-cli_v${VERSION}_linux_arm64.sha256" \
             "duckduckgo-chat-cli_v${VERSION}_darwin_arm64.sha256" \
             "duckduckgo-chat-cli_v${VERSION}_darwin_amd64.sha256" \
-            "duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256"
+            "duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe.sha256" \
+            "duckduckgo-chat-cli_v${VERSION}_windows_arm64.exe.sha256"
         )
 
     - name: 🧪 Verify release artifacts
       run: |
         VERSION="${{ steps.version.outputs.VERSION }}"
         BUILD_DIR="build"
-        for suffix in linux_amd64 darwin_arm64 darwin_amd64 windows_amd64.exe; do
+        for suffix in linux_amd64 linux_arm64 darwin_arm64 darwin_amd64 windows_amd64.exe windows_arm64.exe; do
           artifact="$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_${suffix}"
           test -s "$artifact" || { echo "Missing build artifact: $artifact"; exit 1; }
           test -s "$artifact.sha256" || { echo "Missing checksum: $artifact.sha256"; exit 1; }
         done
         test -s "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
         file "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe" | grep -q 'PE32+'
-        echo "Windows PE executable built with its generated icon resource."
+        file "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_arm64.exe" | grep -q 'PE32+.*ARM64'
+        echo "Windows AMD64 and ARM64 PE executables built with their generated icon resources."
         ls -lah "$BUILD_DIR"
 
     - name: 📝 Generate release notes
@@ -236,7 +241,9 @@ jobs:
         ${{ steps.release_notes.outputs.WHATS_NEW }}
         ## Downloads
         - **Linux:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64`
-        - **Windows:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
+        - **Linux ARM64:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_arm64`
+        - **Windows AMD64:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
+        - **Windows ARM64:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_arm64.exe`
         - **macOS Apple Silicon:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
         - **macOS Intel:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_amd64`
         - **All platforms:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip`
@@ -263,7 +270,9 @@ jobs:
           
           ## Downloads
           - **Linux:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64`
-          - **Windows:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
+          - **Linux ARM64:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_arm64`
+          - **Windows AMD64:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe`
+          - **Windows ARM64:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_arm64.exe`
           - **macOS Apple Silicon:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64`
           - **macOS Intel:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_amd64`
           - **All platforms:** `duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip`
@@ -275,8 +284,9 @@ jobs:
           
           ### Linux
           ```bash
-          # Download and install
-          curl -L https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64 -o duckduckgo-chat-cli
+          # Choose arm64 or amd64 to match your processor.
+          ARCH=arm64
+          curl -L https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_${ARCH} -o duckduckgo-chat-cli
           chmod +x duckduckgo-chat-cli
           sudo mv duckduckgo-chat-cli /usr/local/bin/
           ```
@@ -290,9 +300,11 @@ jobs:
           *Built by GitHub Actions*
         files: |
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_amd64
+          build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_linux_arm64
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_arm64
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_darwin_amd64
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_amd64.exe
+          build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_windows_arm64.exe
           build/duckduckgo-chat-cli_v${{ steps.version.outputs.VERSION }}_release.zip
           build/*.sha256
         draft: false

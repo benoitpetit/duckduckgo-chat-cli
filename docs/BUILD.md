@@ -1,6 +1,6 @@
 # Build and release
 
-The project uses the Go version declared in `go.mod` (currently Go 1.26). Chrome or Chromium is needed at runtime for Duck.ai chat and voice, but not to compile the CLI. Linux builds do not require GTK, WebKitGTK, or GStreamer development packages.
+The project uses the Go version declared in `go.mod` (currently Go 1.27). Chrome or Chromium is needed at runtime for Duck.ai chat and voice, but not to compile the CLI. Linux builds do not require GTK, WebKitGTK, or GStreamer development packages.
 
 ## Get the source
 
@@ -35,7 +35,7 @@ Build the Linux and Windows release binaries with a semantic version, for exampl
 ./scripts/build.sh 1.9.2
 ```
 
-The script writes binaries, checksums, and a release archive under `build/`. macOS binaries are built on native macOS GitHub Actions runners and added to the complete release archive.
+The script writes Linux AMD64 and ARM64 binaries, Windows AMD64 and ARM64 executables, their checksums, and a release archive under `build/`. macOS binaries are built on native macOS GitHub Actions runners and added to the complete release archive. Windows ARM64 and AMD64 executables each embed the application icon.
 
 The Windows executable embeds `docs/images/logo.png` as its application icon. The build script uses a pinned `go-winres` version to create the Windows resources.
 

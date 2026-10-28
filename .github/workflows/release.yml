@@ -157,7 +157,7 @@ jobs:
         done
         test -s "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_release.zip"
         file "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_amd64.exe" | grep -q 'PE32+'
-        file "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_arm64.exe" | grep -q 'PE32+.*ARM64'
+        file "$BUILD_DIR/duckduckgo-chat-cli_v${VERSION}_windows_arm64.exe" | grep -Eiq 'PE32[+].*(ARM64|AARCH64)'
         echo "Windows AMD64 and ARM64 PE executables built with their generated icon resources."
         ls -lah "$BUILD_DIR"
 

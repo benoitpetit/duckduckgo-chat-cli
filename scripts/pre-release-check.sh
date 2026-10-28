@@ -79,7 +79,7 @@ echo "🪟 Building Windows ARM64 executable with docs/images/logo.png..."
 "$ROOT_DIR/scripts/build_windows_binary.sh" verify "$TEMP_DIR/duckchat-windows-arm64.exe" arm64
 test -s "$TEMP_DIR/duckchat-windows-arm64.exe" || fail "Windows ARM64 executable was not produced"
 if command -v file >/dev/null 2>&1; then
-  file "$TEMP_DIR/duckchat-windows-arm64.exe" | grep -q 'PE32+.*ARM64' || fail "Windows ARM64 output is not an ARM64 PE32+ executable"
+  file "$TEMP_DIR/duckchat-windows-arm64.exe" | grep -Eiq 'PE32[+].*(ARM64|AARCH64)' || fail "Windows ARM64 output is not an ARM64 PE32+ executable"
 fi
 
 for required_file in README.md docs/BUILD.md go.mod scripts/build.sh scripts/build_windows_binary.sh .github/workflows/release.yml docs/images/logo.png; do

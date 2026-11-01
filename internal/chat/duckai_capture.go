@@ -897,7 +897,7 @@ func nextBrowserExecutable() (string, error) {
 		return "", fmt.Errorf("no Chromium-based browser found")
 	}
 	idx := atomic.AddUint64(&browserRotationIndex, 1) - 1
-	return cands[int(idx)%len(cands)], nil
+	return cands[idx%uint64(len(cands))], nil
 }
 
 func browserMajorVersion(execPath string) int {

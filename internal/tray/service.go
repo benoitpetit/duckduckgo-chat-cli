@@ -137,11 +137,11 @@ func runService(ctx context.Context, options ServiceOptions, listen func(string,
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	trayConfigReloads := make(chan config.TrayConfig, 1)
-	dispatch := func(action Action) (Response, error) {
+	dispatchWithContext := func(actionCtx context.Context, action Action) (Response, error) {
 		var response Response
 		var actionErr error
 		if options.HandleAction != nil {
-			response, actionErr = options.HandleAction(runCtx, action)
+			response, actionErr = options.HandleAction(actionCtx, action)
 		} else if action != ActionServiceStatus {
 			actionErr = fmt.Errorf("action %q is unavailable", action)
 		}
@@ -161,6 +161,9 @@ func runService(ctx context.Context, options ServiceOptions, listen func(string,
 		}
 		return response, actionErr
 	}
+	dispatch := func(action Action) (Response, error) {
+		return dispatchWithContext(runCtx, action)
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -176,7 +179,7 @@ func runService(ctx context.Context, options ServiceOptions, listen func(string,
 				return
 			}
 			go handleIPCConnection(runCtx, connection, token, func(requestCtx context.Context, action Action) (Response, error) {
-				return dispatch(action)
+				return dispatchWithContext(requestCtx, action)
 			})
 		}
 	}()

@@ -2,6 +2,13 @@
 
 This file summarizes the user-facing changes in every published release. Dates are the GitHub publication dates. See each linked release for its downloads and checksums.
 
+## [1.9.8] - 2026-11-01 ([release](https://github.com/benoitpetit/duckduckgo-chat-cli/releases/tag/v1.9.8))
+
+- Fixed browser proof capture hanging for 30 seconds when the chat service shows its anonymous usage limit ("Daily limit reached"). The limit banner and wording are now detected and reported as a rate limit.
+- Prefer an installed Chrome/Chromium build older than 156 when available, avoiding the new anonymous daily usage limit (version-aware browser selection, fallback to newest).
+- Voice chats (/speak) now carry the current conversation context and record transcripts back into the session, with a grace period for flushing on close.
+- Updated protocol notes and regression coverage.
+
 ## [1.9.7] - 2026-11-01 ([release](https://github.com/benoitpetit/duckduckgo-chat-cli/releases/tag/v1.9.7))
 
 - Added conversation branching, response retry, per-session notes, context pinning and compaction, and source comparison, auditing, and saved source sets.

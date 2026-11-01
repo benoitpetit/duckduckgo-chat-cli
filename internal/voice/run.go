@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const browserCloseTranscriptGrace = 2 * time.Second
+
 type BrowserSession interface {
 	Close() error
 }
@@ -191,6 +193,14 @@ func Run(ctx context.Context, deps Dependencies, opener BrowserOpener) (runErr e
 		}
 		return nil
 	case <-browserDone:
+		// Let the page's ordered transcript flush and authenticated stop request finish before shutdown.
+		grace := time.NewTimer(browserCloseTranscriptGrace)
+		defer grace.Stop()
+		select {
+		case <-localHandler.stop:
+		case <-runCtx.Done():
+		case <-grace.C:
+		}
 		return nil
 	}
 }

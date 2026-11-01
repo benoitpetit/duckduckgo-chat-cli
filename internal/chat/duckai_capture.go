@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,10 @@ const (
 	duckAIProofCaptureTimeout = 60 * time.Second
 	// browserCloseWait bounds shutdown so a wedged browser cannot stall exit.
 	browserCloseWait = 5 * time.Second
+	// duckAIUsageLimitReachedSelector matches the banner Duck.ai renders only
+	// when an anonymous usage window is fully exhausted. Warning banners use
+	// role="status" instead, so they are not mistaken for a hard block.
+	duckAIUsageLimitReachedSelector = `[data-testid="UsageLimitBanner"][role="alert"]`
 )
 
 type DynamicHeaders struct {
@@ -425,12 +430,14 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
 })()`
 
 	const pageReady = `(function() {
+  if (document.querySelector('` + duckAIUsageLimitReachedSelector + `')) return 'usage-limited';
   const body = (document.body?.innerText || '').toLowerCase();
   if (body.includes('too many requests') || body.includes('trop de requêtes') || body.includes('trop de requetes') || body.includes('err_rate_limit')) return 'rate-limited';
   const textarea = document.querySelector('textarea[name="user-prompt"]');
   return textarea && textarea.getClientRects().length ? 'ready' : '';
 })()`
 	const submitState = `(function() {
+  if (document.querySelector('` + duckAIUsageLimitReachedSelector + `')) return 'usage-limited';
   const body = (document.body?.innerText || '').toLowerCase();
   if (body.includes('too many requests') || body.includes('trop de requêtes') || body.includes('trop de requetes') || body.includes('err_rate_limit')) return 'rate-limited';
   const button = document.querySelector('button[type="submit"]');
@@ -476,7 +483,10 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
 				return err
 			}
 			state = v
-			if state == "rate-limited" {
+			switch state {
+			case "usage-limited":
+				return &RateLimitError{Code: "ERR_USER_LIMIT"}
+			case "rate-limited":
 				return &RateLimitError{Code: "ERR_RATE_LIMIT"}
 			}
 			return nil
@@ -497,7 +507,10 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
 				return err
 			}
 			state = v
-			if state == "rate-limited" {
+			switch state {
+			case "usage-limited":
+				return &RateLimitError{Code: "ERR_USER_LIMIT"}
+			case "rate-limited":
 				return &RateLimitError{Code: "ERR_RATE_LIMIT"}
 			}
 			return nil
@@ -557,7 +570,27 @@ func (b *chromedpProofBrowser) Capture(parent context.Context) (*DynamicHeaders,
 			}
 			return headers, nil
 		case <-ticker.C:
-			if v, err := chromedp.Run(ctx, chromedp.Evaluate[string](`document.body?.innerText || ''`)); err == nil && duckAIPageRateLimited(v) {
+			var pageState struct {
+				UsageLimited bool   `json:"usageLimited"`
+				Text         string `json:"text"`
+			}
+			state, err := chromedp.Run(ctx, chromedp.Evaluate[struct {
+				UsageLimited bool   `json:"usageLimited"`
+				Text         string `json:"text"`
+			}](`(function() {
+  return {
+    usageLimited: document.querySelector('`+duckAIUsageLimitReachedSelector+`') !== null,
+    text: document.body?.innerText || ''
+  };
+})()`))
+			if err != nil {
+				continue
+			}
+			pageState = state
+			if pageState.UsageLimited {
+				return nil, &RateLimitError{Code: "ERR_USER_LIMIT"}
+			}
+			if duckAIPageRateLimited(pageState.Text) {
 				return nil, &RateLimitError{Code: "ERR_RATE_LIMIT"}
 			}
 		case <-ctx.Done():
@@ -685,7 +718,11 @@ func duckAIPageRateLimited(pageText string) bool {
 	return strings.Contains(text, "too many requests") ||
 		strings.Contains(text, "trop de requêtes") ||
 		strings.Contains(text, "trop de requetes") ||
-		strings.Contains(text, "err_rate_limit")
+		strings.Contains(text, "err_rate_limit") ||
+		strings.Contains(text, "daily limit reached") ||
+		strings.Contains(text, "6-hour usage limit reached") ||
+		strings.Contains(text, "weekly usage limit reached") ||
+		strings.Contains(text, "monthly limit reached")
 }
 
 var sharedDuckAIBrowser = newBrowserManager(newChromedpProofBrowser)
@@ -753,17 +790,68 @@ func findBrowserExecutable() (string, error) {
 	default:
 		names = []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"}
 	}
+
+	var candidates []string
 	for _, name := range names {
 		if path, err := exec.LookPath(name); err == nil {
-			return path, nil
+			candidates = append(candidates, path)
 		}
 	}
 	for _, path := range browserInstallPaths(runtime.GOOS) {
 		if executable, err := exec.LookPath(path); err == nil {
-			return executable, nil
+			candidates = append(candidates, executable)
 		}
 	}
-	return "", fmt.Errorf("Google Chrome or Chromium is required for Duck.ai browser access; install one and make sure its executable is available")
+
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("Google Chrome or Chromium is required for Duck.ai browser access; install one and make sure its executable is available")
+	}
+
+	// Duck.ai recently started enforcing an anonymous daily usage limit for
+	// recent Chrome builds (156+). Prefer an older Chromium when one is
+	// available so the CLI keeps working without hitting that limit.
+	var (
+		preferred  string
+		preferredV int
+		fallback   string
+		fallbackV  int
+	)
+	for _, candidate := range candidates {
+		version := browserMajorVersion(candidate)
+		if version > 0 && version < 156 {
+			if version > preferredV {
+				preferredV = version
+				preferred = candidate
+			}
+			continue
+		}
+		if version > fallbackV {
+			fallbackV = version
+			fallback = candidate
+		}
+	}
+	if preferred != "" {
+		return preferred, nil
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return candidates[0], nil
+}
+
+func browserMajorVersion(execPath string) int {
+	out, err := exec.Command(execPath, "--version").Output()
+	if err != nil {
+		return 0
+	}
+	for _, field := range strings.Fields(string(out)) {
+		if strings.Count(field, ".") >= 2 {
+			if major, err := strconv.Atoi(strings.SplitN(field, ".", 2)[0]); err == nil {
+				return major
+			}
+		}
+	}
+	return 0
 }
 
 func browserInstallPaths(goos string) []string {

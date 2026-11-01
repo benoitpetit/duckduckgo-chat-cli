@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -76,7 +77,7 @@ func (o *contextBlockingBrowserOpener) Open(ctx context.Context, address string)
 
 func TestVoiceAssetsAreEmbedded(t *testing.T) {
 	handler := newTestHandler(t, &testProofProvider{}, &testSignalingClient{})
-	for _, path := range []string{"/", "/app.js", "/logo.png"} {
+	for _, path := range []string{"/", "/app.js", "/context.mjs", "/logo.png"} {
 		recorder := doVoiceRequest(handler, http.MethodGet, path, "", "", "", "")
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d, want 200", path, recorder.Code)
@@ -245,8 +246,15 @@ func TestRunReturnsWhenBrowserWindowCloses(t *testing.T) {
 	session := &fakeBrowserSession{done: make(chan struct{})}
 	opener := &fakeBrowserOpener{opened: make(chan string, 1), session: session}
 	done := make(chan error, 1)
+	transcripts := make(chan ConversationMessage, 1)
 	go func() {
-		done <- Run(context.Background(), Dependencies{Proof: &testProofProvider{}, Signaling: &testSignalingClient{}}, opener)
+		done <- Run(context.Background(), Dependencies{
+			Proof:     &testProofProvider{},
+			Signaling: &testSignalingClient{},
+			OnTranscript: func(message ConversationMessage) {
+				transcripts <- message
+			},
+		}, opener)
 	}()
 
 	var address string
@@ -258,6 +266,42 @@ func TestRunReturnsWhenBrowserWindowCloses(t *testing.T) {
 		t.Fatal("browser opener was not called")
 	}
 	close(session.done)
+	time.Sleep(25 * time.Millisecond)
+	parsed, err := url.Parse(address)
+	if err != nil {
+		t.Fatalf("parse browser URL: %v", err)
+	}
+	localOrigin := parsed.Scheme + "://" + parsed.Host
+	body, err := json.Marshal(ConversationMessage{ID: "item-close-test", Role: "user", Content: "saved while closing"})
+	if err != nil {
+		t.Fatalf("encode final transcript: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, localOrigin+"/api/transcript", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("create final transcript request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+parsed.Fragment)
+	request.Header.Set("Origin", localOrigin)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("submit transcript during browser close: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("closing transcript status = %d, want 204", response.StatusCode)
+	}
+	stopRequest, err := http.NewRequest(http.MethodPost, localOrigin+"/api/stop", nil)
+	if err != nil {
+		t.Fatalf("create stop request: %v", err)
+	}
+	stopRequest.Header.Set("Authorization", "Bearer "+parsed.Fragment)
+	stopRequest.Header.Set("Origin", localOrigin)
+	stopResponse, err := http.DefaultClient.Do(stopRequest)
+	if err != nil {
+		t.Fatalf("stop voice session after transcript: %v", err)
+	}
+	_ = stopResponse.Body.Close()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -268,6 +312,9 @@ func TestRunReturnsWhenBrowserWindowCloses(t *testing.T) {
 	}
 	if got := session.closeCount(); got != 1 {
 		t.Fatalf("browser Close() calls = %d, want 1", got)
+	}
+	if got := <-transcripts; got.Role != "user" || got.Content != "saved while closing" {
+		t.Fatalf("transcript received during browser close = %+v, want final user turn", got)
 	}
 	if _, err := http.Get(address); err == nil {
 		t.Fatal("local server still accepted requests after the browser closed")

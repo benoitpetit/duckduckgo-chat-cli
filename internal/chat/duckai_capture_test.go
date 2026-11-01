@@ -189,6 +189,10 @@ func TestDuckAIPageRateLimitMessage(t *testing.T) {
 		"Trop de requêtes. Veuillez faire une courte pause et réessayer.",
 		"Too many requests. Please take a short break and try again.",
 		"ERR_RATE_LIMIT",
+		"Daily limit reached",
+		"6-hour usage limit reached.",
+		"Weekly usage limit reached",
+		"Monthly limit reached",
 	} {
 		if !duckAIPageRateLimited(text) {
 			t.Errorf("rate-limit page text %q was not recognized", text)

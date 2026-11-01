@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -369,6 +370,125 @@ func TestHandlerServesICEAndNegotiatesSDP(t *testing.T) {
 	iceJourneys, sessionJourneys := signaling.journeyValues()
 	if len(iceJourneys) != 1 || len(sessionJourneys) != 1 || iceJourneys[0] == "" || iceJourneys[0] != sessionJourneys[0] {
 		t.Fatalf("ICE/session journey IDs = %v / %v, want one stable non-empty ID", iceJourneys, sessionJourneys)
+	}
+}
+
+func TestHandlerServesSeedConversationThroughAuthenticatedEndpoint(t *testing.T) {
+	contextMessages := []ConversationMessage{
+		{Role: "user", Content: "What is the result?"},
+		{Role: "assistant", Content: "The result is 42."},
+	}
+	handler, err := NewHandler(Dependencies{
+		Proof:     &testProofProvider{},
+		Signaling: &testSignalingClient{},
+		Context:   contextMessages,
+		Speak:     config.DefaultSpeakConfig(),
+	}, testVoiceToken, testVoiceOrigin)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	response := doVoiceRequest(handler, http.MethodGet, "/api/context", testVoiceToken, testVoiceOrigin, "", "")
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("context response = %d, cache %q; want 200 and no-store", response.Code, response.Header().Get("Cache-Control"))
+	}
+	var got []ConversationMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode context: %v", err)
+	}
+	if !reflect.DeepEqual(got, contextMessages) {
+		t.Fatalf("context = %+v, want %+v", got, contextMessages)
+	}
+}
+
+func TestHandlerForwardsOnlyFinalTextTranscripts(t *testing.T) {
+	var got []ConversationMessage
+	handler, err := NewHandler(Dependencies{
+		Proof:     &testProofProvider{},
+		Signaling: &testSignalingClient{},
+		Speak:     config.DefaultSpeakConfig(),
+		OnTranscript: func(message ConversationMessage) {
+			got = append(got, message)
+		},
+	}, testVoiceToken, testVoiceOrigin)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	response := doVoiceRequest(handler, http.MethodPost, "/api/transcript", testVoiceToken, testVoiceOrigin, "application/json", `{"id":"item-voice-1","role":"user","content":"Please keep the same context."}`)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("transcript response = %d, want 204: %s", response.Code, response.Body.String())
+	}
+	want := []ConversationMessage{{ID: "item-voice-1", Role: "user", Content: "Please keep the same context."}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("transcripts = %+v, want %+v", got, want)
+	}
+}
+
+func TestHandlerAcceptsLongTranscriptWithinSessionSafetyLimit(t *testing.T) {
+	var got ConversationMessage
+	handler, err := NewHandler(Dependencies{
+		Proof:     &testProofProvider{},
+		Signaling: &testSignalingClient{},
+		Speak:     config.DefaultSpeakConfig(),
+		OnTranscript: func(message ConversationMessage) {
+			got = message
+		},
+	}, testVoiceToken, testVoiceOrigin)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	content := strings.Repeat("long transcript ", 2200)
+	body, err := json.Marshal(ConversationMessage{ID: "long-voice-item", Role: "user", Content: content})
+	if err != nil {
+		t.Fatalf("marshal long transcript: %v", err)
+	}
+	response := doVoiceRequest(handler, http.MethodPost, "/api/transcript", testVoiceToken, testVoiceOrigin, "application/json", string(body))
+	if response.Code != http.StatusNoContent || got.Content != content {
+		t.Fatalf("long transcript response = %d, forwarded bytes = %d; want 204 and %d bytes", response.Code, len(got.Content), len(content))
+	}
+}
+
+func TestHandlerForwardsAnOversizedTranscriptOmissionMarker(t *testing.T) {
+	var got ConversationMessage
+	handler, err := NewHandler(Dependencies{
+		Proof:     &testProofProvider{},
+		Signaling: &testSignalingClient{},
+		Speak:     config.DefaultSpeakConfig(),
+		OnTranscript: func(message ConversationMessage) {
+			got = message
+		},
+	}, testVoiceToken, testVoiceOrigin)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	response := doVoiceRequest(handler, http.MethodPost, "/api/transcript", testVoiceToken, testVoiceOrigin, "application/json", `{"id":"long-item","role":"user","omitted":true}`)
+	if response.Code != http.StatusNoContent || !got.Omitted || got.ID != "long-item" || got.Role != "user" {
+		t.Fatalf("omission response = %d, forwarded=%+v; want 204 with a stable omission marker", response.Code, got)
+	}
+}
+
+func TestHandlerRejectsInvalidTranscriptWithoutForwarding(t *testing.T) {
+	for _, body := range []string{
+		`{"id":"item-invalid-role","role":"system","content":"must be rejected"}`,
+		`{"role":"user","content":"stable item ID is required"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			forwarded := false
+			handler, err := NewHandler(Dependencies{
+				Proof:     &testProofProvider{},
+				Signaling: &testSignalingClient{},
+				Speak:     config.DefaultSpeakConfig(),
+				OnTranscript: func(ConversationMessage) {
+					forwarded = true
+				},
+			}, testVoiceToken, testVoiceOrigin)
+			if err != nil {
+				t.Fatalf("NewHandler() error = %v", err)
+			}
+			response := doVoiceRequest(handler, http.MethodPost, "/api/transcript", testVoiceToken, testVoiceOrigin, "application/json", body)
+			if response.Code != http.StatusBadRequest || forwarded {
+				t.Fatalf("invalid transcript response = %d, forwarded=%t; want 400 and no callback", response.Code, forwarded)
+			}
+		})
 	}
 }
 

@@ -2,9 +2,11 @@ package tray
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -74,6 +76,74 @@ func TestRunServiceDispatchesTrayActionsAndRemovesEndpoint(t *testing.T) {
 	}
 }
 
+func TestRunServicePreservesIPCVoiceContextForActionHandler(t *testing.T) {
+	endpointFile := filepath.Join(t.TempDir(), "tray-service.json")
+	client, server := net.Pipe()
+	defer client.Close()
+	want := []ConversationMessage{{Role: "user", Content: "carry this into voice"}}
+	wantOwner := "cli-owner-from-ipc"
+	type voiceRequestContext struct {
+		messages []ConversationMessage
+		ownerID  string
+	}
+	gotContext := make(chan voiceRequestContext, 1)
+	serviceCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serviceDone := make(chan error, 1)
+	listener := &suppliedListener{conn: loopbackConn{Conn: server}, closed: make(chan struct{})}
+	go func() {
+		serviceDone <- runService(serviceCtx, ServiceOptions{
+			EndpointFile: endpointFile,
+			HandleAction: func(ctx context.Context, action Action) (Response, error) {
+				if action != ActionOpenOrShowVoice {
+					t.Errorf("action = %q, want voice launch", action)
+				}
+				gotContext <- voiceRequestContext{messages: VoiceContextFromContext(ctx), ownerID: VoiceOwnerFromContext(ctx)}
+				return Response{VoiceActive: true}, nil
+			},
+		}, func(string, string) (net.Listener, error) { return listener, nil })
+	}()
+
+	var endpoint serviceEndpoint
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		endpoint, _ = readEndpoint(endpointFile)
+		if endpoint.Token != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if endpoint.Token == "" {
+		t.Fatal("service did not publish its authenticated endpoint")
+	}
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- json.NewEncoder(client).Encode(ipcRequest{Token: endpoint.Token, Action: ActionOpenOrShowVoice, VoiceContext: want, VoiceOwnerID: wantOwner})
+	}()
+	var response Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatalf("read IPC response: %v", err)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write IPC request: %v", err)
+	}
+	if !response.OK || !response.VoiceActive {
+		t.Fatalf("IPC response = %+v, want active voice session", response)
+	}
+	if got := <-gotContext; !reflect.DeepEqual(got.messages, want) || got.ownerID != wantOwner {
+		t.Fatalf("voice request context reaching action handler = %+v, want messages %+v and owner %q", got, want, wantOwner)
+	}
+	cancel()
+	select {
+	case err := <-serviceDone:
+		if err != nil {
+			t.Fatalf("RunService() error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("service did not stop after cancellation")
+	}
+}
+
 func TestEnsureServiceStartsOnlyWhenNoLiveServiceExists(t *testing.T) {
 	endpointFile := filepath.Join(t.TempDir(), "tray-service.json")
 	starts := 0
@@ -103,6 +173,34 @@ func TestEnsureServiceStartsOnlyWhenNoLiveServiceExists(t *testing.T) {
 
 type fakeListener struct {
 	closed chan struct{}
+}
+
+type suppliedListener struct {
+	conn   net.Conn
+	closed chan struct{}
+}
+
+func (l *suppliedListener) Accept() (net.Conn, error) {
+	if l.conn != nil {
+		connection := l.conn
+		l.conn = nil
+		return connection, nil
+	}
+	<-l.closed
+	return nil, net.ErrClosed
+}
+
+func (l *suppliedListener) Close() error {
+	select {
+	case <-l.closed:
+	default:
+		close(l.closed)
+	}
+	return nil
+}
+
+func (l *suppliedListener) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12346}
 }
 
 func newFakeListener() *fakeListener {

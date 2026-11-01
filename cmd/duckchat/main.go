@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -57,16 +59,27 @@ var interactiveChild bool
 const coordinatePromptColor = "#FF5555"
 
 type trayServiceRuntime struct {
-	mu                sync.Mutex
-	configured        *config.Config
-	voiceStarting     bool
-	voiceError        string
-	voiceDone         chan struct{}
-	dashboardMu       sync.Mutex
-	dashboardServer   *dashboard.Server
-	dashboardHistory  *dashboard.HistoryStore
-	dashboardSessions *persistence.HistoryManager
-	dashboardWindow   *dashboard.ChromiumWindow
+	mu                     sync.Mutex
+	configured             *config.Config
+	voiceStarting          bool
+	voiceError             string
+	voiceDone              chan struct{}
+	voiceMessages          []tray.ConversationMessage
+	voiceMessagesTruncated bool
+	voiceOwnerID           string
+	voiceResults           map[string]voiceTranscriptResult
+	dashboardMu            sync.Mutex
+	dashboardServer        *dashboard.Server
+	dashboardHistory       *dashboard.HistoryStore
+	dashboardSessions      *persistence.HistoryManager
+	dashboardWindow        *dashboard.ChromiumWindow
+}
+
+type voiceTranscriptResult struct {
+	messages  []tray.ConversationMessage
+	truncated bool
+	err       string
+	finished  time.Time
 }
 
 type startupUpdateResult struct {
@@ -704,7 +717,9 @@ func (service *trayServiceRuntime) handleAction(ctx context.Context, action tray
 		}
 		return tray.Response{Message: "Configuration reloaded"}, nil
 	case tray.ActionVoiceStatus:
-		return service.voiceStatus(), nil
+		return service.voiceStatus(tray.VoiceOwnerFromContext(ctx)), nil
+	case tray.ActionVoiceTranscriptAck:
+		return service.acknowledgeVoiceTranscript(tray.VoiceOwnerFromContext(ctx)), nil
 	case tray.ActionQuitService:
 		voice.StopActive()
 		return tray.Response{Message: "DuckChat tray service is stopping"}, nil
@@ -730,16 +745,63 @@ func (service *trayServiceRuntime) isVoiceStarting() bool {
 	return service.voiceStarting
 }
 
-func (service *trayServiceRuntime) voiceStatus() tray.Response {
+func (service *trayServiceRuntime) voiceStatus(ownerID string) tray.Response {
 	service.mu.Lock()
 	starting := service.voiceStarting
 	lastError := service.voiceError
+	currentOwnerID := service.voiceOwnerID
+	result, hasResult := service.voiceResults[ownerID]
 	service.mu.Unlock()
 	active := starting || voice.Active()
+	if ownerID != "" {
+		ownerActive := active && currentOwnerID == ownerID
+		if hasResult {
+			return tray.Response{
+				VoiceActive:            ownerActive,
+				Error:                  result.err,
+				VoiceMessages:          append([]tray.ConversationMessage(nil), result.messages...),
+				VoiceMessagesTruncated: result.truncated,
+			}
+		}
+		if !ownerActive && ownerID == currentOwnerID && lastError != "" {
+			return tray.Response{Error: lastError}
+		}
+		return tray.Response{VoiceActive: ownerActive}
+	}
 	if !active && lastError != "" {
 		return tray.Response{Error: lastError}
 	}
 	return tray.Response{VoiceActive: active}
+}
+
+func (service *trayServiceRuntime) acknowledgeVoiceTranscript(ownerID string) tray.Response {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	delete(service.voiceResults, ownerID)
+	return tray.Response{Message: "Voice transcript acknowledged"}
+}
+
+func (service *trayServiceRuntime) storeVoiceTranscriptLocked(ownerID string, result voiceTranscriptResult) {
+	if ownerID == "" {
+		return
+	}
+	if service.voiceResults == nil {
+		service.voiceResults = make(map[string]voiceTranscriptResult)
+	}
+	if _, exists := service.voiceResults[ownerID]; !exists && len(service.voiceResults) >= 8 {
+		oldestOwner := ""
+		var oldest time.Time
+		for candidate, pending := range service.voiceResults {
+			if oldestOwner == "" || pending.finished.Before(oldest) {
+				oldestOwner = candidate
+				oldest = pending.finished
+			}
+		}
+		delete(service.voiceResults, oldestOwner)
+	}
+	result.messages = append([]tray.ConversationMessage(nil), result.messages...)
+	result.finished = time.Now()
+	service.voiceResults[ownerID] = result
 }
 
 func (service *trayServiceRuntime) openOrShowVoice(ctx context.Context) (tray.Response, error) {
@@ -761,13 +823,24 @@ func (service *trayServiceRuntime) openOrShowVoice(ctx context.Context) (tray.Re
 	configuration := *service.configured
 	service.voiceStarting = true
 	service.voiceError = ""
+	service.voiceMessages = nil
+	service.voiceMessagesTruncated = false
+	service.voiceOwnerID = tray.VoiceOwnerFromContext(ctx)
+	ownerID := service.voiceOwnerID
 	done := make(chan struct{})
 	service.voiceDone = done
 	service.mu.Unlock()
+	voiceContext := tray.VoiceContextFromContext(ctx)
 	go func() {
 		defer close(done)
 		chatSession = chat.InitializeSession(&configuration)
-		err := voice.Run(ctx, voiceDependencies(configuration.Speak), voice.ChromiumOpener{Settings: configuration.Speak})
+		err := voice.Run(ctx, voiceDependenciesWithContext(configuration.Speak, voiceContext, func(message tray.ConversationMessage) {
+			service.mu.Lock()
+			var truncated bool
+			service.voiceMessages, truncated = tray.AppendVoiceTranscript(service.voiceMessages, message)
+			service.voiceMessagesTruncated = service.voiceMessagesTruncated || truncated
+			service.mu.Unlock()
+		}), voice.ChromiumOpener{Settings: configuration.Speak})
 		if shutdownErr := chat.ShutdownBrowser(); err == nil {
 			err = shutdownErr
 		}
@@ -779,9 +852,16 @@ func (service *trayServiceRuntime) openOrShowVoice(ctx context.Context) (tray.Re
 		} else {
 			service.voiceError = ""
 		}
+		service.storeVoiceTranscriptLocked(ownerID, voiceTranscriptResult{
+			messages:  service.voiceMessages,
+			truncated: service.voiceMessagesTruncated,
+			err:       service.voiceError,
+		})
+		service.voiceMessages = nil
+		service.voiceMessagesTruncated = false
 		service.mu.Unlock()
 	}()
-	return tray.Response{VoiceActive: true, Message: "Voice chat is starting"}, nil
+	return tray.Response{VoiceActive: true, VoiceSessionStarted: true, Message: "Voice chat is starting"}, nil
 }
 
 func (service *trayServiceRuntime) openDashboard(ctx context.Context) (tray.Response, error) {
@@ -981,9 +1061,101 @@ func voiceDependencies(settings config.SpeakConfig) voice.Dependencies {
 	}
 }
 
+func voiceConversationMessages(messages []tray.ConversationMessage) []voice.ConversationMessage {
+	converted := make([]voice.ConversationMessage, 0, len(messages))
+	for _, message := range messages {
+		converted = append(converted, voice.ConversationMessage{ID: message.ID, Role: message.Role, Content: message.Content, Omitted: message.Omitted})
+	}
+	return converted
+}
+
+func voiceDependenciesWithContext(settings config.SpeakConfig, messages []tray.ConversationMessage, onTranscript func(tray.ConversationMessage)) voice.Dependencies {
+	voiceMessages := voiceConversationMessages(messages)
+	dependencies := voiceDependencies(settings)
+	dependencies.Context = voiceMessages
+	if onTranscript != nil {
+		dependencies.OnTranscript = func(message voice.ConversationMessage) {
+			onTranscript(tray.ConversationMessage{ID: message.ID, Role: message.Role, Content: message.Content, Omitted: message.Omitted})
+		}
+	}
+	return dependencies
+}
+
 func runVoiceInProcess(ctx context.Context) {
-	if err := voice.Run(ctx, voiceDependencies(cfg.Speak), voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
+	var messages []chat.Message
+	if chatSession != nil {
+		messages = chatSession.Messages
+	}
+	var voiceMessages []tray.ConversationMessage
+	var voiceMessagesMu sync.Mutex
+	voiceMessagesTruncated := false
+	dependencies := voiceDependenciesWithContext(cfg.Speak, voiceContextForChat(messages), func(message tray.ConversationMessage) {
+		voiceMessagesMu.Lock()
+		defer voiceMessagesMu.Unlock()
+		var truncated bool
+		voiceMessages, truncated = tray.AppendVoiceTranscript(voiceMessages, message)
+		voiceMessagesTruncated = voiceMessagesTruncated || truncated
+	})
+	if err := voice.Run(ctx, dependencies, voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
 		ui.Errorln("Voice session failed: %v", err)
+	}
+	voiceMessagesMu.Lock()
+	completedMessages := append([]tray.ConversationMessage(nil), voiceMessages...)
+	transcriptsTruncated := voiceMessagesTruncated
+	voiceMessagesMu.Unlock()
+	if err := mergeVoiceTranscript(chatSession, completedMessages); err != nil {
+		ui.Warningln("Voice messages were added to the current chat but could not be saved: %v", err)
+	}
+	if transcriptsTruncated {
+		ui.Warningln("Some voice turns were omitted because the session transcript reached its safety limit.")
+	}
+}
+
+// mergeVoiceTranscript adds only finalized user/assistant text to the active saved chat.
+func mergeVoiceTranscript(session *chat.Chat, messages []tray.ConversationMessage) error {
+	if session == nil {
+		return nil
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+	for _, message := range messages {
+		if (message.Role != "user" && message.Role != "assistant") || strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		transcript := chat.Message{Role: message.Role, Content: message.Content, Timestamp: time.Now()}
+		session.Messages = append(session.Messages, transcript)
+		if session.Analytics != nil {
+			session.Analytics.RecordMessage(message.Role, len(message.Content))
+		}
+		if session.Display != nil {
+			if message.Role == "user" {
+				session.Display.RecordUser(message.Content)
+			} else {
+				session.Display.RecordAssistant(models.DisplayName(session.Model), message.Content)
+			}
+		}
+	}
+	return session.SaveCurrentSession()
+}
+
+func mergeVoiceTranscriptWithWarning(messages []tray.ConversationMessage, truncated bool) bool {
+	if err := mergeVoiceTranscript(chatSession, messages); err != nil {
+		ui.Warningln("Voice messages were added to the current chat but could not be saved: %v", err)
+		return false
+	}
+	if truncated {
+		ui.Warningln("Some voice turns were omitted because the session transcript reached its safety limit.")
+	}
+	return true
+}
+
+func acknowledgeVoiceTranscript(ownerID string) {
+	response, err := tray.AcknowledgeVoiceTranscript(context.Background(), ownerID)
+	if err != nil {
+		ui.Warningln("Voice messages were saved, but the tray could not release its transcript copy: %v", err)
+	} else if response.Error != "" {
+		ui.Warningln("Voice messages were saved, but the tray could not release its transcript copy: %s", response.Error)
 	}
 }
 
@@ -1009,7 +1181,16 @@ func runSpeakCommand() {
 		ui.Errorln("Voice session failed: could not synchronize tray settings: %v", err)
 		return
 	}
-	startResponse, err := tray.Send(context.Background(), tray.ActionOpenOrShowVoice)
+	ownerID, err := newVoiceOwnerID()
+	if err != nil {
+		ui.Errorln("Voice session failed: could not create a session owner: %v", err)
+		return
+	}
+	var messages []chat.Message
+	if chatSession != nil {
+		messages = chatSession.Messages
+	}
+	startResponse, err := tray.SendVoiceSession(context.Background(), ownerID, voiceContextForChat(messages))
 	if err != nil {
 		ui.Errorln("Voice session failed: could not contact the tray service: %v", err)
 		return
@@ -1018,8 +1199,11 @@ func runSpeakCommand() {
 		ui.Errorln("Voice session failed: %s", startResponse.Error)
 		return
 	}
+	if !startResponse.VoiceSessionStarted {
+		return
+	}
 	for {
-		status, err := tray.Send(context.Background(), tray.ActionVoiceStatus)
+		status, err := tray.SendVoiceStatus(context.Background(), ownerID)
 		if err != nil {
 			if endpoint, endpointErr := tray.EndpointPath(); endpointErr == nil {
 				if _, statErr := os.Stat(endpoint); os.IsNotExist(statErr) {
@@ -1030,14 +1214,39 @@ func runSpeakCommand() {
 			return
 		}
 		if status.Error != "" {
+			if mergeVoiceTranscriptWithWarning(status.VoiceMessages, status.VoiceMessagesTruncated) {
+				acknowledgeVoiceTranscript(ownerID)
+			}
 			ui.Errorln("Voice session failed: %s", status.Error)
 			return
 		}
 		if !status.VoiceActive {
+			if mergeVoiceTranscriptWithWarning(status.VoiceMessages, status.VoiceMessagesTruncated) {
+				acknowledgeVoiceTranscript(ownerID)
+			}
 			return
 		}
 		time.Sleep(400 * time.Millisecond)
 	}
+}
+
+func newVoiceOwnerID() (string, error) {
+	var identifier [16]byte
+	if _, err := rand.Read(identifier[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(identifier[:]), nil
+}
+
+func voiceContextForChat(messages []chat.Message) []tray.ConversationMessage {
+	contextMessages := make([]tray.ConversationMessage, 0, len(messages))
+	for _, message := range messages {
+		if message.Role != "user" && message.Role != "assistant" {
+			continue
+		}
+		contextMessages = append(contextMessages, tray.ConversationMessage{Role: message.Role, Content: message.Content})
+	}
+	return tray.BoundVoiceContext(contextMessages)
 }
 
 func runShortcutConfiguration() {

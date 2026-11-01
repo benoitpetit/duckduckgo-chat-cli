@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"math"
@@ -14,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"duckduckgo-chat-cli/internal/activity"
 	"duckduckgo-chat-cli/internal/chat"
@@ -21,8 +24,12 @@ import (
 	"duckduckgo-chat-cli/internal/command"
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/doctor"
+	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/persistence"
+	"duckduckgo-chat-cli/internal/tray"
 	"duckduckgo-chat-cli/internal/ui"
 	"duckduckgo-chat-cli/internal/update"
+	"duckduckgo-chat-cli/internal/voice"
 
 	"github.com/c-bata/go-prompt"
 )
@@ -44,6 +51,188 @@ func TestTrackActivityWithErrorPublishesFailureWithoutErrorDetails(t *testing.T)
 	}
 	if strings.Contains(events[1].Summary, operationErr.Error()) {
 		t.Fatalf("failure activity exposed the detailed error: %q", events[1].Summary)
+	}
+}
+
+func TestVoiceContextUsesOnlyUserAndAssistantText(t *testing.T) {
+	messages := []chat.Message{
+		{Role: "system", Content: "private system instruction"},
+		{Role: "user", Content: "What is the result?"},
+		{Role: "assistant", Content: "The result is 42."},
+	}
+	got := voiceContextForChat(messages)
+	want := []tray.ConversationMessage{
+		{Role: "user", Content: "What is the result?"},
+		{Role: "assistant", Content: "The result is 42."},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("voice context = %+v, want %+v", got, want)
+	}
+}
+
+func TestVoiceTranscriptIDsRoundTripThroughDependencyAdapter(t *testing.T) {
+	want := tray.ConversationMessage{ID: "realtime-item-1", Role: "assistant", Content: "Voice reply"}
+	var got tray.ConversationMessage
+	dependencies := voiceDependenciesWithContext(config.DefaultSpeakConfig(), nil, func(message tray.ConversationMessage) {
+		got = message
+	})
+	dependencies.OnTranscript(voice.ConversationMessage{ID: want.ID, Role: want.Role, Content: want.Content})
+	if got != want {
+		t.Fatalf("adapted transcript = %+v, want %+v", got, want)
+	}
+}
+
+func TestVoiceTranscriptOmissionMarkerSurvivesDependencyAdapter(t *testing.T) {
+	want := tray.ConversationMessage{ID: "omitted-voice-item", Role: "user", Omitted: true}
+	var got tray.ConversationMessage
+	dependencies := voiceDependenciesWithContext(config.DefaultSpeakConfig(), nil, func(message tray.ConversationMessage) {
+		got = message
+	})
+	dependencies.OnTranscript(voice.ConversationMessage{ID: want.ID, Role: want.Role, Omitted: true})
+	if got != want {
+		t.Fatalf("adapted omission marker = %+v, want %+v", got, want)
+	}
+}
+
+func TestVoiceStatusReturnsFinalizedMessagesAfterTheSessionEnds(t *testing.T) {
+	voiceMessages := []tray.ConversationMessage{
+		{Role: "user", Content: "Voice question"},
+		{Role: "assistant", Content: "Voice answer"},
+	}
+	service := &trayServiceRuntime{voiceStarting: true, voiceOwnerID: "cli-owner", voiceMessages: voiceMessages}
+	active := service.voiceStatus("cli-owner")
+	if !active.VoiceActive || len(active.VoiceMessages) != 0 {
+		t.Fatalf("active voice status = %+v, want active with no final transcript", active)
+	}
+	service.voiceStarting = false
+	service.voiceResults = map[string]voiceTranscriptResult{
+		"cli-owner": {messages: voiceMessages, truncated: true},
+	}
+	ended := service.voiceStatus("cli-owner")
+	if ended.VoiceActive || !reflect.DeepEqual(ended.VoiceMessages, voiceMessages) || !ended.VoiceMessagesTruncated {
+		t.Fatalf("ended voice status = %+v, want finalized messages %+v", ended, voiceMessages)
+	}
+	otherOwner := service.voiceStatus("another-cli")
+	if len(otherOwner.VoiceMessages) != 0 {
+		t.Fatalf("unrelated CLI received %d voice messages, want none", len(otherOwner.VoiceMessages))
+	}
+}
+
+func TestVoiceTranscriptResultRemainsScopedWhenANewSessionStarts(t *testing.T) {
+	oldMessages := []tray.ConversationMessage{{Role: "user", Content: "belongs to old CLI"}}
+	service := &trayServiceRuntime{
+		voiceStarting: true,
+		voiceOwnerID:  "new-owner",
+		voiceResults: map[string]voiceTranscriptResult{
+			"old-owner": {messages: oldMessages},
+		},
+	}
+	status := service.voiceStatus("old-owner")
+	if status.VoiceActive || !reflect.DeepEqual(status.VoiceMessages, oldMessages) {
+		t.Fatalf("old owner's status = %+v, want its ended transcript independent of the new active session", status)
+	}
+	service.acknowledgeVoiceTranscript("old-owner")
+	if _, exists := service.voiceResults["old-owner"]; exists {
+		t.Fatal("acknowledged transcript remains pending")
+	}
+}
+
+func TestStoreVoiceTranscriptBoundsUnacknowledgedResults(t *testing.T) {
+	service := &trayServiceRuntime{voiceResults: make(map[string]voiceTranscriptResult)}
+	oldest := time.Now().Add(-time.Hour)
+	for index := 0; index < 8; index++ {
+		service.voiceResults[fmt.Sprintf("owner-%d", index)] = voiceTranscriptResult{finished: oldest.Add(time.Duration(index) * time.Minute)}
+	}
+	service.mu.Lock()
+	service.storeVoiceTranscriptLocked("owner-new", voiceTranscriptResult{})
+	service.mu.Unlock()
+	if len(service.voiceResults) != 8 {
+		t.Fatalf("pending transcript count = %d, want maximum of 8", len(service.voiceResults))
+	}
+	if _, exists := service.voiceResults["owner-0"]; exists {
+		t.Fatal("oldest unacknowledged transcript was retained beyond the limit")
+	}
+	if _, exists := service.voiceResults["owner-new"]; !exists {
+		t.Fatal("new transcript was dropped instead of the oldest pending result")
+	}
+}
+
+func TestNewVoiceOwnerIDIsUniqueHex(t *testing.T) {
+	first, err := newVoiceOwnerID()
+	if err != nil {
+		t.Fatalf("newVoiceOwnerID() error = %v", err)
+	}
+	second, err := newVoiceOwnerID()
+	if err != nil {
+		t.Fatalf("newVoiceOwnerID() second error = %v", err)
+	}
+	if len(first) != 32 || first == second {
+		t.Fatalf("voice owner IDs = %q and %q; want unique 32-character IDs", first, second)
+	}
+	if _, err := hex.DecodeString(first); err != nil {
+		t.Fatalf("voice owner ID %q is not hexadecimal: %v", first, err)
+	}
+}
+
+func TestMergeVoiceTranscriptPreservesCompletedTurnsBeyondSeedContextBounds(t *testing.T) {
+	const messageCount = 25
+	manager := persistence.NewHistoryManager(t.TempDir())
+	session := &chat.Chat{SessionID: "voice-long-continuity", Model: models.Default(), HistoryManager: manager}
+	voiceMessages := make([]tray.ConversationMessage, 0, messageCount)
+	for index := 0; index < messageCount; index++ {
+		content := fmt.Sprintf("voice turn %02d", index)
+		if index == 0 {
+			content = strings.Repeat("é", 4500) // More than the per-item outbound context limit in UTF-8 bytes.
+		}
+		voiceMessages = append(voiceMessages, tray.ConversationMessage{Role: "user", Content: content})
+	}
+	if err := mergeVoiceTranscript(session, voiceMessages); err != nil {
+		t.Fatalf("mergeVoiceTranscript() error = %v", err)
+	}
+	if len(session.Messages) != messageCount || session.Messages[0].Content != voiceMessages[0].Content {
+		t.Fatalf("merged %d messages with first content length %d; want all %d complete turns", len(session.Messages), len(session.Messages[0].Content), messageCount)
+	}
+}
+
+func TestMergeVoiceTranscriptAppendsAndSavesMessagesInOrder(t *testing.T) {
+	manager := persistence.NewHistoryManager(t.TempDir())
+	session := &chat.Chat{
+		SessionID:      "voice-continuity",
+		Model:          models.Default(),
+		HistoryManager: manager,
+		Messages: []chat.Message{
+			{Role: "user", Content: "Text question"},
+			{Role: "assistant", Content: "Text answer"},
+		},
+	}
+	voiceMessages := []tray.ConversationMessage{
+		{Role: "user", Content: "Voice follow-up"},
+		{Role: "assistant", Content: "Voice reply"},
+		{Role: "system", Content: "must not enter the chat"},
+	}
+	if err := mergeVoiceTranscript(session, voiceMessages); err != nil {
+		t.Fatalf("mergeVoiceTranscript() error = %v", err)
+	}
+	want := []chat.Message{
+		{Role: "user", Content: "Text question"},
+		{Role: "assistant", Content: "Text answer"},
+		{Role: "user", Content: "Voice follow-up"},
+		{Role: "assistant", Content: "Voice reply"},
+	}
+	if len(session.Messages) != len(want) {
+		t.Fatalf("active chat messages = %+v, want %+v", session.Messages, want)
+	}
+	for index, message := range session.Messages {
+		if message.Role != want[index].Role || message.Content != want[index].Content {
+			t.Fatalf("active message %d = %+v, want %+v", index, message, want[index])
+		}
+	}
+	saved, err := manager.LoadSession(session.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession() error = %v", err)
+	}
+	if len(saved.Messages) != len(want) || saved.Messages[2].Content != "Voice follow-up" || saved.Messages[3].Content != "Voice reply" {
+		t.Fatalf("saved messages = %+v, want voice turns appended in order", saved.Messages)
 	}
 }
 

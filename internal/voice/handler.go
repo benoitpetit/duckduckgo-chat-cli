@@ -17,12 +17,25 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 )
 
-const maxSDPOfferBytes = 1 << 20
+const (
+	maxSDPOfferBytes       = 1 << 20
+	maxTranscriptBytes     = 64 << 10
+	maxTranscriptBodyBytes = 6*maxTranscriptBytes + 1<<10
+)
+
+type ConversationMessage struct {
+	ID      string `json:"id,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	Omitted bool   `json:"omitted,omitempty"`
+}
 
 type Dependencies struct {
 	Proof               ProofProvider
 	Signaling           SignalingClient
 	Speak               config.SpeakConfig
+	Context             []ConversationMessage
+	OnTranscript        func(ConversationMessage)
 	OnSessionTerminated func()
 	OnMinimize          func() error
 }
@@ -95,6 +108,16 @@ func (h *localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.serveAsset(w, "webui/app.js", "text/javascript; charset=utf-8")
+	case "/context.mjs":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		if r.Host != h.allowedHost {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		h.serveAsset(w, "webui/context.mjs", "text/javascript; charset=utf-8")
 	case "/style.css":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -124,6 +147,24 @@ func (h *localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleSpeakSettings(w, r)
+	case "/api/context":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		if !h.authorize(w, r) {
+			return
+		}
+		h.handleConversationContext(w)
+	case "/api/transcript":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		if !h.authorize(w, r) {
+			return
+		}
+		h.handleTranscript(w, r)
 	case "/api/ice-servers":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -187,6 +228,65 @@ func (h *localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *localHandler) handleConversationContext(w http.ResponseWriter) {
+	messages := append([]ConversationMessage(nil), h.deps.Context...)
+	if messages == nil {
+		messages = []ConversationMessage{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(messages)
+}
+
+func (h *localHandler) handleTranscript(w http.ResponseWriter, r *http.Request) {
+	if h.deps.OnTranscript == nil {
+		writeVoiceError(w, http.StatusServiceUnavailable, "voice transcript collection is unavailable")
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "application/json") {
+		writeVoiceError(w, http.StatusBadRequest, "Expected an application/json transcript")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxTranscriptBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeVoiceError(w, http.StatusRequestEntityTooLarge, "voice transcript exceeds the size limit")
+		} else {
+			writeVoiceError(w, http.StatusBadRequest, "could not read voice transcript")
+		}
+		return
+	}
+	var message ConversationMessage
+	if err := json.Unmarshal(body, &message); err != nil {
+		writeVoiceError(w, http.StatusBadRequest, "invalid voice transcript")
+		return
+	}
+	if message.ID == "" || len(message.ID) > 128 || message.Role != "user" && message.Role != "assistant" {
+		writeVoiceError(w, http.StatusBadRequest, "voice transcript must contain bounded user or assistant text")
+		return
+	}
+	if message.Omitted {
+		if message.Content != "" {
+			writeVoiceError(w, http.StatusBadRequest, "omitted voice transcript cannot include content")
+			return
+		}
+		h.deps.OnTranscript(message)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if strings.TrimSpace(message.Content) == "" || len(message.Content) > maxTranscriptBytes {
+		writeVoiceError(w, http.StatusBadRequest, "voice transcript must contain bounded user or assistant text")
+		return
+	}
+	h.deps.OnTranscript(message)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *localHandler) authorize(w http.ResponseWriter, r *http.Request) bool {

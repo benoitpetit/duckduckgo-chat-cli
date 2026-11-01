@@ -1,5 +1,7 @@
 "use strict";
 
+import { boundVoiceContext, canTransmitMicrophone, contextSeedEvents, isPermanentTranscriptFailure, OrderedTranscriptQueue, transcriptDeliveryPayload, TranscriptCollector } from "./context.mjs";
+
 const token = window.location.hash.slice(1);
 if (window.location.hash) history.replaceState(null, "", window.location.pathname);
 
@@ -64,6 +66,14 @@ let assistantResponseHasAudio = false;
 let assistantTranscriptStarted = false;
 let assistantAudioGateActive = false;
 let assistantAudioGateTimer = null;
+let voiceContextReady = false;
+let contextSeedWarning = "";
+let transcriptPostQueue = Promise.resolve();
+let transcriptFlushPromise = null;
+let transcriptPostFailed = false;
+const transcriptDeliveryQueue = new OrderedTranscriptQueue();
+let contextSeedAck = null;
+const transcriptCollector = new TranscriptCollector();
 
 const MAX_CAPTION_WORDS = 11;
 const MAX_CAPTION_CHARS = 92;
@@ -139,7 +149,7 @@ function setConnection(state, label) {
 function markVoiceConnectionReady() {
   const peerConnected = peer && peer.connectionState === "connected";
   const sessionChannelOpen = channel && channel.readyState === "open";
-  if (!peerConnected || !sessionChannelOpen || ended) return false;
+  if (!peerConnected || !sessionChannelOpen || !voiceContextReady || ended) return false;
 
   setConnection("connected", "Connected");
   setDuck("listening");
@@ -147,7 +157,7 @@ function markVoiceConnectionReady() {
     readinessSoundAttempt = sessionAttempt;
     playReadinessChime();
   }
-  showError("");
+  if (!contextSeedWarning) showError("");
   return true;
 }
 
@@ -215,6 +225,7 @@ function showTerminationPanel(message) {
   if (ended) return false;
   ended = true;
   sessionAttempt += 1;
+  finishContextSeedAck(new Error("Voice session ended before context was loaded."));
   clearSubtitles();
   stopMedia();
   ui.controls.hidden = true;
@@ -417,7 +428,7 @@ ui.audio.addEventListener("error", () => {
 
 function applyMicrophoneState() {
   if (microphone) {
-    const enabled = !muted && !assistantAudioGateActive;
+    const enabled = canTransmitMicrophone(muted, assistantAudioGateActive, voiceContextReady);
     for (const track of microphone.getAudioTracks()) track.enabled = enabled;
   }
   setMuteButton();
@@ -496,9 +507,122 @@ async function request(path, options = {}) {
     const message = await response.text();
     const error = new Error(message.trim() || `Local request failed (${response.status}).`);
     error.name = "VoiceRequestError";
+    error.status = response.status;
     throw error;
   }
   return response;
+}
+
+async function seedVoiceContext(attempt) {
+  try {
+    const response = await request("/api/context");
+    const messages = boundVoiceContext([
+      ...(await response.json()),
+      ...transcriptCollector.messages(),
+    ]);
+    if (!isCurrentAttempt(attempt) || !channel || channel.readyState !== "open") return;
+    const events = contextSeedEvents(messages, `duckchat-context-${attempt}`);
+    if (events.length > 0) {
+      transcriptCollector.ignoreItemIDs(events.map((event) => event.item.id));
+      const acknowledged = waitForContextItems(events.map((event) => event.item.id));
+      try {
+        for (const event of events) channel.send(JSON.stringify(event));
+      } catch (error) {
+        finishContextSeedAck(error);
+      }
+      await acknowledged;
+    }
+  } catch (_) {
+    if (!isCurrentAttempt(attempt)) return;
+    contextSeedWarning = "The text conversation could not be loaded. Voice chat will continue without it.";
+  }
+
+  if (!isCurrentAttempt(attempt)) return;
+  voiceContextReady = true;
+  applyMicrophoneState();
+  if (!markVoiceConnectionReady() && peer?.connectionState === "connected") {
+    setConnection("connecting", "Connecting…");
+    setDuck("connecting");
+  }
+  if (contextSeedWarning) showError(contextSeedWarning);
+}
+
+function waitForContextItems(itemIDs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finishContextSeedAck(new Error("Timed out while loading the text conversation.")), 5000);
+    contextSeedAck = { itemIDs: new Set(itemIDs), resolve, reject, timer };
+  });
+}
+
+function acknowledgeContextItem(itemID) {
+  if (!contextSeedAck || !contextSeedAck.itemIDs.delete(itemID)) return;
+  if (contextSeedAck.itemIDs.size === 0) finishContextSeedAck();
+}
+
+function finishContextSeedAck(error) {
+  if (!contextSeedAck) return;
+  const pending = contextSeedAck;
+  contextSeedAck = null;
+  clearTimeout(pending.timer);
+  if (error) pending.reject(error);
+  else pending.resolve();
+}
+
+function scheduleTranscriptDelivery() {
+  transcriptPostQueue = transcriptPostQueue.then(async () => {
+    let message;
+    while ((message = transcriptDeliveryQueue.next())) {
+      try {
+        const payload = transcriptDeliveryPayload(message);
+        try {
+          await postTranscriptPayload(payload);
+        } catch (error) {
+          if (!isPermanentTranscriptFailure(error.status) || payload.omitted) throw error;
+          await postTranscriptPayload({ id: message.id, role: message.role, omitted: true });
+          transcriptPostFailed = true;
+        }
+        if (!transcriptDeliveryQueue.acknowledge(message.id)) {
+          transcriptDeliveryQueue.fail();
+          transcriptPostFailed = true;
+          return;
+        }
+      } catch (_) {
+        transcriptDeliveryQueue.fail();
+        transcriptPostFailed = true;
+        return;
+      }
+    }
+  });
+  return transcriptPostQueue;
+}
+
+function postTranscriptPayload(payload) {
+  const body = JSON.stringify(payload);
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  return request("/api/transcript", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    keepalive: bodyBytes <= 60 * 1024,
+    body,
+  });
+}
+
+function postReadyTranscripts(force = false) {
+  if (transcriptFlushPromise) return transcriptFlushPromise;
+  transcriptDeliveryQueue.enqueue(transcriptCollector.takeReadyMessages(force));
+  if (!force) return scheduleTranscriptDelivery();
+
+  transcriptFlushPromise = transcriptPostQueue.then(() => {
+    transcriptDeliveryQueue.retry();
+    return scheduleTranscriptDelivery();
+  }).then(() => {
+    transcriptPostFailed = transcriptDeliveryQueue.size > 0;
+  });
+  return transcriptFlushPromise;
+}
+
+function flushCompletedTranscripts() {
+  return postReadyTranscripts(true);
 }
 
 async function minimizeVoiceWindow() {
@@ -522,6 +646,13 @@ function handleVoiceEvent(raw) {
     return;
   }
   if (!event || typeof event.type !== "string") return;
+  transcriptCollector.add(event);
+	void postReadyTranscripts();
+  if (event.type === "conversation.item.added" || event.type === "conversation.item.created") {
+    acknowledgeContextItem(event.item?.id);
+  } else if (event.type === "error" && contextSeedAck) {
+    finishContextSeedAck(new Error("Duck.ai rejected the conversation context."));
+  }
 
   switch (event.type) {
     case "input_audio_buffer.speech_started":
@@ -607,6 +738,8 @@ async function startSession() {
 
   hasAttemptedSessionStart = true;
   const attempt = ++sessionAttempt;
+  voiceContextReady = false;
+  contextSeedWarning = "";
   setControlsMode("starting");
   showError("");
   ui.audioEnable.hidden = true;
@@ -688,10 +821,9 @@ async function startSession() {
     channel.onmessage = (event) => handleVoiceEvent(event.data);
     channel.onopen = () => {
       if (ended) return;
-      if (!markVoiceConnectionReady()) {
-        setConnection("connecting", "Connecting…");
-        setDuck("connecting");
-      }
+      setConnection("connecting", "Connecting…");
+      setDuck("connecting");
+      void seedVoiceContext(attempt);
     };
     channel.onclose = () => {
       if (ended) return;
@@ -741,6 +873,7 @@ async function endSession(sendStop = true) {
   if (!ended) {
     ended = true;
     sessionAttempt += 1;
+    finishContextSeedAck(new Error("Voice session ended before context was loaded."));
     clearSubtitles();
     stopMedia();
     setConnection("idle", "Ended");
@@ -749,6 +882,8 @@ async function endSession(sendStop = true) {
     showError("");
   }
   if (sendStop && token) {
+    await flushCompletedTranscripts();
+    if (transcriptPostFailed) showError("Some voice transcripts could not be added to the CLI conversation.");
     try { await request("/api/stop", { method: "POST" }); } catch (_) { /* the CLI may already be stopping */ }
   }
 }
@@ -780,15 +915,16 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("pagehide", () => {
   sessionAttempt += 1;
   ended = true;
+  finishContextSeedAck(new Error("Voice window closed before context was loaded."));
   stopMedia();
   if (token) {
-    fetch("/api/stop", {
+    void flushCompletedTranscripts().then(() => fetch("/api/stop", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       keepalive: true,
       cache: "no-store",
       credentials: "omit",
-    }).catch(() => {});
+    })).catch(() => {});
   }
 });
 

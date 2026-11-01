@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"runtime"
+	"strings"
 
 	"github.com/c-bata/go-prompt/internal/debug"
 	runewidth "github.com/mattn/go-runewidth"
@@ -18,6 +19,7 @@ type Render struct {
 	col                uint16
 
 	previousCursor int
+	pasteReference func(rune) (string, bool)
 
 	// colors,
 	prefixTextColor              Color
@@ -110,7 +112,7 @@ func (r *Render) renderCompletion(buf *Buffer, completions *CompletionManager) {
 	formatted = formatted[completions.verticalScroll : completions.verticalScroll+windowHeight]
 	r.prepareArea(windowHeight)
 
-	cursor := runewidth.StringWidth(prefix) + runewidth.StringWidth(buf.Document().TextBeforeCursor())
+	cursor := runewidth.StringWidth(prefix) + runewidth.StringWidth(r.displayInputText(buf.Document().TextBeforeCursor()))
 	x, _ := r.toPos(cursor)
 	if x+width >= int(r.col) {
 		cursor = r.backward(cursor, x+width-int(r.col))
@@ -176,14 +178,33 @@ func (r *Render) Render(buffer *Buffer, completion *CompletionManager) {
 	defer func() { debug.AssertNoError(r.out.Flush()) }()
 	r.move(r.previousCursor, 0)
 
-	line := buffer.Text()
 	prefix := r.getCurrentPrefix()
+	before := r.displayInputText(buffer.Document().TextBeforeCursor())
+	after := r.displayInputText(buffer.Document().TextAfterCursor())
+	showCompletion := !strings.ContainsAny(buffer.Text(), "\r\n") && !r.containsPasteReference(buffer.Text())
+	suggestionHeight := 0
+	if showCompletion {
+		suggestionHeight = len(completion.GetSuggestions())
+		if suggestionHeight > int(completion.max) {
+			suggestionHeight = int(completion.max)
+		}
+	}
+	maxInputRows := int(r.row) - 1 - suggestionHeight
+	if maxInputRows < 1 {
+		maxInputRows = 1
+	}
+	prefixWidth := runewidth.StringWidth(prefix)
+	maxInputCells := maxInputRows*int(r.col) - prefixWidth - 1
+	if maxInputCells < 1 {
+		maxInputCells = 1
+	}
+	line, cursorInLine, clipped := inputViewport(before, after, maxInputCells)
 	cursor := runewidth.StringWidth(prefix) + runewidth.StringWidth(line)
 
 	// prepare area
 	_, y := r.toPos(cursor)
 
-	h := y + 1 + int(completion.max)
+	h := y + 1 + suggestionHeight
 	if h > int(r.row) || completionMargin > int(r.col) {
 		r.renderWindowTooSmall()
 		return
@@ -201,23 +222,27 @@ func (r *Render) Render(buffer *Buffer, completion *CompletionManager) {
 
 	r.out.EraseDown()
 
-	cursor = r.backward(cursor, runewidth.StringWidth(line)-buffer.DisplayCursorPosition())
+	cursor = r.backward(cursor, runewidth.StringWidth(line)-cursorInLine)
 
-	r.renderCompletion(buffer, completion)
-	if suggest, ok := completion.GetSelectedSuggestion(); ok {
-		cursor = r.backward(cursor, runewidth.StringWidth(buffer.Document().GetWordBeforeCursorUntilSeparator(completion.wordSeparator)))
+	if showCompletion && !clipped {
+		r.renderCompletion(buffer, completion)
+	}
+	if showCompletion && !clipped {
+		if suggest, ok := completion.GetSelectedSuggestion(); ok {
+			cursor = r.backward(cursor, runewidth.StringWidth(r.displayInputText(buffer.Document().GetWordBeforeCursorUntilSeparator(completion.wordSeparator))))
 
-		r.out.SetColor(r.previewSuggestionTextColor, r.previewSuggestionBGColor, false)
-		r.out.WriteStr(suggest.Text)
-		r.out.SetColor(DefaultColor, DefaultColor, false)
-		cursor += runewidth.StringWidth(suggest.Text)
+			r.out.SetColor(r.previewSuggestionTextColor, r.previewSuggestionBGColor, false)
+			r.out.WriteStr(suggest.Text)
+			r.out.SetColor(DefaultColor, DefaultColor, false)
+			cursor += runewidth.StringWidth(suggest.Text)
 
-		rest := buffer.Document().TextAfterCursor()
-		r.out.WriteStr(rest)
-		cursor += runewidth.StringWidth(rest)
-		r.lineWrap(cursor)
+			rest := r.displayInputText(buffer.Document().TextAfterCursor())
+			r.out.WriteStr(rest)
+			cursor += runewidth.StringWidth(rest)
+			r.lineWrap(cursor)
 
-		cursor = r.backward(cursor, runewidth.StringWidth(rest))
+			cursor = r.backward(cursor, runewidth.StringWidth(rest))
+		}
 	}
 	r.previousCursor = cursor
 }
@@ -225,11 +250,10 @@ func (r *Render) Render(buffer *Buffer, completion *CompletionManager) {
 // BreakLine to break line.
 func (r *Render) BreakLine(buffer *Buffer) {
 	// Erasing and Render
-	cursor := runewidth.StringWidth(buffer.Document().TextBeforeCursor()) + runewidth.StringWidth(r.getCurrentPrefix())
-	r.clear(cursor)
+	r.clear(r.previousCursor)
 	r.renderPrefix()
 	r.out.SetColor(r.inputTextColor, r.inputBGColor, false)
-	r.out.WriteStr(buffer.Document().Text + "\n")
+	r.out.WriteStr(r.displayInputText(buffer.Document().Text) + "\n")
 	r.out.SetColor(DefaultColor, DefaultColor, false)
 	debug.AssertNoError(r.out.Flush())
 	if r.breakLineCallback != nil {
@@ -284,4 +308,102 @@ func clamp(high, low, x float64) float64 {
 	default:
 		return x
 	}
+}
+
+func displayInputText(text string) string {
+	return strings.NewReplacer("\r\n", " ↵ ", "\n", " ↵ ", "\r", " ↵ ", "\t", "⇥").Replace(text)
+}
+
+func (r *Render) displayInputText(text string) string {
+	if r.pasteReference == nil {
+		return displayInputText(text)
+	}
+	var visible strings.Builder
+	for _, char := range text {
+		if reference, ok := r.pasteReference(char); ok {
+			visible.WriteString(reference)
+		} else {
+			visible.WriteRune(char)
+		}
+	}
+	return displayInputText(visible.String())
+}
+
+func (r *Render) containsPasteReference(text string) bool {
+	if r.pasteReference == nil {
+		return false
+	}
+	for _, char := range text {
+		if _, ok := r.pasteReference(char); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func inputViewport(before, after string, maxCells int) (line string, cursor int, clipped bool) {
+	full := before + after
+	cursorOffset := runewidth.StringWidth(before)
+	width := runewidth.StringWidth(full)
+	if width <= maxCells {
+		return full, cursorOffset, false
+	}
+	if maxCells < 4 {
+		line = runewidth.Truncate(full, maxCells, "…")
+		return line, runewidth.StringWidth(runewidth.Truncate(before, maxCells, "…")), true
+	}
+
+	bodyCells := maxCells - 3
+	start := cursorOffset - bodyCells/2
+	if start < 0 {
+		start = 0
+	}
+	if start+bodyCells > width {
+		start = width - bodyCells
+	}
+	if start < 0 {
+		start = 0
+	}
+	body, actualStart, actualEnd := sliceInputCells(full, start, start+bodyCells)
+	leftMarker := actualStart > 0
+	rightMarker := actualEnd < width
+	if leftMarker {
+		line += "…"
+		cursor = 1
+	}
+	line += body
+	if cursorOffset > actualStart {
+		cursorEnd := cursorOffset
+		if cursorEnd > actualEnd {
+			cursorEnd = actualEnd
+		}
+		visibleBeforeCursor, _, _ := sliceInputCells(full, actualStart, cursorEnd)
+		cursor += runewidth.StringWidth(visibleBeforeCursor)
+	}
+	if rightMarker {
+		line += "…"
+	}
+	return line, cursor, true
+}
+
+func sliceInputCells(text string, start, end int) (string, int, int) {
+	var result strings.Builder
+	cell, actualStart, actualEnd := 0, -1, 0
+	for _, r := range text {
+		width := runewidth.RuneWidth(r)
+		next := cell + width
+		if (next > start && cell < end) || (width == 0 && cell >= start && cell < end) {
+			if actualStart < 0 {
+				actualStart = cell
+			}
+			result.WriteRune(r)
+			actualEnd = next
+		}
+		cell = next
+	}
+	if actualStart < 0 {
+		actualStart = start
+		actualEnd = start
+	}
+	return result.String(), actualStart, actualEnd
 }

@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"net/http/cookiejar"
+	"net/url"
 	"testing"
 	"time"
 
@@ -45,6 +47,30 @@ func TestDashboardAnalysisDisablesSensitiveDebugPayloads(t *testing.T) {
 	}
 	if shouldLogRequestDetails(private) {
 		t.Fatal("dashboard analysis must never print transcript-bearing request or error payloads")
+	}
+}
+
+func TestDashboardAnalysisCookiesStayOnHTTPS(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duckAIURL, err := url.Parse("https://duck.ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jar.SetCookies(duckAIURL, duckAIAnalysisCookies())
+
+	if cookies := jar.Cookies(&url.URL{Scheme: "http", Host: "duck.ai"}); len(cookies) != 0 {
+		t.Fatalf("analysis cookies sent over HTTP: %+v", cookies)
+	}
+	if cookies := jar.Cookies(duckAIURL); len(cookies) != 3 {
+		t.Fatalf("HTTPS analysis cookies = %d, want 3", len(cookies))
+	}
+	for _, cookie := range duckAIAnalysisCookies() {
+		if !cookie.Secure {
+			t.Errorf("analysis cookie %q is missing Secure", cookie.Name)
+		}
 	}
 }
 

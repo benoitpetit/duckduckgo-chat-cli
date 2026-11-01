@@ -1,0 +1,1569 @@
+{
+	"runs": [
+		{
+			"results": [
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 12,
+									"endLine": 188,
+									"snippet": {
+										"text": "A: uint16(a),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 12,
+									"startLine": 188
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 33,
+									"endLine": 187,
+									"snippet": {
+										"text": "B: unpremultiplyChannel(uint16(b), uint16(a)),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 33,
+									"startLine": 187
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 44,
+									"endLine": 187,
+									"snippet": {
+										"text": "B: unpremultiplyChannel(uint16(b), uint16(a)),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 44,
+									"startLine": 187
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 33,
+									"endLine": 186,
+									"snippet": {
+										"text": "G: unpremultiplyChannel(uint16(g), uint16(a)),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 33,
+									"startLine": 186
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 44,
+									"endLine": 186,
+									"snippet": {
+										"text": "G: unpremultiplyChannel(uint16(g), uint16(a)),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 44,
+									"startLine": 186
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 44,
+									"endLine": 185,
+									"snippet": {
+										"text": "R: unpremultiplyChannel(uint16(r), uint16(a)),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 44,
+									"startLine": 185
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 33,
+									"endLine": 185,
+									"snippet": {
+										"text": "R: unpremultiplyChannel(uint16(r), uint16(a)),"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 33,
+									"startLine": 185
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 33,
+									"endLine": 182,
+									"snippet": {
+										"text": "return color.NRGBA64{R: uint16(r), G: uint16(g), B: uint16(b), A: 0xffff}"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 33,
+									"startLine": 182
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 61,
+									"endLine": 182,
+									"snippet": {
+										"text": "return color.NRGBA64{R: uint16(r), G: uint16(g), B: uint16(b), A: 0xffff}"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 61,
+									"startLine": 182
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/media/image.go"
+								},
+								"region": {
+									"endColumn": 47,
+									"endLine": 182,
+									"snippet": {
+										"text": "return color.NRGBA64{R: uint16(r), G: uint16(g), B: uint16(b), A: 0xffff}"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 47,
+									"startLine": 182
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "integer overflow conversion uint32 -\u003e uint16"
+					},
+					"ruleId": "G115",
+					"ruleIndex": 1
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/voice/duckai.go"
+								},
+								"region": {
+									"endColumn": 44,
+									"endLine": 138,
+									"snippet": {
+										"text": "request, err := http.NewRequestWithContext(ctx, method, endpoint, requestBody)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 44,
+									"startLine": 138
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "SSRF via taint analysis: net/http.NewRequestWithContext"
+					},
+					"ruleId": "G704",
+					"ruleIndex": 6
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/voice/duckai.go"
+								},
+								"region": {
+									"endColumn": 22,
+									"endLine": 169,
+									"snippet": {
+										"text": "return safeClient.Do(request)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 22,
+									"startLine": 169
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "SSRF via taint analysis: (*net/http.Client).Do"
+					},
+					"ruleId": "G704",
+					"ruleIndex": 6
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/tray/shortcut_portal_linux.go"
+								},
+								"region": {
+									"endColumn": 24,
+									"endLine": 113,
+									"snippet": {
+										"text": "if err := os.WriteFile(path, []byte(entry), 0o644); err != nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 24,
+									"startLine": 113
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Path traversal via taint analysis: os.WriteFile"
+					},
+					"ruleId": "G703",
+					"ruleIndex": 5
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/tray/shortcut_portal_linux.go"
+								},
+								"region": {
+									"endColumn": 23,
+									"endLine": 98,
+									"snippet": {
+										"text": "if err := os.MkdirAll(applications, 0o755); err != nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 23,
+									"startLine": 98
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Path traversal via taint analysis: os.MkdirAll"
+					},
+					"ruleId": "G703",
+					"ruleIndex": 5
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/dashboard/auth.go"
+								},
+								"region": {
+									"endColumn": 32,
+									"endLine": 126,
+									"snippet": {
+										"text": "http.SetCookie(w, \u0026http.Cookie{"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 32,
+									"startLine": 126
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+					},
+					"ruleId": "G124",
+					"ruleIndex": 2
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/dashboard/auth.go"
+								},
+								"region": {
+									"endColumn": 32,
+									"endLine": 109,
+									"snippet": {
+										"text": "http.SetCookie(w, \u0026http.Cookie{"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 32,
+									"startLine": 109
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+					},
+					"ruleId": "G124",
+					"ruleIndex": 2
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/duckai_capture.go"
+								},
+								"region": {
+									"endColumn": 34,
+									"endLine": 549,
+									"snippet": {
+										"text": "browserCookie := \u0026http.Cookie{"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 34,
+									"startLine": 549
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+					},
+					"ruleId": "G124",
+					"ruleIndex": 2
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/dashboard_analysis.go"
+								},
+								"region": {
+									"endColumn": 3,
+									"endLine": 57,
+									"snippet": {
+										"text": "{Name: \"dcs\", Value: \"1\", Domain: \".duck.ai\", Secure: true},"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 3,
+									"startLine": 57
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+					},
+					"ruleId": "G124",
+					"ruleIndex": 2
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/dashboard_analysis.go"
+								},
+								"region": {
+									"endColumn": 3,
+									"endLine": 56,
+									"snippet": {
+										"text": "{Name: \"dcm\", Value: \"3\", Domain: \".duck.ai\", Secure: true},"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 3,
+									"startLine": 56
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+					},
+					"ruleId": "G124",
+					"ruleIndex": 2
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/dashboard_analysis.go"
+								},
+								"region": {
+									"endColumn": 3,
+									"endLine": 55,
+									"snippet": {
+										"text": "{Name: \"5\", Value: \"1\", Domain: \".duck.ai\", Secure: true},"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 3,
+									"startLine": 55
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+					},
+					"ruleId": "G124",
+					"ruleIndex": 2
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/tray/shortcut_hyprland_linux.go"
+								},
+								"region": {
+									"endColumn": 17,
+									"endLine": 133,
+									"snippet": {
+										"text": "output, err := exec.CommandContext(commandCtx, \"hyprctl\", \"eval\", expression).CombinedOutput()"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 17,
+									"startLine": 133
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/tray/launch_linux.go"
+								},
+								"region": {
+									"endColumn": 14,
+									"endLine": 32,
+									"snippet": {
+										"text": "command := exec.CommandContext(context.Background(), program, terminalArgs...)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 14,
+									"startLine": 32
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/tray/detached_unix.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 12,
+									"snippet": {
+										"text": "command := exec.Command(executable, args...)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 12
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/models/models.go"
+								},
+								"region": {
+									"endColumn": 22,
+									"endLine": 259,
+									"snippet": {
+										"text": "if output, err := exec.Command(path, \"--version\").Output(); err == nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 22,
+									"startLine": 259
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/models/models.go"
+								},
+								"region": {
+									"endColumn": 23,
+									"endLine": 244,
+									"snippet": {
+										"text": "if output, err := exec.Command(path, \"--version\").Output(); err == nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 23,
+									"startLine": 244
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/models/models.go"
+								},
+								"region": {
+									"endColumn": 22,
+									"endLine": 230,
+									"snippet": {
+										"text": "if output, err := exec.Command(browser, \"--version\").Output(); err == nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 22,
+									"startLine": 230
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/models/models.go"
+								},
+								"region": {
+									"endColumn": 22,
+									"endLine": 213,
+									"snippet": {
+										"text": "if output, err := exec.Command(\"cmd\", \"/C\", cmd).Output(); err == nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 22,
+									"startLine": 213
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/issue_command.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 109,
+									"snippet": {
+										"text": "browser = exec.Command(\"xdg-open\", target)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 109
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/issue_command.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 107,
+									"snippet": {
+										"text": "browser = exec.Command(\"open\", target)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 107
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/issue_command.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 105,
+									"snippet": {
+										"text": "browser = exec.Command(\"rundll32\", \"url.dll,FileProtocolHandler\", target)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 105
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/browserrelay/relay.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 597,
+									"snippet": {
+										"text": "command = exec.Command(\"xdg-open\", target)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 597
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/browserrelay/relay.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 595,
+									"snippet": {
+										"text": "command = exec.Command(\"open\", target)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 595
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/browserrelay/relay.go"
+								},
+								"region": {
+									"endColumn": 13,
+									"endLine": 593,
+									"snippet": {
+										"text": "command = exec.Command(\"rundll32\", \"url.dll,FileProtocolHandler\", target)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 13,
+									"startLine": 593
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with variable"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "error",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/chat/chat.go"
+								},
+								"region": {
+									"endColumn": 7,
+									"endLine": 277,
+									"snippet": {
+										"text": "_ = exec.Command(\"cmd\", \"/c\", fmt.Sprintf(\"title %s\", title)).Run()"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 7,
+									"startLine": 277
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Subprocess launched with a potential tainted input or cmd arguments"
+					},
+					"ruleId": "G204",
+					"ruleIndex": 3
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/ui/survey.go"
+								},
+								"region": {
+									"endColumn": 15,
+									"endLine": 38,
+									"snippet": {
+										"text": "return basic[code][0], basic[code][1], basic[code][2]"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 15,
+									"startLine": 38
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "slice index out of range"
+					},
+					"ruleId": "G602",
+					"ruleIndex": 4
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/ui/survey.go"
+								},
+								"region": {
+									"endColumn": 47,
+									"endLine": 38,
+									"snippet": {
+										"text": "return basic[code][0], basic[code][1], basic[code][2]"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 47,
+									"startLine": 38
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "slice index out of range"
+					},
+					"ruleId": "G602",
+					"ruleIndex": 4
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/ui/survey.go"
+								},
+								"region": {
+									"endColumn": 31,
+									"endLine": 38,
+									"snippet": {
+										"text": "return basic[code][0], basic[code][1], basic[code][2]"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 31,
+									"startLine": 38
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "slice index out of range"
+					},
+					"ruleId": "G602",
+					"ruleIndex": 4
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/ptytest/pty_linux.go"
+								},
+								"region": {
+									"endColumn": 53,
+									"endLine": 82,
+									"snippet": {
+										"text": "return ioctl(tty.Fd(), syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(\u0026size)))"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 53,
+									"startLine": 82
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Use of unsafe calls should be audited"
+					},
+					"ruleId": "G103"
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/ptytest/pty_linux.go"
+								},
+								"region": {
+									"endColumn": 57,
+									"endLine": 28,
+									"snippet": {
+										"text": "if err := ioctl(master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(\u0026number))); err != nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 57,
+									"startLine": 28
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Use of unsafe calls should be audited"
+					},
+					"ruleId": "G103"
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/ptytest/pty_linux.go"
+								},
+								"region": {
+									"endColumn": 59,
+									"endLine": 23,
+									"snippet": {
+										"text": "if err := ioctl(master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(\u0026unlock))); err != nil {"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 59,
+									"startLine": 23
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Use of unsafe calls should be audited"
+					},
+					"ruleId": "G103"
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/browserrelay/relay.go"
+								},
+								"region": {
+									"endColumn": 15,
+									"endLine": 327,
+									"snippet": {
+										"text": "log.Printf(\"Duck.ai Chrome relay rejected unauthenticated request to %s\", r.URL.Path)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 15,
+									"startLine": 327
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Log injection via taint analysis: log.Printf"
+					},
+					"ruleId": "G706",
+					"ruleIndex": 7
+				},
+				{
+					"level": "warning",
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": {
+									"uri": "internal/browserrelay/relay.go"
+								},
+								"region": {
+									"endColumn": 16,
+									"endLine": 301,
+									"snippet": {
+										"text": "log.Printf(\"Duck.ai Chrome relay rejected request with Origin %q\", origin)"
+									},
+									"sourceLanguage": "go",
+									"startColumn": 16,
+									"startLine": 301
+								}
+							}
+						}
+					],
+					"message": {
+						"text": "Log injection via taint analysis: log.Printf"
+					},
+					"ruleId": "G706",
+					"ruleIndex": 7
+				}
+			],
+			"taxonomies": [
+				{
+					"downloadUri": "https://cwe.mitre.org/data/xml/cwec_v4.4.xml.zip",
+					"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+					"informationUri": "https://cwe.mitre.org/data/published/cwe_v4.4.pdf/",
+					"isComprehensive": true,
+					"language": "en",
+					"minimumRequiredLocalizedDataSemanticVersion": "4.4",
+					"name": "CWE",
+					"organization": "MITRE",
+					"releaseDateUtc": "2021-03-15",
+					"shortDescription": {
+						"text": "The MITRE Common Weakness Enumeration"
+					},
+					"taxa": [
+						{
+							"fullDescription": {
+								"text": "The software does not neutralize or incorrectly neutralizes output that is written to logs."
+							},
+							"guid": "657e5d3f-0f55-3c1a-bac3-364e40b710a2",
+							"helpUri": "https://cwe.mitre.org/data/definitions/117.html",
+							"id": "117",
+							"shortDescription": {
+								"text": "Improper Output Neutralization for Logs"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The software does not restrict or incorrectly restricts operations within the boundaries of a resource that is accessed using an index or pointer, such as memory or files."
+							},
+							"guid": "ebb90d25-d5f3-32f8-b42a-b74b23984fbb",
+							"helpUri": "https://cwe.mitre.org/data/definitions/118.html",
+							"id": "118",
+							"shortDescription": {
+								"text": "Incorrect Access of Indexable Resource ('Range Error')"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The software performs a calculation that can produce an integer overflow or wraparound, when the logic assumes that the resulting value will always be larger than the original value. This can introduce other weaknesses when the calculation is used for resource management or execution control."
+							},
+							"guid": "c71e4fa0-720e-3e82-8b67-b2d44d0c604b",
+							"helpUri": "https://cwe.mitre.org/data/definitions/190.html",
+							"id": "190",
+							"shortDescription": {
+								"text": "Integer Overflow or Wraparound"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The software uses external input to construct a pathname that is intended to identify a file or directory that is located underneath a restricted parent directory, but the software does not properly neutralize special elements within the pathname that can cause the pathname to resolve to a location that is outside of the restricted directory."
+							},
+							"guid": "3e718404-88bc-3f17-883e-e85e74078a76",
+							"helpUri": "https://cwe.mitre.org/data/definitions/22.html",
+							"id": "22",
+							"shortDescription": {
+								"text": "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The program calls a function that can never be guaranteed to work safely."
+							},
+							"guid": "b5fcdc26-1906-39a8-aa7f-04cbe2339bce",
+							"helpUri": "https://cwe.mitre.org/data/definitions/242.html",
+							"id": "242",
+							"shortDescription": {
+								"text": "Use of Inherently Dangerous Function"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The Secure attribute for a sensitive cookie is not set, which could cause the user agent to send that cookie in plaintext over an HTTP session."
+							},
+							"guid": "6a277b82-d988-3aa0-8c10-d7b40576a735",
+							"helpUri": "https://cwe.mitre.org/data/definitions/614.html",
+							"id": "614",
+							"shortDescription": {
+								"text": "Sensitive Cookie in HTTPS Session Without 'Secure' Attribute"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The software constructs all or part of an OS command using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended OS command when it is sent to a downstream component."
+							},
+							"guid": "1a37bf66-7c5a-3aa0-94bb-ffae58a9e01c",
+							"helpUri": "https://cwe.mitre.org/data/definitions/78.html",
+							"id": "78",
+							"shortDescription": {
+								"text": "Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+							}
+						},
+						{
+							"fullDescription": {
+								"text": "The web server receives a URL or similar request from an upstream component and retrieves the contents of this URL, but it does not sufficiently ensure that the request is being sent to the expected destination."
+							},
+							"guid": "27dd8327-2f38-3be3-af3f-cabc06087edb",
+							"helpUri": "https://cwe.mitre.org/data/definitions/918.html",
+							"id": "918",
+							"shortDescription": {
+								"text": "Server-Side Request Forgery (SSRF)"
+							}
+						}
+					],
+					"version": "4.4"
+				}
+			],
+			"tool": {
+				"driver": {
+					"guid": "8b518d5f-906d-39f9-894b-d327b1a421c5",
+					"informationUri": "https://github.com/securego/gosec/",
+					"name": "gosec",
+					"rules": [
+						{
+							"defaultConfiguration": {
+								"level": "warning"
+							},
+							"fullDescription": {
+								"text": "Use of unsafe calls should be audited"
+							},
+							"help": {
+								"text": "Use of unsafe calls should be audited\nSeverity: LOW\nConfidence: HIGH\n"
+							},
+							"id": "G103",
+							"name": "Use of Inherently Dangerous Function",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"LOW"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "b5fcdc26-1906-39a8-aa7f-04cbe2339bce",
+										"id": "242",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "Use of unsafe calls should be audited"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "error"
+							},
+							"fullDescription": {
+								"text": "integer overflow conversion uint32 -\u003e uint16"
+							},
+							"help": {
+								"text": "integer overflow conversion uint32 -\u003e uint16\nSeverity: HIGH\nConfidence: MEDIUM\n"
+							},
+							"id": "G115",
+							"name": "Integer Overflow or Wraparound",
+							"properties": {
+								"precision": "medium",
+								"tags": [
+									"security",
+									"HIGH"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "c71e4fa0-720e-3e82-8b67-b2d44d0c604b",
+										"id": "190",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "integer overflow conversion uint32 -\u003e uint16"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "error"
+							},
+							"fullDescription": {
+								"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+							},
+							"help": {
+								"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute\nSeverity: MEDIUM\nConfidence: HIGH\n"
+							},
+							"id": "G124",
+							"name": "Sensitive Cookie in HTTPS Session Without 'Secure' Attribute",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"MEDIUM"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "6a277b82-d988-3aa0-8c10-d7b40576a735",
+										"id": "614",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "error"
+							},
+							"fullDescription": {
+								"text": "Subprocess launched with variable"
+							},
+							"help": {
+								"text": "Subprocess launched with variable\nSeverity: MEDIUM\nConfidence: HIGH\n"
+							},
+							"id": "G204",
+							"name": "Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"MEDIUM"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "1a37bf66-7c5a-3aa0-94bb-ffae58a9e01c",
+										"id": "78",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "Subprocess launched with variable"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "warning"
+							},
+							"fullDescription": {
+								"text": "slice index out of range"
+							},
+							"help": {
+								"text": "slice index out of range\nSeverity: LOW\nConfidence: HIGH\n"
+							},
+							"id": "G602",
+							"name": "Incorrect Access of Indexable Resource ('Range Error')",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"LOW"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "ebb90d25-d5f3-32f8-b42a-b74b23984fbb",
+										"id": "118",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "slice index out of range"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "error"
+							},
+							"fullDescription": {
+								"text": "Path traversal via taint analysis: os.WriteFile"
+							},
+							"help": {
+								"text": "Path traversal via taint analysis: os.WriteFile\nSeverity: HIGH\nConfidence: HIGH\n"
+							},
+							"id": "G703",
+							"name": "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"HIGH"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "3e718404-88bc-3f17-883e-e85e74078a76",
+										"id": "22",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "Path traversal via taint analysis: os.WriteFile"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "error"
+							},
+							"fullDescription": {
+								"text": "SSRF via taint analysis: net/http.NewRequestWithContext"
+							},
+							"help": {
+								"text": "SSRF via taint analysis: net/http.NewRequestWithContext\nSeverity: HIGH\nConfidence: HIGH\n"
+							},
+							"id": "G704",
+							"name": "Server-Side Request Forgery (SSRF)",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"HIGH"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "27dd8327-2f38-3be3-af3f-cabc06087edb",
+										"id": "918",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "SSRF via taint analysis: net/http.NewRequestWithContext"
+							}
+						},
+						{
+							"defaultConfiguration": {
+								"level": "warning"
+							},
+							"fullDescription": {
+								"text": "Log injection via taint analysis: log.Printf"
+							},
+							"help": {
+								"text": "Log injection via taint analysis: log.Printf\nSeverity: LOW\nConfidence: HIGH\n"
+							},
+							"id": "G706",
+							"name": "Improper Output Neutralization for Logs",
+							"properties": {
+								"precision": "high",
+								"tags": [
+									"security",
+									"LOW"
+								]
+							},
+							"relationships": [
+								{
+									"kinds": [
+										"superset"
+									],
+									"target": {
+										"guid": "657e5d3f-0f55-3c1a-bac3-364e40b710a2",
+										"id": "117",
+										"toolComponent": {
+											"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+											"name": "CWE"
+										}
+									}
+								}
+							],
+							"shortDescription": {
+								"text": "Log injection via taint analysis: log.Printf"
+							}
+						}
+					],
+					"semanticVersion": "dev",
+					"supportedTaxonomies": [
+						{
+							"guid": "f2856fc0-85b7-373f-83e7-6f8582243547",
+							"name": "CWE"
+						}
+					],
+					"version": "dev"
+				}
+			}
+		}
+	],
+	"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+	"version": "2.1.0"
+}

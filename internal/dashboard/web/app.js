@@ -621,6 +621,16 @@ async function loadCommands() {
 }
 
 async function start() {
+  const shell = $(".shell");
+  const sidebarToggle = $("#sidebarToggle");
+  sidebarToggle.addEventListener("click", () => {
+    const expanded = sidebarToggle.getAttribute("aria-expanded") === "true";
+    shell.classList.toggle("sidebar-collapsed", expanded);
+    sidebarToggle.setAttribute("aria-expanded", String(!expanded));
+    const label = expanded ? "Show sidebar" : "Hide sidebar";
+    sidebarToggle.setAttribute("aria-label", label);
+    sidebarToggle.title = label;
+  });
   document.querySelectorAll(".nav-item").forEach(button => button.addEventListener("click", () => showPage(button.dataset.page)));
   document.querySelectorAll("[data-stats-scope]").forEach(button => button.addEventListener("click", () => {
     state.statsScope = button.dataset.statsScope;
@@ -634,6 +644,13 @@ async function start() {
     } catch (error) {
       notify(error.message || "Sign-out failed");
     }
+  });
+  $("#closeDashboardButton").addEventListener("click", () => {
+    if (typeof window.duckchatCloseDashboard === "function") {
+      window.duckchatCloseDashboard();
+      return;
+    }
+    window.close();
   });
   $("#metricsAnalysis").addEventListener("click", runMetricsAnalysis);
   $("#previewReport").addEventListener("click", previewConversationReport);

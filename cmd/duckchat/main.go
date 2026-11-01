@@ -27,6 +27,7 @@ import (
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/dashboard"
 	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/persistence"
 	"duckduckgo-chat-cli/internal/tray"
 	"duckduckgo-chat-cli/internal/ui"
 	"duckduckgo-chat-cli/internal/update"
@@ -56,11 +57,16 @@ var interactiveChild bool
 const coordinatePromptColor = "#FF5555"
 
 type trayServiceRuntime struct {
-	mu            sync.Mutex
-	configured    *config.Config
-	voiceStarting bool
-	voiceError    string
-	voiceDone     chan struct{}
+	mu                sync.Mutex
+	configured        *config.Config
+	voiceStarting     bool
+	voiceError        string
+	voiceDone         chan struct{}
+	dashboardMu       sync.Mutex
+	dashboardServer   *dashboard.Server
+	dashboardHistory  *dashboard.HistoryStore
+	dashboardSessions *persistence.HistoryManager
+	dashboardWindow   *dashboard.ChromiumWindow
 }
 
 type startupUpdateResult struct {
@@ -536,7 +542,7 @@ func printCLIUsage(out io.Writer) {
 	accent := func(value string) string { return ui.AccentColor.Sprint(value) }
 	muted := func(value string) string { return ui.MutedColor.Sprint(value) }
 	command := func(name, description string) string {
-		return "  " + accent(fmt.Sprintf("%-20s", name)) + muted(description)
+		return "  " + accent(fmt.Sprintf("%-20s  ", name)) + muted(description)
 	}
 
 	lines := []string{
@@ -570,6 +576,11 @@ func printCLIUsage(out io.Writer) {
 		command("/speak", "Start a voice chat"),
 		command("/history", "Browse saved conversations"),
 		command("/sessions [query]", "Find, organize, restore, or delete saved sessions"),
+		command("/branch [name]", "Create a branch from the active conversation"),
+		command("/retry [instruction]", "Regenerate the last chat answer"),
+		command("/context", "Inspect, pin, and compact retained context"),
+		command("/sources", "Compare, audit, and reuse source references"),
+		command("/notes [action]", "Manage local notes for the active session"),
 		command("/config", "Change settings"),
 		command("/clear", "Start a fresh chat"),
 		command("/exit", "Close the chat"),
@@ -606,6 +617,7 @@ func runResidentTrayService() error {
 		},
 	})
 	serviceRuntime.stopVoice()
+	serviceRuntime.stopDashboard()
 	if shutdownErr := chat.ShutdownBrowser(); serviceErr == nil {
 		serviceErr = shutdownErr
 	}
@@ -632,6 +644,8 @@ func (service *trayServiceRuntime) handleAction(ctx context.Context, action tray
 			return tray.Response{}, err
 		}
 		return tray.Response{Message: "Text chat opened"}, nil
+	case tray.ActionOpenDashboard:
+		return service.openDashboard(ctx)
 	case tray.ActionOpenOrShowVoice:
 		return service.openOrShowVoice(ctx)
 	case tray.ActionToggleVoice:
@@ -659,9 +673,35 @@ func (service *trayServiceRuntime) handleAction(ctx context.Context, action tray
 	case tray.ActionReloadConfig:
 		updated := config.Initialize()
 		service.mu.Lock()
+		previousSpeak := config.SpeakConfig{}
+		if service.configured != nil {
+			previousSpeak = service.configured.Speak
+		}
 		service.configured = updated
 		cfg = updated
 		service.mu.Unlock()
+		service.dashboardMu.Lock()
+		if service.dashboardServer != nil {
+			service.dashboardServer.UpdateSettings(updated.Dashboard)
+		}
+		if service.dashboardHistory != nil {
+			if err := service.dashboardHistory.SetRetentionDays(updated.Dashboard.RetentionDays); err != nil {
+				service.dashboardMu.Unlock()
+				return tray.Response{}, fmt.Errorf("update dashboard history retention: %w", err)
+			}
+		}
+		if service.dashboardSessions != nil {
+			if err := service.dashboardSessions.SetRetentionDays(updated.Dashboard.RetentionDays); err != nil {
+				service.dashboardMu.Unlock()
+				return tray.Response{}, fmt.Errorf("update dashboard sessions retention: %w", err)
+			}
+		}
+		service.dashboardMu.Unlock()
+		if previousSpeak.WindowWidth != updated.Speak.WindowWidth || previousSpeak.WindowHeight != updated.Speak.WindowHeight {
+			if err := voice.ResizeActiveWindow(updated.Speak.WindowWidth, updated.Speak.WindowHeight); err != nil {
+				return tray.Response{Error: fmt.Sprintf("voice window size could not be applied: %v", err)}, nil
+			}
+		}
 		return tray.Response{Message: "Configuration reloaded"}, nil
 	case tray.ActionVoiceStatus:
 		return service.voiceStatus(), nil
@@ -669,7 +709,16 @@ func (service *trayServiceRuntime) handleAction(ctx context.Context, action tray
 		voice.StopActive()
 		return tray.Response{Message: "DuckChat tray service is stopping"}, nil
 	case tray.ActionServiceStatus:
-		return tray.Response{}, nil
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		if service.configured == nil {
+			return tray.Response{}, nil
+		}
+		return tray.Response{
+			TextShortcut:  service.configured.Tray.TextShortcut,
+			VoiceShortcut: service.configured.Tray.VoiceShortcut,
+			Speak:         &service.configured.Speak,
+		}, nil
 	default:
 		return tray.Response{}, fmt.Errorf("unsupported tray action %q", action)
 	}
@@ -718,7 +767,7 @@ func (service *trayServiceRuntime) openOrShowVoice(ctx context.Context) (tray.Re
 	go func() {
 		defer close(done)
 		chatSession = chat.InitializeSession(&configuration)
-		err := voice.Run(ctx, voiceDependencies(), voice.ChromiumOpener{Settings: configuration.Speak})
+		err := voice.Run(ctx, voiceDependencies(configuration.Speak), voice.ChromiumOpener{Settings: configuration.Speak})
 		if shutdownErr := chat.ShutdownBrowser(); err == nil {
 			err = shutdownErr
 		}
@@ -735,6 +784,137 @@ func (service *trayServiceRuntime) openOrShowVoice(ctx context.Context) (tray.Re
 	return tray.Response{VoiceActive: true, Message: "Voice chat is starting"}, nil
 }
 
+func (service *trayServiceRuntime) openDashboard(ctx context.Context) (tray.Response, error) {
+	service.dashboardMu.Lock()
+	defer service.dashboardMu.Unlock()
+	if service.dashboardWindow != nil && service.dashboardWindow.Open() {
+		return tray.Response{Message: "Dashboard is already open"}, nil
+	}
+	service.dashboardWindow = nil
+
+	service.mu.Lock()
+	if service.configured == nil {
+		service.mu.Unlock()
+		return tray.Response{}, fmt.Errorf("tray service configuration is unavailable")
+	}
+	configuration := *service.configured
+	service.mu.Unlock()
+
+	address := ""
+	startedHere := false
+	if service.dashboardServer != nil {
+		_, address = service.dashboardServer.Status()
+		if address == "" {
+			var err error
+			address, err = service.dashboardServer.Start()
+			if err != nil {
+				return tray.Response{}, err
+			}
+		}
+	} else {
+		configuredAddress := fmt.Sprintf("http://127.0.0.1:%d", configuration.Dashboard.Port)
+		if dashboardAvailable(ctx, configuredAddress) {
+			address = configuredAddress
+		} else {
+			service.dashboardHistory = dashboard.NewHistoryStore(config.DashboardHistoryPath(), configuration.Dashboard.RetentionDays)
+			service.dashboardSessions = persistence.NewHistoryManager(configuration.ExportDir)
+			if err := service.dashboardSessions.SetRetentionDays(configuration.Dashboard.RetentionDays); err != nil {
+				service.dashboardHistory = nil
+				service.dashboardSessions = nil
+				return tray.Response{}, err
+			}
+			server := dashboard.NewServer(dashboard.Dependencies{
+				History:  service.dashboardHistory,
+				Sessions: service.dashboardSessions,
+				Commands: command.GetCommandRegistry,
+				Config:   configuration.Dashboard,
+				Analyze:  chat.NewDashboardAnalyzer(&configuration).Analyze,
+				Activity: activity.NewHub(),
+			})
+			var err error
+			address, err = server.Start()
+			if err != nil {
+				service.dashboardHistory = nil
+				service.dashboardSessions = nil
+				return tray.Response{}, err
+			}
+			service.dashboardServer = server
+			startedHere = true
+		}
+	}
+
+	window, err := dashboard.OpenChromiumApp(ctx, address)
+	if err != nil {
+		if startedHere {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = service.dashboardServer.Stop(stopCtx)
+			cancel()
+			service.dashboardServer = nil
+			service.dashboardHistory = nil
+			service.dashboardSessions = nil
+		}
+		return tray.Response{}, err
+	}
+	service.dashboardWindow = window
+	go func() {
+		<-window.Done()
+		service.dashboardMu.Lock()
+		if service.dashboardWindow == window {
+			service.dashboardWindow = nil
+		}
+		service.dashboardMu.Unlock()
+	}()
+	return tray.Response{Message: "Dashboard opened"}, nil
+}
+
+func dashboardAvailable(ctx context.Context, address string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address+"/api/settings", nil)
+	if err != nil {
+		return false
+	}
+	client := http.Client{
+		Timeout: 1200 * time.Millisecond,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusOK && strings.HasPrefix(response.Header.Get("Content-Type"), "application/json") {
+		return true
+	}
+	if response.StatusCode != http.StatusUnauthorized {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 256))
+	return err == nil && strings.Contains(string(body), "authentication required")
+}
+
+func (service *trayServiceRuntime) stopDashboard() {
+	service.dashboardMu.Lock()
+	window := service.dashboardWindow
+	server := service.dashboardServer
+	service.dashboardWindow = nil
+	service.dashboardServer = nil
+	service.dashboardHistory = nil
+	service.dashboardSessions = nil
+	service.dashboardMu.Unlock()
+	if window != nil {
+		_ = window.Close()
+	}
+	if server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = server.Stop(ctx)
+		cancel()
+	}
+}
+
 func (service *trayServiceRuntime) stopVoice() {
 	voice.StopActive()
 	service.mu.Lock()
@@ -745,10 +925,54 @@ func (service *trayServiceRuntime) stopVoice() {
 	}
 }
 
-func voiceDependencies() voice.Dependencies {
+func synchronizeTraySettings(configured config.Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	status, err := tray.Send(ctx, tray.ActionServiceStatus)
+	if err != nil {
+		return fmt.Errorf("read tray service configuration: %w", err)
+	}
+	if status.Error != "" {
+		return fmt.Errorf("read tray service configuration: %s", status.Error)
+	}
+	if traySettingsMatch(status, configured) {
+		return nil
+	}
+	response, err := tray.Send(ctx, tray.ActionReloadConfig)
+	if err != nil {
+		return fmt.Errorf("reload tray service configuration: %w", err)
+	}
+	if response.Error != "" {
+		return fmt.Errorf("reload tray service configuration: %s", response.Error)
+	}
+	status, err = tray.Send(ctx, tray.ActionServiceStatus)
+	if err != nil {
+		return fmt.Errorf("verify tray service configuration: %w", err)
+	}
+	if status.Error != "" {
+		return fmt.Errorf("verify tray service configuration: %s", status.Error)
+	}
+	if !traySettingsMatch(status, configured) {
+		return fmt.Errorf("tray service is still using different settings after reload")
+	}
+	return nil
+}
+
+func traySettingsMatch(status tray.Response, configured config.Config) bool {
+	return status.TextShortcut == configured.Tray.TextShortcut &&
+		status.VoiceShortcut == configured.Tray.VoiceShortcut &&
+		status.Speak != nil && *status.Speak == configured.Speak
+}
+
+func traySettingsChanged(previousTray config.TrayConfig, previousSpeak config.SpeakConfig, current config.Config) bool {
+	return previousTray != current.Tray || previousSpeak != current.Speak
+}
+
+func voiceDependencies(settings config.SpeakConfig) voice.Dependencies {
 	return voice.Dependencies{
 		Proof:      voice.CurrentProofProvider{},
 		Signaling:  &voice.DuckAIClient{HTTPClient: http.DefaultClient, BaseURL: "https://duck.ai"},
+		Speak:      settings,
 		OnMinimize: voice.MinimizeActive,
 		OnSessionTerminated: func() {
 			ui.Warningln("\nVoice chat ended due to inactivity.")
@@ -758,7 +982,7 @@ func voiceDependencies() voice.Dependencies {
 }
 
 func runVoiceInProcess(ctx context.Context) {
-	if err := voice.Run(ctx, voiceDependencies(), voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
+	if err := voice.Run(ctx, voiceDependencies(cfg.Speak), voice.ChromiumOpener{Settings: cfg.Speak}); err != nil {
 		ui.Errorln("Voice session failed: %v", err)
 	}
 }
@@ -778,10 +1002,16 @@ func runSpeakCommand() {
 		runVoiceInProcess(context.Background())
 		return
 	}
+	if cfg == nil {
+		cfg = config.Initialize()
+	}
+	if err := synchronizeTraySettings(*cfg); err != nil {
+		ui.Errorln("Voice session failed: could not synchronize tray settings: %v", err)
+		return
+	}
 	startResponse, err := tray.Send(context.Background(), tray.ActionOpenOrShowVoice)
 	if err != nil {
-		ui.Warningln("Tray service could not start voice chat; starting locally: %v", err)
-		runVoiceInProcess(context.Background())
+		ui.Errorln("Voice session failed: could not contact the tray service: %v", err)
 		return
 	}
 	if startResponse.Error != "" {
@@ -987,6 +1217,8 @@ func runInteractive() {
 			cancel()
 			if err != nil {
 				ui.Warningln("Tray service could not start: %v", err)
+			} else if err := synchronizeTraySettings(*cfg); err != nil {
+				ui.Warningln("Tray settings could not be synchronized: %v", err)
 			}
 		}
 	}
@@ -1123,6 +1355,7 @@ func runInteractive() {
 		completer,
 		prompt.OptionWriter(newThemeConsoleWriter()),
 		prompt.OptionMaxSuggestion(8),
+		prompt.OptionCompactPaste(),
 		prompt.OptionInitialBufferText("/"),
 		prompt.OptionResizeCallback(func(size *prompt.WinSize) {
 			if chatSession != nil && chatSession.Display != nil && size != nil {
@@ -1291,9 +1524,9 @@ func handleCommandChainWithRoleProcessor(chatSession *chat.Chat, cfg *config.Con
 	for _, cmd := range chainedCmd.Commands {
 		switch cmd.Type {
 		case "/file":
-			var fileErr error
-			trackActivity("file", "File operation", func() { fileErr = chat.HandleFileCommand(chatSession, cmd.Raw, cfg, chainCtx) })
-			if fileErr != nil {
+			if err := trackActivityWithError("file", "File operation", func() error {
+				return chat.HandleFileCommand(chatSession, cmd.Raw, cfg, chainCtx)
+			}); err != nil {
 				return
 			}
 		case "/url":
@@ -1346,10 +1579,16 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 				ui.Errorln("Session manager failed: %v", err)
 			}
 		})
+	case cmd.Type == "/branch":
+		chat.HandleBranchCommand(chatSession, cmd.Args)
+	case cmd.Type == "/retry":
+		withResizeRedrawSuspended(chatSession, func() { chat.HandleRetryCommand(chatSession, cmd.Args, cfg) })
+	case cmd.Type == "/notes":
+		chat.HandleNotesCommand(chatSession, cmd.Args)
 	case cmd.Type == "/context":
-		chat.HandleContextCommand(chatSession)
+		chat.HandleContextCommandArgs(chatSession, cmd.Args, cfg)
 	case cmd.Type == "/sources":
-		chat.HandleSourcesCommand(chatSession)
+		withResizeRedrawSuspended(chatSession, func() { chat.HandleSourcesCommandArgs(chatSession, cmd.Args, cfg) })
 	case cmd.Type == "/image":
 		withResizeRedrawSuspended(chatSession, func() {
 			trackActivity("image", "Image generation", func() { chat.HandleImageCommand(chatSession, cmd.Args, cfg) })
@@ -1365,7 +1604,9 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 			trackActivity("search", "Search operation", func() { chat.HandleSearchCommand(chatSession, cmd.Raw, cfg, nil) })
 		})
 	case cmd.Type == "/file":
-		trackActivity("file", "File operation", func() { chat.HandleFileCommand(chatSession, cmd.Raw, cfg, nil) })
+		_ = trackActivityWithError("file", "File operation", func() error {
+			return chat.HandleFileCommand(chatSession, cmd.Raw, cfg, nil)
+		})
 	case cmd.Type == "/library":
 		withResizeRedrawSuspended(chatSession, func() {
 			trackActivity("library", "Library operation", func() { chat.HandleLibraryCommand(chatSession, cmd.Raw, cfg) })
@@ -1380,6 +1621,7 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 		})
 	case cmd.Type == "/config":
 		previousTrayConfig := cfg.Tray
+		previousSpeakConfig := cfg.Speak
 		resetApplied := false
 		withResizeRedrawSuspended(chatSession, func() {
 			resetApplied = config.HandleConfiguration(cfg, chatSession)
@@ -1400,12 +1642,12 @@ func handleCommand(chatSession *chat.Chat, cfg *config.Config, cmd *command.Comm
 			}
 		}
 		refreshDashboardSettings(cfg)
-		if cfg.Tray != previousTrayConfig {
+		if traySettingsChanged(previousTrayConfig, previousSpeakConfig, *cfg) {
 			if response, err := tray.Send(context.Background(), tray.ActionReloadConfig); err != nil || response.Error != "" {
 				if err != nil {
-					ui.Warningln("Chat shortcuts were saved, but the tray service could not reload them: %v", err)
+					ui.Warningln("Settings were saved, but the tray service could not fully apply them: %v", err)
 				} else {
-					ui.Warningln("Chat shortcuts were saved, but the tray service could not reload them: %s", response.Error)
+					ui.Warningln("Settings were saved, but the tray service could not fully apply them: %s", response.Error)
 				}
 			}
 		}
@@ -1521,6 +1763,19 @@ func trackActivity(category, summary string, run func()) {
 	started := dashboardActivity.Publish(activity.Event{Category: category, Status: "started", Summary: summary + " started"})
 	defer dashboardActivity.Publish(activity.Event{Category: category, Status: "completed", Summary: summary + " completed", OperationID: started.OperationID})
 	run()
+}
+
+func trackActivityWithError(category, summary string, run func() error) error {
+	if dashboardActivity == nil {
+		return run()
+	}
+	started := dashboardActivity.Publish(activity.Event{Category: category, Status: "started", Summary: summary + " started"})
+	if err := run(); err != nil {
+		dashboardActivity.Publish(activity.Event{Category: category, Status: "failed", Summary: summary + " failed", OperationID: started.OperationID})
+		return err
+	}
+	dashboardActivity.Publish(activity.Event{Category: category, Status: "completed", Summary: summary + " completed", OperationID: started.OperationID})
+	return nil
 }
 
 // shouldConfirmLongInput determines if input should be confirmed before sending

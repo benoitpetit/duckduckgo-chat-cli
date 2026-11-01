@@ -3,6 +3,7 @@ package prompt
 import (
 	"bytes"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/c-bata/go-prompt/internal/debug"
@@ -36,6 +37,10 @@ type Prompt struct {
 	exitChecker       ExitChecker
 	skipTearDown      bool
 	resizeCallback    func(*WinSize)
+	pasteDecoder      bracketedPasteDecoder
+	compactPaste      bool
+	pastePayloads     map[rune]string
+	nextPasteToken    rune
 }
 
 // Exec is the struct contains user input context.
@@ -81,6 +86,7 @@ func (p *Prompt) Run() {
 
 				// Unset raw mode
 				// Reset to Blocking mode because returned EAGAIN when still set non-blocking mode.
+				p.setBracketedPasteMode(false)
 				debug.AssertNoError(p.in.TearDown())
 				p.executor(e.input)
 
@@ -94,6 +100,7 @@ func (p *Prompt) Run() {
 				}
 				// Set raw mode
 				debug.AssertNoError(p.in.Setup())
+				p.setBracketedPasteMode(true)
 				go p.readBuffer(bufCh, stopReadBufCh)
 				go p.handleSignals(exitCh, winSizeCh, stopHandleSignalCh)
 			} else {
@@ -112,12 +119,90 @@ func (p *Prompt) Run() {
 			p.tearDown()
 			os.Exit(code)
 		default:
+			if handled, shouldExit, _ := p.flushPendingInput(time.Now()); handled {
+				if shouldExit {
+					p.renderer.BreakLine(p.buf)
+					stopReadBufCh <- struct{}{}
+					stopHandleSignalCh <- struct{}{}
+					return
+				}
+				p.completion.Update(*p.buf.Document())
+				p.renderer.Render(p.buf, p.completion)
+			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
 }
 
 func (p *Prompt) feed(b []byte) (shouldExit bool, exec *Exec) {
+	return p.feedDecoded(p.pasteDecoder.Feed(b))
+}
+
+func (p *Prompt) flushPendingInput(now time.Time) (handled, shouldExit bool, exec *Exec) {
+	events := p.pasteDecoder.FlushPending(now)
+	if len(events) == 0 {
+		return false, false, nil
+	}
+	shouldExit, exec = p.feedDecoded(events)
+	return true, shouldExit, exec
+}
+
+func (p *Prompt) feedDecoded(events []decodedInput) (shouldExit bool, exec *Exec) {
+	for _, event := range events {
+		if event.pasted {
+			if event.data == nil || len(event.data) == 0 {
+				continue
+			}
+			p.buf.lastKeyStroke = BracketedPaste
+			p.buf.InsertText(p.storePastedText(string(event.data)), false, true)
+			p.completion.Reset()
+			continue
+		}
+		if shouldExit, exec = p.feedKey(event.data); shouldExit || exec != nil {
+			return shouldExit, exec
+		}
+	}
+	return false, nil
+}
+
+func (p *Prompt) storePastedText(text string) string {
+	if !p.compactPaste {
+		return text
+	}
+	if p.pastePayloads == nil {
+		p.pastePayloads = make(map[rune]string)
+	}
+	if p.nextPasteToken < pasteTokenStart {
+		p.nextPasteToken = pasteTokenStart
+	}
+	for p.nextPasteToken <= pasteTokenEnd {
+		token := p.nextPasteToken
+		p.nextPasteToken++
+		if _, exists := p.pastePayloads[token]; exists {
+			continue
+		}
+		p.pastePayloads[token] = text
+		return string(token)
+	}
+	return text
+}
+
+func (p *Prompt) expandPastedText(text string) string {
+	if len(p.pastePayloads) == 0 {
+		return text
+	}
+	var expanded strings.Builder
+	for _, char := range text {
+		if pasted, ok := p.pastePayloads[char]; ok {
+			expanded.WriteString(pasted)
+		} else {
+			expanded.WriteRune(char)
+		}
+	}
+	return expanded.String()
+}
+
+func (p *Prompt) feedKey(b []byte) (shouldExit bool, exec *Exec) {
 	key := GetKey(b)
 	p.buf.lastKeyStroke = key
 	// completion
@@ -126,12 +211,13 @@ func (p *Prompt) feed(b []byte) (shouldExit bool, exec *Exec) {
 
 	switch key {
 	case Enter, ControlJ, ControlM:
+		inputForHistory := p.buf.Text()
 		p.renderer.BreakLine(p.buf)
 
-		exec = &Exec{input: p.buf.Text()}
+		exec = &Exec{input: p.expandPastedText(inputForHistory)}
 		p.buf = NewBuffer()
 		if exec.input != "" {
-			p.history.Add(exec.input)
+			p.history.Add(inputForHistory)
 		}
 	case ControlC:
 		p.renderer.BreakLine(p.buf)
@@ -266,6 +352,15 @@ func (p *Prompt) Input() string {
 				p.renderer.Render(p.buf, p.completion)
 			}
 		default:
+			if handled, shouldExit, _ := p.flushPendingInput(time.Now()); handled {
+				if shouldExit {
+					p.renderer.BreakLine(p.buf)
+					stopReadBufCh <- struct{}{}
+					return ""
+				}
+				p.completion.Update(*p.buf.Document())
+				p.renderer.Render(p.buf, p.completion)
+			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
@@ -288,14 +383,26 @@ func (p *Prompt) readBuffer(bufCh chan []byte, stopCh chan struct{}) {
 }
 
 func (p *Prompt) setUp() {
+	p.pasteDecoder = bracketedPasteDecoder{}
 	debug.AssertNoError(p.in.Setup())
 	p.renderer.Setup()
+	p.setBracketedPasteMode(true)
 	p.renderer.UpdateWinSize(p.in.GetWinSize())
 }
 
 func (p *Prompt) tearDown() {
+	p.setBracketedPasteMode(false)
 	if !p.skipTearDown {
 		debug.AssertNoError(p.in.TearDown())
 	}
 	p.renderer.TearDown()
+}
+
+func (p *Prompt) setBracketedPasteMode(enabled bool) {
+	if enabled {
+		p.renderer.out.WriteRawStr("\x1b[?2004h")
+	} else {
+		p.renderer.out.WriteRawStr("\x1b[?2004l")
+	}
+	debug.AssertNoError(p.renderer.out.Flush())
 }

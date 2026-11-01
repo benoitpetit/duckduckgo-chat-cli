@@ -1,6 +1,179 @@
 package prompt
 
-import "bytes"
+import (
+	"bytes"
+	"fmt"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+)
+
+const (
+	bracketedPasteStart    = "\x1b[200~"
+	bracketedPasteEnd      = "\x1b[201~"
+	incompleteInputTimeout = 100 * time.Millisecond
+	pasteTokenStart        = rune(0xF0000)
+	pasteTokenEnd          = rune(0xFFFFD)
+)
+
+type decodedInput struct {
+	data   []byte
+	pasted bool
+}
+
+type bracketedPasteDecoder struct {
+	pending   []byte
+	pendingAt time.Time
+	paste     []byte
+	inPaste   bool
+}
+
+func (d *bracketedPasteDecoder) Feed(data []byte) []decodedInput {
+	if len(data) > 0 {
+		d.pendingAt = time.Now()
+	}
+	d.pending = append(d.pending, data...)
+	var events []decodedInput
+
+	for len(d.pending) > 0 {
+		if d.inPaste {
+			if end := bytes.Index(d.pending, []byte(bracketedPasteEnd)); end >= 0 {
+				d.paste = append(d.paste, d.pending[:end]...)
+				events = append(events, decodedInput{data: []byte(sanitizePastedText(d.paste)), pasted: true})
+				d.paste = nil
+				d.pending = append([]byte(nil), d.pending[end+len(bracketedPasteEnd):]...)
+				d.inPaste = false
+				continue
+			}
+
+			keep := longestSuffixPrefix(d.pending, []byte(bracketedPasteEnd))
+			d.paste = append(d.paste, d.pending[:len(d.pending)-keep]...)
+			d.pending = append([]byte(nil), d.pending[len(d.pending)-keep:]...)
+			return events
+		}
+
+		if start := bytes.Index(d.pending, []byte(bracketedPasteStart)); start >= 0 {
+			events = append(events, splitNormalInput(d.pending[:start])...)
+			d.pending = append([]byte(nil), d.pending[start+len(bracketedPasteStart):]...)
+			d.inPaste = true
+			continue
+		}
+
+		keep := longestIncompleteInputSuffix(d.pending)
+		ready := len(d.pending) - keep
+		events = append(events, splitNormalInput(d.pending[:ready])...)
+		d.pending = append([]byte(nil), d.pending[ready:]...)
+		return events
+	}
+
+	return events
+}
+
+func (d *bracketedPasteDecoder) FlushPending(now time.Time) []decodedInput {
+	if d.inPaste || len(d.pending) == 0 || now.Sub(d.pendingAt) < incompleteInputTimeout {
+		return nil
+	}
+
+	pending := d.pending
+	d.pending = nil
+	d.pendingAt = time.Time{}
+	return splitNormalInput(pending)
+}
+
+func longestSuffixPrefix(data, sequence []byte) int {
+	limit := len(data)
+	if max := len(sequence) - 1; limit > max {
+		limit = max
+	}
+	for size := limit; size > 0; size-- {
+		if bytes.Equal(data[len(data)-size:], sequence[:size]) {
+			return size
+		}
+	}
+	return 0
+}
+
+func longestIncompleteInputSuffix(data []byte) int {
+	limit := len(data)
+	if max := len(bracketedPasteStart) - 1; limit > max {
+		limit = max
+	}
+	for size := limit; size > 0; size-- {
+		suffix := data[len(data)-size:]
+		if suffix[0] != 0x1b {
+			continue
+		}
+		if bytes.HasPrefix([]byte(bracketedPasteStart), suffix) {
+			return size
+		}
+		for _, sequence := range ASCIISequences {
+			if len(sequence.ASCIICode) > size && bytes.HasPrefix(sequence.ASCIICode, suffix) {
+				return size
+			}
+		}
+	}
+	return 0
+}
+
+func splitNormalInput(data []byte) []decodedInput {
+	var events []decodedInput
+	textStart := 0
+	for i := 0; i < len(data); {
+		b := data[i]
+		if b >= 0x20 && b != 0x7f && b != 0x1b {
+			i++
+			continue
+		}
+		if i > textStart {
+			events = append(events, decodedInput{data: append([]byte(nil), data[textStart:i]...)})
+		}
+
+		if b == 0x1b {
+			sequenceLength := matchedInputSequenceLength(data[i:])
+			if sequenceLength == 0 {
+				sequenceLength = 1
+			}
+			events = append(events, decodedInput{data: append([]byte(nil), data[i:i+sequenceLength]...)})
+			i += sequenceLength
+		} else {
+			events = append(events, decodedInput{data: []byte{b}})
+			i++
+		}
+		textStart = i
+	}
+	if textStart < len(data) {
+		events = append(events, decodedInput{data: append([]byte(nil), data[textStart:]...)})
+	}
+	return events
+}
+
+func matchedInputSequenceLength(data []byte) int {
+	matched := 0
+	for _, sequence := range ASCIISequences {
+		if len(sequence.ASCIICode) > matched && bytes.HasPrefix(data, sequence.ASCIICode) {
+			matched = len(sequence.ASCIICode)
+		}
+	}
+	return matched
+}
+
+func sanitizePastedText(data []byte) string {
+	text := strings.ToValidUTF8(string(data), "\uFFFD")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, text)
+}
+
+func pastedTextReference(text string) string {
+	count := utf8.RuneCountInString(text)
+	return fmt.Sprintf("[pasted · %d chars]", count)
+}
 
 // WinSize represents the width and height of terminal.
 type WinSize struct {

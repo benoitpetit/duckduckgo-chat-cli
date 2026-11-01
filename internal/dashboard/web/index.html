@@ -12,7 +12,7 @@
   </head>
   <body>
     <div class="shell">
-      <aside class="sidebar">
+      <aside class="sidebar" id="dashboardSidebar">
         <a class="brand" href="#overview" aria-label="DuckChat Dashboard">
           <img class="brand-logo" src="/assets/logo.png" alt="">
           <span><strong>DuckChat</strong><small>LOCAL DASHBOARD</small></span>
@@ -31,8 +31,8 @@
 
       <main class="main-content">
         <header class="topbar">
-          <div class="page-identity"><img class="page-logo" src="/assets/logo.png" alt=""><div><div class="eyebrow">DUCKDUCKGO CHAT CLI</div><h1 id="pageTitle">Overview</h1></div></div>
-          <div class="live-state"><span class="pulse"></span><span>Live</span><span class="divider"></span><span id="updatedAt">Waiting for data…</span><button class="button secondary" id="logoutButton" type="button">Sign out</button></div>
+          <div class="page-identity"><button class="icon-button sidebar-toggle" id="sidebarToggle" type="button" aria-label="Hide sidebar" aria-controls="dashboardSidebar" aria-expanded="true" title="Hide sidebar"><span aria-hidden="true">☰</span></button><img class="page-logo" src="/assets/logo.png" alt=""><div><div class="eyebrow">DUCKDUCKGO CHAT CLI</div><h1 id="pageTitle">Overview</h1></div></div>
+          <div class="live-state"><span class="pulse"></span><span>Live</span><span class="divider"></span><span id="updatedAt">Waiting for data…</span><button class="button secondary" id="logoutButton" type="button">Sign out</button><button class="icon-button window-close" id="closeDashboardButton" type="button" aria-label="Close dashboard window" title="Close dashboard window"><span aria-hidden="true">×</span></button></div>
         </header>
 
         <section class="page active" id="page-overview">

@@ -42,31 +42,8 @@ jobs:
     - name: 🔬 Run go vet
       run: go vet ./...
 
-    - name: 📚 Generate and validate API documentation
-      run: |
-        echo "📚 Installing swag for documentation generation..."
-        go install github.com/swaggo/swag/cmd/swag@v1.16.6
-        
-        echo "📚 Generating API documentation..."
-        swag init --generalInfo internal/api/docs.go --output docs/ --parseInternal
-        
-        echo "📚 Validating generated documentation..."
-        if [ ! -f "docs/docs.go" ]; then
-          echo "❌ docs.go not generated"
-          exit 1
-        fi
-        
-        if [ ! -f "docs/swagger.json" ]; then
-          echo "❌ swagger.json not generated"
-          exit 1
-        fi
-        
-        if [ ! -f "docs/swagger.yaml" ]; then
-          echo "❌ swagger.yaml not generated"
-          exit 1
-        fi
-        
-        echo "✅ API documentation generated and validated successfully"
+    - name: 📚 Validate generated API documentation freshness
+      run: ./scripts/check-generated-docs.sh
 
     - name: 🧪 Run tests
       run: go test -v ./...
@@ -107,6 +84,10 @@ jobs:
           go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
         fi
         gosec -no-fail -fmt sarif -out results.sarif ./...
+
+    - name: 🧾 Compare gosec findings with reviewed baseline
+      if: always() && steps.security_scan.outcome == 'success' && hashFiles('results.sarif') != ''
+      run: python3 scripts/check-gosec-baseline.py results.sarif docs/security/gosec-baseline.sarif
 
     - name: 📊 Upload SARIF file
       if: always() && steps.security_scan.outcome == 'success' && hashFiles('results.sarif') != ''

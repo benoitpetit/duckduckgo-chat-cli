@@ -82,6 +82,79 @@ func TestResponseFrameMatchesStyledPanelWidthAndAlignment(t *testing.T) {
 	}
 }
 
+func TestResponseFrameUsesSharedFullAndMaximumWidths(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	prior := ui.CurrentFrameOptions()
+	t.Cleanup(func() { ui.SetFrameOptions(prior) })
+
+	ui.SetFrameOptions(ui.FrameOptions{WidthMode: ui.FrameWidthFull, MaxWidth: 112, LineWeight: ui.FrameLineSingle})
+	for _, terminalWidth := range []int{160, 240} {
+		if frame := newResponseFrame("Assistant", terminalWidth); frame == nil || frame.width != terminalWidth {
+			t.Fatalf("full-width response frame at terminal width %d = %#v", terminalWidth, frame)
+		}
+	}
+
+	ui.SetFrameOptions(ui.FrameOptions{WidthMode: ui.FrameWidthMaximum, MaxWidth: 80, LineWeight: ui.FrameLineSingle})
+	if frame := newResponseFrame("Assistant", 160); frame == nil || frame.width != 80 {
+		t.Fatalf("maximum-width response frame = %#v, want width 80", frame)
+	}
+}
+
+func TestResponseFrameHeavyAndSingleBordersStayAligned(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	prior := ui.CurrentFrameOptions()
+	t.Cleanup(func() { ui.SetFrameOptions(prior) })
+
+	for _, test := range []struct {
+		name   string
+		weight ui.FrameLineWeight
+		left   string
+		horiz  string
+		right  string
+	}{
+		{name: "single", weight: ui.FrameLineSingle, left: "╭", horiz: "─", right: "╮"},
+		{name: "heavy", weight: ui.FrameLineHeavy, left: "┏", horiz: "━", right: "┓"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ui.SetFrameOptions(ui.FrameOptions{WidthMode: ui.FrameWidthMaximum, MaxWidth: 80, LineWeight: test.weight})
+			frame := newResponseFrame("Assistant", 80)
+			output := captureResponseFrame(t, func() {
+				frame.Write("answer", false)
+				frame.Close()
+			})
+			lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+			if len(lines) != 3 {
+				t.Fatalf("response frame has %d lines, want 3: %q", len(lines), output)
+			}
+			for index, line := range lines {
+				if got := ansi.StringWidth(line); got != 80 {
+					t.Errorf("line %d width = %d, want 80: %q", index, got, line)
+				}
+			}
+			if !strings.HasPrefix(lines[0], test.left+test.horiz+" Assistant") || !strings.HasSuffix(lines[0], test.right) {
+				t.Errorf("top border does not use %s glyphs: %q", test.name, lines[0])
+			}
+			if !strings.HasPrefix(lines[1], "│ answer") && !strings.HasPrefix(lines[1], "┃ answer") {
+				t.Errorf("content row has no vertical border: %q", lines[1])
+			}
+		})
+	}
+}
+
+func TestResponseFrameKeepsCompactRailAndUnframedFallback(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	prior := ui.CurrentFrameOptions()
+	t.Cleanup(func() { ui.SetFrameOptions(prior) })
+	ui.SetFrameOptions(ui.FrameOptions{WidthMode: ui.FrameWidthFull, MaxWidth: 112, LineWeight: ui.FrameLineHeavy})
+
+	if frame := newResponseFrame("Assistant", 40); frame == nil || frame.mode != responseFrameRail {
+		t.Fatalf("40-column response frame = %#v, want compact rail", frame)
+	}
+	if frame := newResponseFrame("Assistant", 31); frame != nil {
+		t.Fatalf("31-column response frame = %#v, want unframed fallback", frame)
+	}
+}
+
 func TestResponseRailExpandsTabsWithinTerminal(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	frame := newResponseFrame("GPT-6 Luna", 40)

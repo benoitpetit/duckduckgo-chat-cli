@@ -38,6 +38,7 @@ import (
 	"duckduckgo-chat-cli/internal/ui"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/fatih/color"
 )
 
@@ -67,6 +68,13 @@ type Chat struct {
 	HistoryManager             *persistence.HistoryManager
 	SessionID                  string
 	ConversationStartTime      time.Time
+	ParentSessionID            string
+	BranchName                 string
+	Notes                      []string
+	Compacted                  bool
+	SessionTitle               string
+	SessionTags                []string
+	SessionFavorite            bool
 	suppressSensitiveDebugLogs bool
 	suppressDebugPayload       bool
 
@@ -103,6 +111,7 @@ type Message struct {
 	Images                 []media.ImageAttachment `json:"-"`
 	Sources                []chatcontext.SourceRef `json:"-"`
 	Timestamp              time.Time               `json:"-"`
+	Pinned                 bool                    `json:"pinned,omitempty"`
 	forceTextContentBlocks bool                    // Duck.ai uses text blocks for later user turns in image chats.
 }
 
@@ -441,7 +450,7 @@ func GetVQD() (string, string, string, string) {
 
 func (c *Chat) Clear(cfg *config.Config) error {
 	// Save current session before clearing if it has content
-	if len(c.Messages) > 0 {
+	if len(c.Messages) > 0 || len(c.Notes) > 0 || len(c.PendingSources) > 0 || len(c.pendingImages) > 0 {
 		if err := c.SaveCurrentSession(); err != nil {
 			ui.Warningln("Failed to save session before clearing: %v", err)
 			return err
@@ -455,6 +464,13 @@ func (c *Chat) Clear(cfg *config.Config) error {
 	c.PendingSources = nil
 	c.CoordinateReports = nil
 	c.LastOptimizationChanges = nil
+	c.ParentSessionID = ""
+	c.BranchName = ""
+	c.Notes = nil
+	c.Compacted = false
+	c.SessionTitle = ""
+	c.SessionTags = nil
+	c.SessionFavorite = false
 	if c.Display != nil {
 		c.Display.Clear()
 	}
@@ -592,6 +608,7 @@ func (c *Chat) AddPendingSources(sources []chatcontext.SourceRef) []chatcontext.
 	}
 	for _, source := range sources {
 		source.ID = fmt.Sprintf("source-%d", next)
+		source.ExchangeID = ""
 		if source.State == "" {
 			source.State = chatcontext.SourceStateActive
 		}
@@ -845,6 +862,17 @@ func processInputWithStreamFetcher(ctx context.Context, c *Chat, input string, c
 }
 
 func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, <-chan error, error), userContentLength, contextContentLength int) (string, error) {
+	return processInputWithStreamFetcherAndTokenRolesOptions(ctx, c, input, cfg, render, fetch, userContentLength, contextContentLength, pipelineOptions{})
+}
+
+type pipelineOptions struct {
+	SkipGlobalPrompt bool
+	SkipSourceLabels bool
+	PreservePending  bool
+	UserMessage      *Message
+}
+
+func processInputWithStreamFetcherAndTokenRolesOptions(ctx context.Context, c *Chat, input string, cfg *config.Config, render func(<-chan string) string, fetch func(context.Context, string) (<-chan string, <-chan error, error), userContentLength, contextContentLength int, options pipelineOptions) (string, error) {
 	if strings.TrimSpace(input) == "" {
 		return "", nil
 	}
@@ -855,12 +883,21 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 	originalMessages := append([]Message(nil), c.Messages...)
 	originalPendingImages := c.pendingImages
 	originalPendingSources := cloneSourceRefs(c.PendingSources)
-	c.pendingImages = nil
-	c.PendingSources = nil
+	requestPendingSources := cloneSourceRefs(originalPendingSources)
+	if !options.PreservePending {
+		exchangeID := randomRequestID()
+		for index := range requestPendingSources {
+			requestPendingSources[index].ExchangeID = exchangeID
+		}
+	}
+	if !options.PreservePending {
+		c.pendingImages = nil
+		c.PendingSources = nil
+	}
 	originalMessageCount := len(originalMessages)
 	isFirstMessage := originalMessageCount == 0
 	actualMessage := input
-	if isFirstMessage && cfg.GlobalPrompt != "" {
+	if !options.SkipGlobalPrompt && isFirstMessage && cfg.GlobalPrompt != "" {
 		actualMessage = cfg.GlobalPrompt + "\n\n" + input
 	}
 	if c.Analytics != nil {
@@ -873,13 +910,23 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 		}
 	}
 
-	c.Messages = append(c.Messages, Message{
+	userMessage := Message{
 		Role:      "user",
 		Content:   actualMessage,
 		Images:    originalPendingImages,
-		Sources:   cloneSourceRefs(originalPendingSources),
+		Sources:   cloneSourceRefs(requestPendingSources),
 		Timestamp: time.Now(),
-	})
+	}
+	if options.UserMessage != nil {
+		userMessage = *options.UserMessage
+		userMessage.Images = cloneImageAttachments(options.UserMessage.Images)
+		userMessage.Sources = cloneSourceRefs(options.UserMessage.Sources)
+		actualMessage = userMessage.Content
+		if userMessage.Timestamp.IsZero() {
+			userMessage.Timestamp = time.Now()
+		}
+	}
+	c.Messages = append(c.Messages, userMessage)
 
 	c.LastOptimizationChanges = nil
 	requestMessages := c.convertMessagesToIntelligence()
@@ -904,6 +951,9 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 	}
 
 	sourceRefs := sourcesForLatestExchange(c)
+	if options.SkipSourceLabels {
+		sourceRefs = nil
+	}
 	if labels := sourcePromptLabels(sourceRefs); labels != "" {
 		actualMessage += "\n\n" + labels
 		for i := len(c.Messages) - 1; i >= 0; i-- {
@@ -1010,8 +1060,25 @@ func processInputWithStreamFetcherAndTokenRoles(ctx context.Context, c *Chat, in
 		Content:   finalResponse,
 		Timestamp: time.Now(),
 	})
+	applySourceExchangeIDs(c.Messages, userMessage.Sources)
 
 	return finalResponse, nil
+}
+
+func applySourceExchangeIDs(messages []Message, sources []chatcontext.SourceRef) {
+	exchanges := make(map[string]string, len(sources))
+	for _, source := range sources {
+		if source.ID != "" && source.ExchangeID != "" {
+			exchanges[source.ID] = source.ExchangeID
+		}
+	}
+	for messageIndex := range messages {
+		for sourceIndex := range messages[messageIndex].Sources {
+			if exchangeID := exchanges[messages[messageIndex].Sources[sourceIndex].ID]; exchangeID != "" {
+				messages[messageIndex].Sources[sourceIndex].ExchangeID = exchangeID
+			}
+		}
+	}
 }
 
 func hasImageAttachments(messages []Message) bool {
@@ -1385,7 +1452,7 @@ func (c *Chat) saveGeneratedImage(event StreamEvent) (string, error) {
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "duckduckgo-chat-cli", "images")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create image directory: %w", err)
 	}
 	ext := strings.ToLower(strings.TrimSpace(event.ImageFormat))
@@ -1608,11 +1675,13 @@ func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req
 	// fresh proof capture also reaches it from the first-attempt branch below.
 	// Both paths use the same status and SSE handling as a normal response.
 	if resp.StatusCode == http.StatusTooManyRequests && retries == 1 && (c.BrowserRetry != nil || c.visibleProofBrowserFactory != nil) {
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		body, readErr := readAndCloseResponse(resp.Body)
 		rateLimitErr := &RateLimitError{
 			Code:       rateLimitErrorCode(body),
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
+		if readErr != nil {
+			return nil, errors.Join(rateLimitErr, fmt.Errorf("read rate-limit response: %w", readErr))
 		}
 		browserResponse, browserErr := c.browserRetryResponse(ctx, req, jsonPayload, rateLimitErr, onProgress, true)
 		if browserErr != nil {
@@ -1622,8 +1691,7 @@ func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body, responseReadErr := readAndCloseResponse(resp.Body)
 
 		challenge := resp.StatusCode == http.StatusTeapot || rateLimitErrorCode(body) == "ERR_CHALLENGE"
 		if shouldLogRequestDetails(c) {
@@ -1654,13 +1722,16 @@ func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req
 		}
 		if challenge {
 			c.RetryCount = 0
-			return nil, ErrDuckAIChallenge
+			return nil, errors.Join(ErrDuckAIChallenge, responseReadErr)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.RetryCount = 0
 			rateLimitErr := &RateLimitError{
 				Code:       rateLimitErrorCode(body),
 				RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+			}
+			if responseReadErr != nil {
+				return nil, errors.Join(rateLimitErr, fmt.Errorf("read rate-limit response: %w", responseReadErr))
 			}
 			if retries < 1 {
 				if rateLimitErr.RetryAfter > 0 {
@@ -1712,6 +1783,10 @@ func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req
 		// A generic 400 can indicate a bad payload (for example an unsupported
 		// image format), so only explicit proof or challenge failures are retried.
 		if retryableProofFailure && retries < 1 {
+			if responseReadErr != nil {
+				c.RetryCount = 0
+				return nil, errors.Join(fmt.Errorf("%d: response body could not be read completely", resp.StatusCode), responseReadErr)
+			}
 			c.RetryCount = retries + 1
 			if c.Activity != nil {
 				c.Activity.Publish(activity.Event{Category: "request", Status: "retrying", Summary: "Duck.ai proof rejected; refreshing and retrying once", Model: string(c.Model)})
@@ -1726,7 +1801,7 @@ func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req
 			return c.fetchContext(ctx, content, retries+1, onProgress)
 		}
 		c.RetryCount = 0
-		return nil, fmt.Errorf("%d: Failed to send message. %s. Body: %s", resp.StatusCode, resp.Status, string(body))
+		return nil, errors.Join(fmt.Errorf("%d: Failed to send message. %s. Body: %s", resp.StatusCode, resp.Status, string(body)), responseReadErr)
 	}
 
 	newVqd := resp.Header.Get("x-vqd-4")
@@ -1737,6 +1812,11 @@ func (c *Chat) handleFetchResponse(ctx context.Context, resp *http.Response, req
 	c.RetryCount = 0
 
 	return resp, nil
+}
+
+func readAndCloseResponse(body io.ReadCloser) ([]byte, error) {
+	data, readErr := io.ReadAll(body)
+	return data, errors.Join(readErr, body.Close())
 }
 
 func (c *Chat) browserRetryResponse(ctx context.Context, req *http.Request, jsonPayload []byte, rateLimitErr *RateLimitError, onProgress func(ProgressUpdate), waitForWindow bool) (*http.Response, error) {
@@ -2151,40 +2231,16 @@ func renderCommandPanelLines(commands []CommandHelp, width int) []ui.PanelLine {
 	const columnGap = 2
 	const minDescriptionWidth = 24
 
-	// A command is laid out in columns when it leaves enough room for a
-	// readable description beside it. Commands that do not are stacked one by
-	// one instead, so a single long usage string cannot flatten the whole
-	// section into the stacked layout.
-	fitsColumn := func(command string) bool {
-		return width-indent-len(command)-columnGap >= minDescriptionWidth
-	}
-
-	// The description column is sized by the commands that use it; the stacked
-	// ones must not reserve space they never occupy.
-	maxLength := 0
-	anyColumn := false
-	for _, cmd := range commands {
-		if !fitsColumn(cmd.Command) {
-			continue
-		}
-		anyColumn = true
-		if len(cmd.Command) > maxLength {
-			maxLength = len(cmd.Command)
-		}
-	}
-
-	descriptionWidth := width - indent - 2
-	if anyColumn {
-		descriptionWidth = width - indent - maxLength - columnGap
-	}
-
 	var lines []ui.PanelLine
 	for _, cmd := range commands {
-		if !anyColumn || !fitsColumn(cmd.Command) {
+		commandWidth := ansi.StringWidth(cmd.Command)
+		descriptionWidth := width - indent - commandWidth - columnGap
+		if descriptionWidth < minDescriptionWidth {
 			for _, line := range wrapHelpText(cmd.Command, width-indent) {
 				lines = append(lines, ui.PanelLine{{Text: "  " + line, Style: ui.PanelAccent}})
 			}
-			for _, line := range wrapHelpText(cmd.Description, descriptionWidth) {
+			stackedDescriptionWidth := width - indent - 2
+			for _, line := range wrapHelpText(cmd.Description, stackedDescriptionWidth) {
 				lines = append(lines, ui.PanelLine{{Text: "    " + line, Style: ui.PanelForeground}})
 			}
 			continue
@@ -2196,12 +2252,12 @@ func renderCommandPanelLines(commands []CommandHelp, width int) []ui.PanelLine {
 		}
 
 		head := ui.PanelLine{
-			{Text: fmt.Sprintf("  %-*s", maxLength, cmd.Command), Style: ui.PanelAccent},
+			{Text: "  " + cmd.Command, Style: ui.PanelAccent},
 			{Text: "  " + wrapped[0], Style: ui.PanelForeground},
 		}
 		lines = append(lines, head)
 
-		indentPad := strings.Repeat(" ", indent+maxLength+columnGap)
+		indentPad := strings.Repeat(" ", indent+commandWidth+columnGap)
 		for _, line := range wrapped[1:] {
 			lines = append(lines, ui.PanelLine{{Text: indentPad + line, Style: ui.PanelForeground}})
 		}
@@ -2347,13 +2403,8 @@ func HandleExportCommand(c *Chat, cfg *config.Config) {
 		return
 	}
 
-	fullPath := filepath.Join(cfg.ExportDir, filename)
-	if err := os.MkdirAll(cfg.ExportDir, 0755); err != nil {
-		ui.Errorln("❌ Cannot create export directory: %v", err)
-		return
-	}
-
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+	fullPath, err := writeExportFile(cfg.ExportDir, filename, content)
+	if err != nil {
 		ui.Errorln("❌ Error saving file: %v", err)
 		return
 	}
@@ -2362,7 +2413,22 @@ func HandleExportCommand(c *Chat, cfg *config.Config) {
 }
 
 func HandleLoadCommand(c *Chat, args string) {
-	if args == "" {
+	fields := strings.Fields(args)
+	fullTranscript := false
+	if len(fields) > 0 && fields[len(fields)-1] == "--full" {
+		fullTranscript = true
+		fields = fields[:len(fields)-1]
+	}
+	if strings.TrimSpace(args) != "" {
+		if len(fields) != 1 {
+			ui.Warningln("Usage: /load [session_id [--full]]")
+			return
+		}
+		loadAndRestoreSessionWithMode(c, fields[0], fullTranscript)
+		return
+	}
+
+	if len(fields) == 0 {
 		// Interactive mode: show compact summaries and let the user choose.
 		sessions, err := c.HistoryManager.ListSessionSummaries()
 		if err != nil {
@@ -2402,13 +2468,14 @@ func HandleLoadCommand(c *Chat, args string) {
 		}
 		ui.Errorln("Could not identify the selected session.")
 
-	} else {
-		// Direct load mode: load session by ID
-		loadAndRestoreSession(c, args)
 	}
 }
 
 func loadAndRestoreSession(c *Chat, sessionID string) {
+	loadAndRestoreSessionWithMode(c, sessionID, false)
+}
+
+func loadAndRestoreSessionWithMode(c *Chat, sessionID string, fullTranscript bool) {
 	session, err := c.HistoryManager.LoadSession(sessionID)
 	if err != nil {
 		ui.Errorln("Error loading session %s: %v", sessionID, err)
@@ -2416,14 +2483,18 @@ func loadAndRestoreSession(c *Chat, sessionID string) {
 	}
 
 	// Save current session before loading a new one
-	if len(c.Messages) > 0 {
+	if len(c.Messages) > 0 || len(c.Notes) > 0 || len(c.PendingSources) > 0 || len(c.pendingImages) > 0 {
 		if err := c.SaveCurrentSession(); err != nil {
 			ui.Warningln("Failed to save session before loading another: %v", err)
 			return
 		}
 	}
 
-	c.RestoreContext(session)
+	if fullTranscript {
+		c.restoreContext(session, true)
+	} else {
+		c.RestoreContext(session)
+	}
 	ui.AIln("Session %s loaded successfully. Context restored.", sessionID)
 }
 
@@ -2465,13 +2536,26 @@ func (c *Chat) recordContextMessage(content string) {
 
 // RestoreContext restores the chat context from a given conversation session.
 func (c *Chat) RestoreContext(session *persistence.ConversationSession) {
-	c.PendingSources = nil
+	c.restoreContext(session, false)
+}
+
+func (c *Chat) restoreContext(session *persistence.ConversationSession, fullTranscript bool) {
+	c.PendingSources = cloneSourceRefs(session.PendingSources)
+	c.pendingImages = cloneImageAttachments(session.PendingImages)
+	c.LastOptimizationChanges = nil
+	c.ParentSessionID = session.ParentSessionID
+	c.BranchName = session.BranchName
+	c.Notes = append([]string(nil), session.Notes...)
+	c.Compacted = session.Compacted
+	c.SessionTitle = session.Title
+	c.SessionTags = append([]string(nil), session.Tags...)
+	c.SessionFavorite = session.Favorite
 	c.CoordinateReports = cloneCoordinateReports(session.CoordinateReports)
 	// Saved CLI history is restored locally. Start a fresh Duck.ai durable
 	// conversation identity and send this transcript on the next chat request.
 	c.resetDurableConversation()
 	messages := session.Messages
-	if len(session.OptimizedMessages) > 0 {
+	if !fullTranscript && len(session.OptimizedMessages) > 0 {
 		messages = session.OptimizedMessages
 	}
 	// Convert persistence.Message to chat.Message
@@ -2487,6 +2571,7 @@ func (c *Chat) RestoreContext(session *persistence.ConversationSession) {
 			Images:    cloneImageAttachments(msg.Images),
 			Sources:   cloneSourceRefs(msg.Sources),
 			Timestamp: timestamp,
+			Pinned:    msg.Pinned,
 		}
 	}
 	c.SessionID = session.ID
@@ -2518,6 +2603,7 @@ func (c *Chat) convertMessagesToIntelligence() []intelligence.Message {
 			Images:    cloneImageAttachments(msg.Images),
 			Sources:   cloneSourceRefs(msg.Sources),
 			Timestamp: msg.Timestamp,
+			Pinned:    msg.Pinned,
 		}
 	}
 	return result
@@ -2533,6 +2619,7 @@ func (c *Chat) convertFromIntelligenceMessages(messages []intelligence.Message) 
 			Images:    cloneImageAttachments(msg.Images),
 			Sources:   cloneSourceRefs(msg.Sources),
 			Timestamp: msg.Timestamp,
+			Pinned:    msg.Pinned,
 		}
 	}
 	return result
@@ -2540,7 +2627,7 @@ func (c *Chat) convertFromIntelligenceMessages(messages []intelligence.Message) 
 
 // SaveCurrentSession synchronously archives the current conversation before a lifecycle transition.
 func (c *Chat) SaveCurrentSession() error {
-	if len(c.Messages) == 0 {
+	if len(c.Messages) == 0 && len(c.Notes) == 0 && len(c.PendingSources) == 0 && len(c.pendingImages) == 0 {
 		return nil
 	}
 	if c.HistoryManager == nil {
@@ -2567,6 +2654,15 @@ func (c *Chat) SaveCurrentSession() error {
 		StartTime:         started,
 		Model:             string(c.Model),
 		Messages:          intelligenceMessages,
+		PendingSources:    cloneSourceRefs(c.PendingSources),
+		PendingImages:     cloneImageAttachments(c.pendingImages),
+		ParentSessionID:   c.ParentSessionID,
+		BranchName:        c.BranchName,
+		Notes:             append([]string(nil), c.Notes...),
+		Compacted:         c.Compacted,
+		Title:             c.SessionTitle,
+		Tags:              append([]string(nil), c.SessionTags...),
+		Favorite:          c.SessionFavorite,
 		CoordinateReports: cloneCoordinateReports(c.CoordinateReports),
 		Analytics: persistence.SessionAnalytics{
 			MessageCount:      len(c.Messages),

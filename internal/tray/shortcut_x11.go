@@ -25,7 +25,11 @@ func startX11Shortcuts(ctx context.Context, text, voice shortcut.Shortcut, dispa
 	}
 	setup := xproto.Setup(connection)
 	screen := setup.DefaultScreen(connection)
-	keycodeCount := byte(int(setup.MaxKeycode) - int(setup.MinKeycode) + 1)
+	keycodeCount, err := x11KeycodeCount(setup.MinKeycode, setup.MaxKeycode)
+	if err != nil {
+		connection.Close()
+		return nil, err
+	}
 	mapping, err := xproto.GetKeyboardMapping(connection, setup.MinKeycode, keycodeCount).Reply()
 	if err != nil || mapping == nil {
 		connection.Close()
@@ -83,17 +87,32 @@ func startX11Shortcuts(ctx context.Context, text, voice shortcut.Shortcut, dispa
 	}, nil
 }
 
+func x11KeycodeCount(minimum, maximum xproto.Keycode) (byte, error) {
+	count := int(maximum) - int(minimum) + 1
+	if count <= 0 || count > int(^byte(0)) {
+		return 0, fmt.Errorf("invalid X11 keycode range %d-%d", minimum, maximum)
+	}
+	return byte(count), nil
+}
+
 func x11Keycode(mapping *xproto.GetKeyboardMappingReply, minimum, maximum xproto.Keycode, target uint32) xproto.Keycode {
-	if mapping == nil || mapping.KeysymsPerKeycode == 0 {
+	if mapping == nil || mapping.KeysymsPerKeycode == 0 || maximum < minimum {
 		return 0
 	}
 	perKeycode := int(mapping.KeysymsPerKeycode)
-	for code := int(minimum); code <= int(maximum); code++ {
-		start := (code - int(minimum)) * perKeycode
-		for _, keysym := range mapping.Keysyms[start : start+perKeycode] {
+	for code := minimum; ; code++ {
+		start := (int(code) - int(minimum)) * perKeycode
+		end := start + perKeycode
+		if end > len(mapping.Keysyms) {
+			return 0
+		}
+		for _, keysym := range mapping.Keysyms[start:end] {
 			if uint32(keysym) == target {
-				return xproto.Keycode(code)
+				return code
 			}
+		}
+		if code == maximum {
+			break
 		}
 	}
 	if target >= 'a' && target <= 'z' {

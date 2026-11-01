@@ -21,6 +21,9 @@ func buildLoadSessionOptions(summaries []persistence.SessionSummary) ([]string, 
 			model = "unknown model"
 		}
 		preview := normalizeLoadSessionText(summary.FirstMessage, loadSessionPreviewLimit)
+		if summary.Compacted {
+			preview = "[compact] " + preview
+		}
 		if preview == "" {
 			preview = "No message preview"
 		}

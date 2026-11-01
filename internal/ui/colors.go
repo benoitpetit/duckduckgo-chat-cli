@@ -64,6 +64,7 @@ func parseHexColor(value string) (int, int, int) {
 	return int(parsed >> 16), int((parsed >> 8) & 0xFF), int(parsed & 0xFF)
 }
 
+// #nosec G104 -- fatih/color Printf does not expose an underlying writer error.
 func (c themedColor) Printf(format string, a ...interface{}) { c.color().Printf(format, a...) }
 func (c themedColor) Sprint(a ...interface{}) string         { return c.color().Sprint(a...) }
 

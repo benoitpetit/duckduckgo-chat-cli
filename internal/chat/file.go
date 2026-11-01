@@ -132,6 +132,7 @@ func readTextContextFile(path string) ([]byte, error) {
 	if info.Size() > maxTextFileSize {
 		return nil, fmt.Errorf("%s exceeds the %d MiB limit", path, maxTextFileSize/(1<<20))
 	}
+	// #nosec G304 -- this is an explicit /file selection, bounded by size and checked as supported text.
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -150,6 +151,7 @@ func readContextFile(path string) ([]byte, error) {
 }
 
 func readPDFContextFile(path string) ([]byte, error) {
+	// #nosec G304 -- this is an explicit /file selection; PDF size and parsing limits are checked below.
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err

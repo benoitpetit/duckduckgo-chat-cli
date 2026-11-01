@@ -30,6 +30,7 @@ type Message struct {
 	Images     []media.ImageAttachment `json:"images,omitempty"`
 	Sources    []chatcontext.SourceRef `json:"sources,omitempty"`
 	Timestamp  time.Time               `json:"timestamp"`
+	Pinned     bool                    `json:"pinned,omitempty"`
 	Sequence   int                     `json:"-"`
 	Importance float64                 `json:"importance"`
 	Hash       uint64                  `json:"hash"`
@@ -287,6 +288,9 @@ func (co *ContextOptimizer) calculateImportanceScores(messages []Message) []Mess
 func (co *ContextOptimizer) removeDuplicates(messages []Message) []Message {
 	hashToMessage := make(map[uint64]Message)
 	for _, msg := range messages {
+		if msg.Pinned || hasPinnedSource(msg.Sources) {
+			continue
+		}
 		existing, exists := hashToMessage[msg.Hash]
 		if exists {
 			// Keep the one with higher importance
@@ -303,6 +307,10 @@ func (co *ContextOptimizer) removeDuplicates(messages []Message) []Message {
 	seenHashes := make(map[uint64]bool)
 
 	for _, msg := range messages {
+		if msg.Pinned || hasPinnedSource(msg.Sources) {
+			result = append(result, msg)
+			continue
+		}
 		if !seenHashes[msg.Hash] {
 			if bestMsg, exists := hashToMessage[msg.Hash]; exists {
 				result = append(result, bestMsg)
@@ -319,7 +327,7 @@ func (co *ContextOptimizer) compressLowImportanceContent(messages []Message) []M
 	for i := range messages {
 		// The newest message is the current request and must reach the model
 		// unchanged even when it is long and scores below the threshold.
-		if i == len(messages)-1 {
+		if i == len(messages)-1 || messages[i].Pinned || hasPinnedSource(messages[i].Sources) {
 			continue
 		}
 		if messages[i].Importance < co.ImportanceThreshold && len(messages[i].Content) > 500 {
@@ -379,6 +387,11 @@ func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
 	})
 
 	for _, msg := range sortedMessages {
+		if msg.Pinned || hasPinnedSource(msg.Sources) {
+			result = append(result, msg)
+			currentSize += len(msg.Content)
+			continue
+		}
 		if len(msg.Images) > 0 || currentSize+len(msg.Content) <= co.MaxContextSize {
 			result = append(result, msg)
 			currentSize += len(msg.Content)
@@ -394,6 +407,15 @@ func (co *ContextOptimizer) smartTruncation(messages []Message) []Message {
 	})
 
 	return result
+}
+
+func hasPinnedSource(sources []chatcontext.SourceRef) bool {
+	for _, source := range sources {
+		if source.Pinned {
+			return true
+		}
+	}
+	return false
 }
 
 // compressContent applies various compression techniques to content
@@ -554,7 +576,7 @@ func (co *ContextOptimizer) hashContent(content string) uint64 {
 	h := fnv.New64a()
 	// Normalize content for hashing (remove whitespace variations)
 	normalized := whitespacePattern.ReplaceAllString(strings.TrimSpace(content), " ")
-	h.Write([]byte(normalized))
+	_, _ = h.Write([]byte(normalized)) // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
 	return h.Sum64()
 }
 
@@ -655,16 +677,16 @@ func (co *ContextOptimizer) countDuplicates(messages []Message) int {
 func (co *ContextOptimizer) hashMessage(msg Message) uint64 {
 	h := fnv.New64a()
 	normalized := whitespacePattern.ReplaceAllString(strings.TrimSpace(msg.Content), " ")
-	h.Write([]byte(msg.Role))
-	h.Write([]byte{0})
-	h.Write([]byte(normalized))
+	_, _ = h.Write([]byte(msg.Role))   // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+	_, _ = h.Write([]byte{0})          // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+	_, _ = h.Write([]byte(normalized)) // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
 	for _, image := range msg.Images {
-		h.Write([]byte{0})
-		h.Write([]byte(image.Name))
-		h.Write([]byte{0})
-		h.Write([]byte(image.MIMEType))
-		h.Write([]byte{0})
-		h.Write(image.Data)
+		_, _ = h.Write([]byte{0})              // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+		_, _ = h.Write([]byte(image.Name))     // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+		_, _ = h.Write([]byte{0})              // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+		_, _ = h.Write([]byte(image.MIMEType)) // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+		_, _ = h.Write([]byte{0})              // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
+		_, _ = h.Write(image.Data)             // #nosec G104 -- hash.Hash writes are guaranteed to return len(p), nil.
 	}
 	return h.Sum64()
 }

@@ -46,6 +46,47 @@ func TestHistoryManagerRejectsInvalidRetention(t *testing.T) {
 	}
 }
 
+func TestCleanupOldSessionsReportsRemovalFailureAndKeepsArchive(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewHistoryManager(dir)
+	manager.RetentionDays = 365
+	session := &ConversationSession{
+		ID:        "retention_blocked",
+		StartTime: time.Now().Add(-2 * 24 * time.Hour),
+		Messages:  []intelligence.Message{{Role: "user", Content: "keep archive"}},
+	}
+	if err := manager.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	child := &ConversationSession{
+		ID: "retention_child", StartTime: time.Now(), ParentSessionID: session.ID,
+		BranchName: "follow-up", Messages: []intelligence.Message{{Role: "user", Content: "keep lineage"}},
+	}
+	if err := manager.SaveSession(child); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(dir, "session_"+session.ID+".json")
+	if err := os.Mkdir(legacyPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyPath, "keep"), []byte("block removal"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetRetentionDays(1); err == nil {
+		t.Fatal("SetRetentionDays() hid a session archive removal failure")
+	}
+	if _, err := manager.LoadSession(session.ID); err != nil {
+		t.Fatalf("session archive was lost after cleanup failure: %v", err)
+	}
+	loadedChild, err := manager.LoadSession(child.ID)
+	if err != nil {
+		t.Fatalf("child archive was lost after cleanup failure: %v", err)
+	}
+	if loadedChild.ParentSessionID != session.ID || loadedChild.BranchName != child.BranchName {
+		t.Fatalf("child lineage after cleanup failure = (%q, %q), want (%q, %q)", loadedChild.ParentSessionID, loadedChild.BranchName, session.ID, child.BranchName)
+	}
+}
+
 func TestHistoryManagerRestartAppliesLongerRetentionBeforePruning(t *testing.T) {
 	dir := t.TempDir()
 	manager := NewHistoryManager(dir)
@@ -240,6 +281,135 @@ func TestDeleteSessionRemovesUncompressedLegacyArchive(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("legacy archive still exists, stat error = %v", err)
+	}
+}
+
+func TestDeleteSessionDetachesDirectBranches(t *testing.T) {
+	manager := NewHistoryManager(t.TempDir())
+	parent := &ConversationSession{ID: "session_parent", StartTime: time.Now(), Messages: []intelligence.Message{{Role: "user", Content: "parent"}}}
+	child := &ConversationSession{ID: "session_child", StartTime: time.Now(), ParentSessionID: parent.ID, BranchName: "experiment", Messages: []intelligence.Message{{Role: "user", Content: "child"}}}
+	secondChild := &ConversationSession{ID: "session_child_two", StartTime: time.Now(), ParentSessionID: parent.ID, BranchName: "follow-up", Messages: []intelligence.Message{{Role: "user", Content: "second child"}}}
+	for _, session := range []*ConversationSession{parent, child, secondChild} {
+		if err := manager.SaveSession(session); err != nil {
+			t.Fatalf("SaveSession(%s): %v", session.ID, err)
+		}
+	}
+
+	if err := manager.DeleteSession(parent.ID); err != nil {
+		t.Fatalf("DeleteSession(%s): %v", parent.ID, err)
+	}
+	if _, err := manager.LoadSession(parent.ID); err == nil {
+		t.Fatal("deleted parent session remained loadable")
+	}
+	for _, test := range []struct{ id, content string }{{child.ID, "child"}, {secondChild.ID, "second child"}} {
+		loadedChild, err := manager.LoadSession(test.id)
+		if err != nil {
+			t.Fatalf("LoadSession(%s) after deleting parent: %v", test.id, err)
+		}
+		if loadedChild.ParentSessionID != "" || loadedChild.BranchName != "" {
+			t.Errorf("detached child %s lineage = parent:%q branch:%q, want no stale link", test.id, loadedChild.ParentSessionID, loadedChild.BranchName)
+		}
+		if len(loadedChild.Messages) != 1 || loadedChild.Messages[0].Content != test.content {
+			t.Errorf("detaching child %s changed its transcript: %+v", test.id, loadedChild.Messages)
+		}
+	}
+}
+
+func TestDeleteSessionKeepsParentWhenChildDetachmentFails(t *testing.T) {
+	manager := NewHistoryManager(t.TempDir())
+	parent := &ConversationSession{ID: "session_parent", StartTime: time.Now(), Messages: []intelligence.Message{{Role: "user", Content: "parent"}}}
+	child := &ConversationSession{ID: "session_child", StartTime: time.Now(), ParentSessionID: parent.ID, BranchName: "experiment", Messages: []intelligence.Message{{Role: "user", Content: "child"}}}
+	for _, session := range []*ConversationSession{parent, child} {
+		if err := manager.SaveSession(session); err != nil {
+			t.Fatalf("SaveSession(%s): %v", session.ID, err)
+		}
+	}
+	manager.CompressionLevel = 99 // Force child archival to fail before parent removal.
+
+	if err := manager.DeleteSession(parent.ID); err == nil {
+		t.Fatal("DeleteSession() succeeded although its child could not be detached")
+	}
+	if _, err := manager.LoadSession(parent.ID); err != nil {
+		t.Fatalf("parent was removed after child-detachment failure: %v", err)
+	}
+	loadedChild, err := manager.LoadSession(child.ID)
+	if err != nil {
+		t.Fatalf("LoadSession(child) after failed deletion: %v", err)
+	}
+	if loadedChild.ParentSessionID != parent.ID || loadedChild.BranchName != child.BranchName {
+		t.Fatalf("failed detach partially changed child lineage: parent:%q branch:%q", loadedChild.ParentSessionID, loadedChild.BranchName)
+	}
+}
+
+func TestCleanupOldSessionsDetachesBranchesBeforeRemoval(t *testing.T) {
+	manager := NewHistoryManager(t.TempDir())
+	if err := manager.SetRetentionDays(365); err != nil {
+		t.Fatalf("SetRetentionDays(365): %v", err)
+	}
+	parent := &ConversationSession{ID: "session_expired_parent", StartTime: time.Now().Add(-120 * 24 * time.Hour), Messages: []intelligence.Message{{Role: "user", Content: "old parent"}}}
+	child := &ConversationSession{ID: "session_recent_child", StartTime: time.Now(), ParentSessionID: parent.ID, BranchName: "current work", Messages: []intelligence.Message{{Role: "user", Content: "recent child"}}}
+	for _, session := range []*ConversationSession{parent, child} {
+		if err := manager.SaveSession(session); err != nil {
+			t.Fatalf("SaveSession(%s): %v", session.ID, err)
+		}
+	}
+
+	if err := manager.SetRetentionDays(30); err != nil {
+		t.Fatalf("SetRetentionDays(30): %v", err)
+	}
+	if _, err := manager.LoadSession(parent.ID); err == nil {
+		t.Fatal("expired parent session remained loadable")
+	}
+	loadedChild, err := manager.LoadSession(child.ID)
+	if err != nil {
+		t.Fatalf("LoadSession(%s) after retention cleanup: %v", child.ID, err)
+	}
+	if loadedChild.ParentSessionID != "" || loadedChild.BranchName != "" {
+		t.Fatalf("retained child lineage = parent:%q branch:%q, want no stale link", loadedChild.ParentSessionID, loadedChild.BranchName)
+	}
+}
+
+func TestDeleteNestedBranchKeepsGrandchildLoadable(t *testing.T) {
+	manager := NewHistoryManager(t.TempDir())
+	root := &ConversationSession{ID: "session_root", StartTime: time.Now(), Messages: []intelligence.Message{{Role: "user", Content: "root"}}}
+	branch := &ConversationSession{ID: "session_branch", StartTime: time.Now(), ParentSessionID: root.ID, BranchName: "branch", Messages: []intelligence.Message{{Role: "user", Content: "branch"}}}
+	grandchild := &ConversationSession{ID: "session_grandchild", StartTime: time.Now(), ParentSessionID: branch.ID, BranchName: "nested", Messages: []intelligence.Message{{Role: "user", Content: "grandchild"}}}
+	for _, session := range []*ConversationSession{root, branch, grandchild} {
+		if err := manager.SaveSession(session); err != nil {
+			t.Fatalf("SaveSession(%s): %v", session.ID, err)
+		}
+	}
+
+	if err := manager.DeleteSession(branch.ID); err != nil {
+		t.Fatalf("DeleteSession(%s): %v", branch.ID, err)
+	}
+	loadedRoot, err := manager.LoadSession(root.ID)
+	if err != nil || loadedRoot.ID != root.ID {
+		t.Fatalf("LoadSession(%s) = (%+v, %v), want surviving root", root.ID, loadedRoot, err)
+	}
+	loadedGrandchild, err := manager.LoadSession(grandchild.ID)
+	if err != nil {
+		t.Fatalf("LoadSession(%s) after deleting its parent: %v", grandchild.ID, err)
+	}
+	if loadedGrandchild.ParentSessionID != "" || loadedGrandchild.BranchName != "" || len(loadedGrandchild.Messages) != 1 || loadedGrandchild.Messages[0].Content != "grandchild" {
+		t.Fatalf("grandchild after parent deletion = %+v, want loadable standalone session", loadedGrandchild)
+	}
+}
+
+func TestLegacySessionLoadsWithZeroLineageAndLocalMetadata(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewHistoryManager(dir)
+	legacyData := []byte(`{"id":"legacy_lineage","start_time":"2024-10-13T00:00:00Z","model":"gpt","messages":[{"role":"user","content":"legacy prompt"}],"analytics":{}}`)
+	path := filepath.Join(dir, "session_legacy_lineage.json")
+	if err := os.WriteFile(path, legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := manager.LoadSession("legacy_lineage")
+	if err != nil {
+		t.Fatalf("LoadSession() error = %v", err)
+	}
+	if loaded.ParentSessionID != "" || loaded.BranchName != "" || loaded.Favorite || loaded.Compacted || loaded.Notes != nil || len(loaded.CoordinateReports) != 0 || len(loaded.PendingSources) != 0 || len(loaded.PendingImages) != 0 {
+		t.Fatalf("legacy session acquired metadata that was absent from its archive: %+v", loaded)
 	}
 }
 

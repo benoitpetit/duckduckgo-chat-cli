@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"duckduckgo-chat-cli/internal/chat"
+	"duckduckgo-chat-cli/internal/config"
 )
 
 const maxSDPOfferBytes = 1 << 20
@@ -21,6 +22,7 @@ const maxSDPOfferBytes = 1 << 20
 type Dependencies struct {
 	Proof               ProofProvider
 	Signaling           SignalingClient
+	Speak               config.SpeakConfig
 	OnSessionTerminated func()
 	OnMinimize          func() error
 }
@@ -44,6 +46,9 @@ func NewHandler(deps Dependencies, token, allowedOrigin string) (http.Handler, e
 	}
 	if token == "" {
 		return nil, fmt.Errorf("voice access token is required")
+	}
+	if deps.Speak == (config.SpeakConfig{}) {
+		deps.Speak = config.DefaultSpeakConfig()
 	}
 	origin, err := url.Parse(allowedOrigin)
 	if err != nil || origin.Scheme != "http" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
@@ -110,6 +115,15 @@ func (h *localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.serveAsset(w, "webui/logo.png", "image/png")
+	case "/api/config":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		if !h.authorize(w, r) {
+			return
+		}
+		h.handleSpeakSettings(w, r)
 	case "/api/ice-servers":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -196,6 +210,39 @@ func (h *localHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+func (h *localHandler) handleSpeakSettings(w http.ResponseWriter, _ *http.Request) {
+	voiceID := h.configuredVoiceID()
+	voice, _ := config.SpeakVoiceByID(voiceID)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(struct {
+		Voice            string `json:"voice"`
+		VoiceName        string `json:"voice_name"`
+		VoiceDescription string `json:"voice_description"`
+		StartMuted       bool   `json:"start_muted"`
+		ShowTranscript   bool   `json:"show_transcript"`
+		Volume           int    `json:"volume"`
+		ReadinessSound   bool   `json:"readiness_sound"`
+		AutoStart        bool   `json:"auto_start"`
+	}{
+		Voice:            voiceID,
+		VoiceName:        voice.Name,
+		VoiceDescription: voice.Description,
+		StartMuted:       h.deps.Speak.StartMuted,
+		ShowTranscript:   h.deps.Speak.ShowTranscript,
+		Volume:           h.deps.Speak.Volume,
+		ReadinessSound:   h.deps.Speak.ReadinessSound,
+		AutoStart:        h.deps.Speak.AutoStart,
+	})
+}
+
+func (h *localHandler) configuredVoiceID() string {
+	if _, ok := config.SpeakVoiceByID(h.deps.Speak.Voice); ok {
+		return h.deps.Speak.Voice
+	}
+	return config.DefaultSpeakVoice()
+}
+
 func (h *localHandler) handleICEServers(w http.ResponseWriter, r *http.Request) {
 	proof, err := h.captureProof(r.Context())
 	if err != nil {
@@ -251,14 +298,14 @@ func (h *localHandler) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeVoiceError(w, http.StatusConflict, "Fetch ICE configuration before creating a session")
 		return
 	}
-	answer, err := h.deps.Signaling.CreateSession(r.Context(), proof, string(body))
+	answer, err := h.deps.Signaling.CreateSession(r.Context(), proof, string(body), h.configuredVoiceID())
 	if isExplicitProofRejection(err) {
 		proof, err = h.captureProof(r.Context())
 		if err == nil {
 			h.mu.Lock()
 			h.proof = cloneDynamicHeaders(proof)
 			h.mu.Unlock()
-			answer, err = h.deps.Signaling.CreateSession(r.Context(), proof, string(body))
+			answer, err = h.deps.Signaling.CreateSession(r.Context(), proof, string(body), h.configuredVoiceID())
 		}
 	}
 	if err != nil {

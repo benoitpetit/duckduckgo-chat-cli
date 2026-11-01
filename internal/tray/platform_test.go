@@ -229,23 +229,15 @@ func TestResolveTerminalExecutableUsesRunningImageWhenGoRunBinaryWasRemoved(t *t
 
 func TestTrayMenuContainsRequiredActions(t *testing.T) {
 	items := trayMenuItems()
-	want := map[string]Action{
-		"Open text chat":                    ActionOpenTextChat,
-		"Open voice chat / Show voice chat": ActionOpenOrShowVoice,
-		"Minimize voice to tray":            ActionMinimizeVoice,
-		"Configure shortcuts":               ActionConfigureShort,
-		"Quit DuckChat":                     ActionQuitService,
+	want := []trayMenuItem{
+		{Label: "Open text chat", Action: ActionOpenTextChat},
+		{Label: "Open dashboard", Action: ActionOpenDashboard},
+		{Label: "Open or show voice chat", Action: ActionOpenOrShowVoice},
+		{Label: "Configure shortcuts", Action: ActionConfigureShort},
+		{Label: "Quit DuckChat", Action: ActionQuitService},
 	}
-	for _, item := range items {
-		if action, ok := want[item.Label]; ok {
-			if action != item.Action {
-				t.Errorf("menu item %q dispatches %q, want %q", item.Label, item.Action, action)
-			}
-			delete(want, item.Label)
-		}
-	}
-	if len(want) != 0 {
-		t.Fatalf("tray menu is missing required actions: %#v", want)
+	if !reflect.DeepEqual(items, want) {
+		t.Fatalf("tray menu items = %#v, want %#v", items, want)
 	}
 }
 

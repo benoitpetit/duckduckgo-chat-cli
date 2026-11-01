@@ -70,6 +70,7 @@ func createEndpoint(path string, endpoint serviceEndpoint) error {
 }
 
 func readEndpoint(path string) (serviceEndpoint, error) {
+	// #nosec G304 -- callers derive this endpoint path from the per-user config directory.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return serviceEndpoint{}, err

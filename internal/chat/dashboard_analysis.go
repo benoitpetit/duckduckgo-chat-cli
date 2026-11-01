@@ -50,6 +50,14 @@ func NewDashboardAnalyzer(cfg *config.Config) *DashboardAnalyzer {
 	return &DashboardAnalyzer{config: isolated}
 }
 
+func duckAIAnalysisCookies() []*http.Cookie {
+	return []*http.Cookie{
+		{Name: "5", Value: "1", Domain: ".duck.ai", Secure: true},
+		{Name: "dcm", Value: "3", Domain: ".duck.ai", Secure: true},
+		{Name: "dcs", Value: "1", Domain: ".duck.ai", Secure: true},
+	}
+}
+
 func (a *DashboardAnalyzer) Analyze(ctx context.Context, model models.Model, prompt string) (string, error) {
 	resolved, ok := models.ResolveModel(string(model))
 	if !ok {
@@ -64,11 +72,7 @@ func (a *DashboardAnalyzer) Analyze(ctx context.Context, model models.Model, pro
 		return "", fmt.Errorf("could not create isolated Duck.ai session: %w", err)
 	}
 	duckAIURL, _ := url.Parse("https://duck.ai")
-	jar.SetCookies(duckAIURL, []*http.Cookie{
-		{Name: "5", Value: "1", Domain: ".duck.ai"},
-		{Name: "dcm", Value: "3", Domain: ".duck.ai"},
-		{Name: "dcs", Value: "1", Domain: ".duck.ai"},
-	})
+	jar.SetCookies(duckAIURL, duckAIAnalysisCookies())
 	cfg := a.config
 	isolatedChat := &Chat{
 		Model: model, Messages: []Message{}, Client: &http.Client{Jar: jar}, CookieJar: jar,

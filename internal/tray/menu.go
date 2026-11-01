@@ -8,8 +8,8 @@ type trayMenuItem struct {
 func trayMenuItems() []trayMenuItem {
 	return []trayMenuItem{
 		{Label: "Open text chat", Action: ActionOpenTextChat},
-		{Label: "Open voice chat / Show voice chat", Action: ActionOpenOrShowVoice},
-		{Label: "Minimize voice to tray", Action: ActionMinimizeVoice},
+		{Label: "Open dashboard", Action: ActionOpenDashboard},
+		{Label: "Open or show voice chat", Action: ActionOpenOrShowVoice},
 		{Label: "Configure shortcuts", Action: ActionConfigureShort},
 		{Label: "Quit DuckChat", Action: ActionQuitService},
 	}

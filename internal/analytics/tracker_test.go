@@ -3,12 +3,60 @@ package analytics
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fatih/color"
 )
+
+func TestSaveToFileUsesPrivateModes(t *testing.T) {
+	exportDir := filepath.Join(t.TempDir(), "new", "analytics")
+	tracker := NewChatAnalytics()
+	if err := tracker.SaveToFile(exportDir); err != nil {
+		t.Fatal(err)
+	}
+	directoryInfo, err := os.Stat(exportDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := directoryInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("analytics directory mode = %#o, want 0700", got)
+	}
+	entries, err := os.ReadDir(exportDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("analytics directory has %d entries, want 1", len(entries))
+	}
+	fileInfo, err := entries[0].Info()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("analytics file mode = %#o, want 0600", got)
+	}
+}
+
+func TestSaveToFilePreservesExistingExportDirectoryMode(t *testing.T) {
+	exportDir := filepath.Join(t.TempDir(), "shared-analytics")
+	if err := os.Mkdir(exportDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewChatAnalytics().SaveToFile(exportDir); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(exportDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o750 {
+		t.Fatalf("existing analytics directory mode = %#o, want unchanged 0750", got)
+	}
+}
 
 func TestRecordMessageEstimatesTokensByRole(t *testing.T) {
 	tracker := NewChatAnalytics()

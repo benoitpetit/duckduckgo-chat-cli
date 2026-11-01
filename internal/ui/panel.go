@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -11,8 +12,8 @@ import (
 	"golang.org/x/term"
 )
 
-// PanelMaxWidth is the maximum outer width used by framed panels.
-const PanelMaxWidth = 112
+// PanelMaxWidth is the default frame maximum retained for existing callers.
+const PanelMaxWidth = DefaultFrameMaxWidth
 
 var panelRecorder struct {
 	sync.RWMutex
@@ -92,13 +93,7 @@ func panelWidth() int {
 			width = columns
 		}
 	}
-	if width > PanelMaxWidth {
-		width = PanelMaxWidth
-	}
-	if width < 8 {
-		width = 8
-	}
-	return width
+	return ResolveFrameWidth(width)
 }
 
 // PanelContentWidth returns the number of columns available inside a panel at
@@ -110,20 +105,24 @@ func PanelContentWidth() int {
 // PrintStyledPanelAtWidth draws a panel at a specified width without
 // recording it. Conversation redraws use it to reflow retained panels.
 func PrintStyledPanelAtWidth(title string, lines []PanelLine, width int) {
-	if width > PanelMaxWidth {
-		width = PanelMaxWidth
-	}
+	width = ResolveFrameWidth(width)
 	if width < 8 {
-		width = 8
+		printPlainPanelText(sanitizePanelLine(title), width)
+		for _, spans := range lines {
+			var rendered strings.Builder
+			for _, span := range spans {
+				if text := sanitizePanelLine(span.Text); text != "" {
+					rendered.WriteString(text)
+				}
+			}
+			printPlainPanelText(rendered.String(), width)
+		}
+		return
 	}
 
-	ascii := os.Getenv("TERM") == "dumb"
-	topLeft, horizontal, topRight := "╭", "─", "╮"
-	vertical, bottomLeft, bottomRight := "│", "╰", "╯"
-	if ascii {
-		topLeft, horizontal, topRight = "+", "-", "+"
-		vertical, bottomLeft, bottomRight = "|", "+", "+"
-	}
+	glyphs := ResolveFrameGlyphs(os.Getenv("TERM") == "dumb")
+	topLeft, horizontal, topRight := glyphs.TopLeft, glyphs.Horizontal, glyphs.TopRight
+	vertical, bottomLeft, bottomRight := glyphs.Vertical, glyphs.BottomLeft, glyphs.BottomRight
 	contentWidth := width - 4
 	cleanTitle := sanitizePanelLine(title)
 	maxTitleWidth := max(1, width-6)
@@ -154,6 +153,16 @@ func PrintStyledPanelAtWidth(title string, lines []PanelLine, width int) {
 		}
 	}
 	MutedColor.Printf("%s%s%s\n", bottomLeft, strings.Repeat(horizontal, width-2), bottomRight)
+}
+
+func printPlainPanelText(text string, width int) {
+	if text == "" {
+		fmt.Println()
+		return
+	}
+	for _, line := range strings.Split(ansi.Hardwrap(text, max(1, width), true), "\n") {
+		fmt.Println(line)
+	}
 }
 
 func panelOutputFile() *os.File {

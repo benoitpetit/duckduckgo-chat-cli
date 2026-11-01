@@ -34,6 +34,9 @@ func runTrayLoop(ctx context.Context, configured config.TrayConfig, dispatch Tra
 	statusItem := menu.Add("Global shortcuts: starting…", nil)
 	menu.AddSeparator()
 	for _, item := range trayMenuItems() {
+		if item.Action == ActionConfigureShort {
+			menu.AddSeparator()
+		}
 		item := item
 		menu.Add(item.Label, func() {
 			if dispatch == nil {

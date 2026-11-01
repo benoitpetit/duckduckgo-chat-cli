@@ -49,8 +49,8 @@ Type `/help` in the CLI for the current command list.
 | `/clear` | Save the current conversation and start a fresh chat session |
 | `/config` | Change the model, appearance, shortcuts, and other settings |
 | `/coordinate [cancel|runs|show <run_id>]` | Coordinate models and browse saved reports |
-| `/context` | Show retained source counts, approximate sizes, and optimization state |
-| `/sources` | Show references supplied with the latest exchange |
+| `/context [pin|unpin|pins|compact]` | Inspect context, pin items, or compact the transcript |
+| `/sources [compare|audit|save|load|list|delete]` | Compare, audit, and reuse source references |
 | `/copy` | Copy a response or code block |
 | `/dashboard <on\|off\|open\|status>` | Control or open the local dashboard |
 | `/exit` | Close the interactive CLI |
@@ -58,10 +58,13 @@ Type `/help` in the CLI for the current command list.
 | `/file <path> [-- prompt]` | Add a file to chat context or ask about it directly |
 | `/history` | Search and browse saved conversations |
 | `/sessions [query]` | Find, organize, restore, or delete saved sessions |
+| `/branch [name]` | Create a branch from the active conversation |
+| `/retry [instruction]` | Regenerate and replace the last chat answer |
+| `/notes [show|add <text>|clear]` | Manage local notes for this session |
 | `/image [idea]` | Generate an image, with an optional guided prompt flow |
 | `/issue` | Fill in a report and open a prefilled GitHub issue |
 | `/library [command] [args] [-- prompt]` | Manage local file libraries and use their content |
-| `/load [session_id]` | Restore a saved conversation |
+| `/load [session_id [--full]]` | Restore a saved conversation, optionally with its full transcript |
 | `/model [model_name]` | Choose or change the model |
 | `/prompt [command]` | Add, edit, list, load, or remove saved prompts |
 | `/search <query> [-- prompt]` | Search the web and use results as chat context |
@@ -72,7 +75,13 @@ Type `/help` in the CLI for the current command list.
 | `/version` | Show version and system information |
 | `/api [port]` | Start or stop the local HTTP API |
 
-`/context` groups retained sources by type and shows whether optimization compressed, truncated, or omitted any content. `/sources` lists the references that remain in the request context for the latest exchange. Token counts are approximate, estimated as one token per four source bytes. When source metadata exists, the prompt includes numbered labels such as `[1] source-1 · file · notes.md`; these identify supplied context and are not verified citations. Labels and default panels use short local file names and do not reveal local paths. Markdown conversation exports include source URIs, which can contain full local paths.
+`/context` reports measured conversation text and image bytes separately, lists source-size metadata, and marks compressed, truncated, omitted, or pinned items. Approximate token figures use about four text bytes per token; image model-token cost is unknown. Pin a transcript message by its current 1-based number or a source by its ID, for example `/context pin 3` or `/context pin source-2`. Use `/context pins` to review pins and `/context unpin <selector>` to remove one. Pinned items are preserved by automatic optimization even if their combined size exceeds the configured text budget.
+
+`/context compact [objective]` asks the active model for a restart summary, displays it, and asks before applying it. Accepting saves the full transcript as the parent session and starts a compacted child session. The summary may omit details and source bodies. Load the parent with `/load <parent_session_id> --full` to restore the original transcript; plain `/load <parent_session_id>` may restore its storage-optimized copy when one exists.
+
+`/sources` lists source references retained in the conversation. `/sources compare source-1 source-2` compares two explicitly selected sources; it refuses the comparison and reports the source if an excerpt cannot be isolated unambiguously. `/sources audit` asks the active model to classify claims in its last answer as supported, contradicted, or unconfirmed using available conversation context. Audits are not independent verification. `/sources save <name>` and `/sources load <name>` save or reload references to local files and URLs; use `/sources list` and `/sources delete <name>` to manage saved sets. Reloading is explicit and reports unavailable resources. Source bundles contain references rather than cached copies. Source labels are provenance hints, not verified citations. Default panels hide full local paths; Markdown conversation exports include source URIs and can contain local paths.
+
+`/branch [name]` saves the active conversation and switches to a child session. The original remains independently available. `/sessions` also offers a Branch action for a saved session. `/retry [instruction]` retries the last completed chat exchange with the currently selected model and replaces its answer only after a successful response. A retry instruction is added to the retained user turn. `/notes add <text>`, `/notes show`, and `/notes clear` manage local notes attached to the session; notes are not sent to the model unless you include them in a prompt. Notes are included in an explicit Markdown conversation export.
 
 ### Manage saved sessions
 
@@ -157,7 +166,7 @@ Open `/config` to change settings. Changes are saved as you make them. The menu 
 
 Choose **Reset all settings to defaults** at the bottom of the menu to replace the complete configuration file with built-in defaults. The confirmation defaults to **No** and requires typing `RESET`. This clears the API key, dashboard password, saved prompts, coordinate presets, and terms acceptance; it also stops active API/dashboard services. The default 90-day retention is reapplied immediately, so older saved conversations and dashboard history may be removed. Exported files are not deleted, and the terms prompt appears again on the next launch.
 
-Appearance options include the `official`, `retro`, `mono`, `dracula`, and `nord` themes, plus framed model responses. You can also set the default model, export folder, global prompt, saved prompts, search behavior, library folders, tray shortcuts, voice window size, dashboard, and API options.
+Appearance options include the `official`, `retro`, `mono`, `dracula`, and `nord` themes, plus framed model responses. Choose **Full terminal** or a maximum frame width of 80, 96, 112, 128, 144, or 160 columns, then choose **Single** or **Heavy** border lines. Frames use the available terminal width up to the selected maximum; the default is a 112-column maximum with single lines. The settings apply to responses, panels, `/help`, and framed menus. Dumb terminals keep ASCII borders. You can also set the default model, export folder, global prompt, saved prompts, search behavior, library folders, tray shortcuts, voice and playback options, dashboard, and API options.
 
 ## Search, files, and images
 
@@ -187,11 +196,11 @@ Pass an idea directly to skip the guided choices and review the generated prompt
 
 ## Voice chat and shortcuts
 
-Run `/speak` to open or restore a compact Chrome or Chromium window. Select **Start** and allow microphone access. **Mute** toggles the microphone. **End** finishes the current call and leaves the retry screen open. **Close** closes the voice window. **Minimize** hides it in the tray while the session continues.
+Run `/speak` to open or restore a compact Chrome or Chromium window. By default, the call starts automatically; allow microphone access when Chromium asks. If you turn off **Auto-start calls**, select **Start** instead. **Mute** toggles the microphone. **End** finishes the current call and leaves the retry screen open. **Close** closes the voice window. **Minimize** hides it in the tray while the session continues.
 
-The voice window displays user and assistant subtitles. Voice audio and transcripts are not added to the CLI's saved text conversations. Change the window size in `/config` under **Audio Agent Speak**.
+The voice window displays user and assistant subtitles. Voice audio and transcripts are not added to the CLI's saved text conversations. Under `/config` → **Audio Agent Speak**, choose the Duck.ai voice, window size, start muted, subtitle visibility, output volume, connection sound, and auto-start behavior.
 
-After an interactive launch, DuckChat can keep a background service in the system tray. Use its menu to open a text chat, restore voice chat, edit shortcuts, or quit the service. The defaults are `Ctrl+Alt+T` for text and `Ctrl+Alt+V` for voice. Change them in `/config` or from the tray menu. Shortcuts depend on the desktop and may require operating-system permissions.
+After an interactive launch, DuckChat can keep a background service in the system tray. Use its menu to open a text chat, restore voice chat, edit shortcuts, or quit the service. The defaults are `Ctrl+Alt+D` for text and `Ctrl+Alt+V` for voice. Change them in `/config` or from the tray menu. Shortcuts depend on the desktop and may require operating-system permissions.
 
 One-shot prompts and `--help` or `--version` do not start the tray service. Choose **Quit DuckChat** in the tray menu to stop the background service.
 

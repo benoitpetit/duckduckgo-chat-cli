@@ -88,7 +88,9 @@ func (opener ChromiumOpener) Open(ctx context.Context, address string) (BrowserS
 		cancelBrowser:   cancelBrowser,
 		cancelAllocator: cancelAllocator,
 	}
-	startupCtx, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
+	// Keep the chromedp context values: CallBrowser rejects contexts that did
+	// not come from chromedp.NewContext with ErrInvalidContext.
+	startupCtx, cancelStartup := context.WithTimeout(browserCtx, 30*time.Second)
 	stopOnStartupCancel := context.AfterFunc(startupCtx, cancelBrowser)
 	err = chromedp.Do(browserCtx)
 	if err == nil {
@@ -96,13 +98,21 @@ func (opener ChromiumOpener) Open(ctx context.Context, address string) (BrowserS
 		if chromedpContext == nil || chromedpContext.Browser == nil {
 			err = fmt.Errorf("Chromium did not start a browser connection")
 		} else {
-			// Grant microphone access only to the ephemeral loopback origin used by
-			// this Speak window, before loading its auto-starting page.
-			_, err = chromedp.CallBrowser(startupCtx, cdpbrowser.SetPermission, cdpbrowser.SetPermissionParams{
-				Permission: &cdpbrowser.PermissionDescriptor{Name: "microphone"},
-				Setting:    cdpbrowser.PermissionSettingGranted,
-				Origin:     origin,
-			})
+			// Size the mapped popup before loading its interface. Chromium's
+			// startup size is sufficient outside Hyprland; Hyprland needs its own
+			// dispatcher so the floating-window rule keeps the configured size.
+			if handled, sizeErr := resizeHyprlandVoiceWindow(startupCtx, width, height); handled {
+				err = sizeErr
+			}
+			if err == nil {
+				// Grant microphone access only to the ephemeral loopback origin used
+				// by this Speak window, before loading its auto-starting page.
+				_, err = chromedp.CallBrowser(startupCtx, cdpbrowser.SetPermission, cdpbrowser.SetPermissionParams{
+					Permission: &cdpbrowser.PermissionDescriptor{Name: "microphone"},
+					Setting:    cdpbrowser.PermissionSettingGranted,
+					Origin:     origin,
+				})
+			}
 		}
 	}
 	if err == nil {
@@ -127,10 +137,6 @@ func (opener ChromiumOpener) Open(ctx context.Context, address string) (BrowserS
 		_ = session.Close()
 		return nil, fmt.Errorf("Chromium did not start a browser connection")
 	}
-	if err := setChromiumWindowSize(browserCtx, chromedpContext, width, height); err != nil {
-		_ = session.Close()
-		return nil, fmt.Errorf("could not size the Duck.ai voice window: %w", err)
-	}
 	session.browserLost = browser.LostConnection
 	session.done = monitorChromiumDone(browserCtx, session.browserLost)
 	return session, nil
@@ -144,21 +150,36 @@ func loopbackVoiceOrigin(address string) (string, error) {
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
+func applyChromiumWindowSize(ctx context.Context, browserContext *chromedp.Context, width, height int) error {
+	if handled, err := resizeHyprlandVoiceWindow(ctx, width, height); handled || err != nil {
+		return err
+	}
+	return setChromiumWindowSize(ctx, browserContext, width, height)
+}
+
 func setChromiumWindowSize(ctx context.Context, browserContext *chromedp.Context, width, height int) error {
 	if browserContext.Target == nil {
 		return fmt.Errorf("Chromium did not create a voice window target")
 	}
 	res, err := chromedp.CallBrowser(ctx, cdpbrowser.GetWindowForTarget, cdpbrowser.GetWindowForTargetParams{TargetID: browserContext.Target.TargetID})
-	windowID := res.WindowID
 	if err != nil {
 		return err
 	}
+	if res.Bounds == nil || res.Bounds.WindowState != cdpbrowser.WindowStateNormal {
+		// Restore only when Chromium reports a non-normal state, so Hyprland's
+		// floating popup rules remain in control for an already-normal window.
+		if _, err := chromedp.CallBrowser(ctx, cdpbrowser.SetWindowBounds, cdpbrowser.SetWindowBoundsParams{
+			WindowID: res.WindowID,
+			Bounds:   &cdpbrowser.Bounds{WindowState: cdpbrowser.WindowStateNormal},
+		}); err != nil {
+			return err
+		}
+	}
 	_, err = chromedp.CallBrowser(ctx, cdpbrowser.SetWindowBounds, cdpbrowser.SetWindowBoundsParams{
-		WindowID: windowID,
+		WindowID: res.WindowID,
 		Bounds: &cdpbrowser.Bounds{
-			Width:       int64(width),
-			Height:      int64(height),
-			WindowState: cdpbrowser.WindowStateNormal,
+			Width:  int64(width),
+			Height: int64(height),
 		},
 	})
 	return err
@@ -172,6 +193,38 @@ func (s *chromiumSession) RestoreWindow() error {
 	return s.setWindowState(cdpbrowser.WindowStateNormal)
 }
 
+func (s *chromiumSession) ResizeWindow(width, height int) error {
+	if width < 320 || width > 1400 || height < 360 || height > 1400 {
+		return fmt.Errorf("voice window size is out of range")
+	}
+	if s.ctx.Err() != nil {
+		return fmt.Errorf("voice browser is no longer running")
+	}
+	chromedpContext := chromedp.FromContext(s.ctx)
+	if chromedpContext == nil || chromedpContext.Browser == nil || chromedpContext.Target == nil {
+		return fmt.Errorf("voice browser window is not available")
+	}
+	requestCtx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+	window, err := chromedp.CallBrowser(requestCtx, cdpbrowser.GetWindowForTarget, cdpbrowser.GetWindowForTargetParams{TargetID: chromedpContext.Target.TargetID})
+	if err != nil {
+		return err
+	}
+	if window.Bounds != nil && window.Bounds.WindowState == cdpbrowser.WindowStateMinimized {
+		// Keep the current visibility state. RestoreWindow applies these saved
+		// dimensions when the user brings the window back.
+		s.windowWidth = width
+		s.windowHeight = height
+		return nil
+	}
+	if err := applyChromiumWindowSize(requestCtx, chromedpContext, width, height); err != nil {
+		return err
+	}
+	s.windowWidth = width
+	s.windowHeight = height
+	return nil
+}
+
 func (s *chromiumSession) setWindowState(state cdpbrowser.WindowState) error {
 	if s.ctx.Err() != nil {
 		return fmt.Errorf("voice browser is no longer running")
@@ -182,16 +235,15 @@ func (s *chromiumSession) setWindowState(state cdpbrowser.WindowState) error {
 	}
 	requestCtx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
 	defer cancel()
+	if state == cdpbrowser.WindowStateNormal {
+		return applyChromiumWindowSize(requestCtx, chromedpContext, s.windowWidth, s.windowHeight)
+	}
 	res, err := chromedp.CallBrowser(requestCtx, cdpbrowser.GetWindowForTarget, cdpbrowser.GetWindowForTargetParams{TargetID: chromedpContext.Target.TargetID})
-	windowID := res.WindowID
 	if err != nil {
 		return err
 	}
+	windowID := res.WindowID
 	bounds := &cdpbrowser.Bounds{WindowState: state}
-	if state == cdpbrowser.WindowStateNormal {
-		bounds.Width = int64(s.windowWidth)
-		bounds.Height = int64(s.windowHeight)
-	}
 	_, err = chromedp.CallBrowser(requestCtx, cdpbrowser.SetWindowBounds, cdpbrowser.SetWindowBoundsParams{
 		WindowID: windowID,
 		Bounds:   bounds,

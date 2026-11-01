@@ -398,8 +398,12 @@ func TestPendingSourcesRestoreAfterFailedInputAndConsumeOnSuccessfulTurn(t *test
 	if len(c.PendingSources) != 0 {
 		t.Fatalf("successful turn left pending sources: %+v", c.PendingSources)
 	}
-	if len(c.Messages) != 2 || len(c.Messages[0].Sources) != 1 || c.Messages[0].Sources[0] != source || len(c.Messages[1].Sources) != 0 {
+	if len(c.Messages) != 2 || len(c.Messages[0].Sources) != 1 || len(c.Messages[1].Sources) != 0 {
 		t.Fatalf("committed messages = %+v, want source on user turn only", c.Messages)
+	}
+	committedSource := c.Messages[0].Sources[0]
+	if committedSource.ID != source.ID || committedSource.Kind != source.Kind || committedSource.Name != source.Name || committedSource.URI != source.URI || committedSource.SizeBytes != source.SizeBytes || committedSource.State != source.State || committedSource.ExchangeID == "" {
+		t.Fatalf("committed source = %+v, want original metadata with an exchange ID", committedSource)
 	}
 }
 

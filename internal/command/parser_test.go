@@ -178,20 +178,31 @@ func TestImageCommandRegistrationAndValidation(t *testing.T) {
 
 func TestContextInspectorCommandsRegisterAndParse(t *testing.T) {
 	registry := GetCommandRegistry()
-	for _, name := range []string{"/context", "/sources"} {
+	for name, usage := range map[string]string{
+		"/context": "/context [pin|unpin|pins|compact]",
+		"/sources": "/sources [compare|audit|save|load|list|delete]",
+	} {
 		info, ok := registry.Commands[name]
 		if !ok {
 			t.Fatalf("%s is missing from the command registry", name)
 		}
-		if info.Category != "context" || info.Usage != name || info.RequiresArgs || info.IsChainable {
-			t.Errorf("%s metadata = %+v, want a read-only, no-argument context command", name, info)
+		if info.Category != "context" || info.Usage != usage || info.RequiresArgs || info.IsChainable {
+			t.Errorf("%s metadata = %+v, want context category, usage %q, and a non-chainable optional-argument command", name, info, usage)
 		}
-		parsed, err := Parse(name)
-		if err != nil {
-			t.Fatalf("Parse(%s): %v", name, err)
+		examples := []string{name}
+		if name == "/context" {
+			examples = append(examples, "/context pin 2", "/context compact")
+		} else {
+			examples = append(examples, "/sources audit", "/sources save references", "/sources compare source-1 source-2")
 		}
-		if err := ValidateCommand(parsed.Commands[0]); err != nil {
-			t.Errorf("ValidateCommand(%s): %v", name, err)
+		for _, input := range examples {
+			parsed, err := Parse(input)
+			if err != nil {
+				t.Fatalf("Parse(%s): %v", input, err)
+			}
+			if err := ValidateCommand(parsed.Commands[0]); err != nil {
+				t.Errorf("ValidateCommand(%s): %v", input, err)
+			}
 		}
 	}
 }

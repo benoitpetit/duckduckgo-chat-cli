@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,19 +125,16 @@ func (s *HistoryStore) writeLocked(entries []analytics.Snapshot) error {
 		}
 	}()
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	encoder := json.NewEncoder(tmp)
 	for _, entry := range entries {
 		if err := encoder.Encode(entry); err != nil {
-			tmp.Close()
-			return fmt.Errorf("encode dashboard history: %w", err)
+			return fmt.Errorf("encode dashboard history: %w", errors.Join(err, tmp.Close()))
 		}
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync dashboard history: %w", err)
+		return fmt.Errorf("sync dashboard history: %w", errors.Join(err, tmp.Close()))
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close dashboard history: %w", err)

@@ -66,11 +66,22 @@ func startPortalShortcuts(ctx context.Context, text, voice shortcut.Shortcut, di
 				if !event.Pressed || dispatch == nil {
 					continue
 				}
+				var response Response
+				dispatched := true
 				switch event.ID {
 				case "text-chat":
-					dispatch(ActionOpenTextChat)
+					response = dispatch(ActionOpenTextChat)
 				case "voice-chat":
-					dispatch(ActionOpenOrShowVoice)
+					response = dispatch(ActionOpenOrShowVoice)
+				default:
+					dispatched = false
+				}
+				if dispatched && updateStatus != nil {
+					if response.Error != "" {
+						updateStatus("Shortcut action failed: " + response.Error)
+					} else if response.Message != "" {
+						updateStatus(response.Message)
+					}
 				}
 			}
 		}
@@ -94,6 +105,7 @@ func ensureDesktopEntry(executable string) error {
 		dataHome = filepath.Join(home, ".local", "share")
 	}
 	applications := filepath.Join(dataHome, "applications")
+	// #nosec G301 -- the per-user desktop applications directory must remain readable by desktop discovery.
 	if err := os.MkdirAll(applications, 0o755); err != nil {
 		return fmt.Errorf("create Wayland app identity directory: %w", err)
 	}
@@ -108,6 +120,7 @@ func ensureDesktopEntry(executable string) error {
 		"",
 	}, "\n")
 	path := filepath.Join(applications, desktopApplicationID+".desktop")
+	// #nosec G306 -- desktop entries must be readable by the desktop shell.
 	if err := os.WriteFile(path, []byte(entry), 0o644); err != nil {
 		return fmt.Errorf("write Wayland app identity: %w", err)
 	}

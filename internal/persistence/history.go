@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/intelligence"
+	"duckduckgo-chat-cli/internal/media"
 	"duckduckgo-chat-cli/internal/ui"
 )
 
@@ -23,19 +25,25 @@ const SessionFormatVersion = "1.1"
 
 // ConversationSession represents a complete chat session
 type ConversationSession struct {
-	ID                string                 `json:"id"`
-	StartTime         time.Time              `json:"start_time"`
-	EndTime           time.Time              `json:"end_time"`
-	Model             string                 `json:"model"`
-	Messages          []intelligence.Message `json:"messages"`
-	OptimizedMessages []intelligence.Message `json:"optimized_messages,omitempty"`
-	Analytics         SessionAnalytics       `json:"analytics"`
-	Title             string                 `json:"title,omitempty"`
-	Tags              []string               `json:"tags"`
-	Favorite          bool                   `json:"favorite,omitempty"`
-	CoordinateReports []CoordinateReport     `json:"coordinate_reports,omitempty"`
-	Compressed        bool                   `json:"compressed"`
-	Version           string                 `json:"version"`
+	ID                string                  `json:"id"`
+	StartTime         time.Time               `json:"start_time"`
+	EndTime           time.Time               `json:"end_time"`
+	Model             string                  `json:"model"`
+	Messages          []intelligence.Message  `json:"messages"`
+	OptimizedMessages []intelligence.Message  `json:"optimized_messages,omitempty"`
+	PendingSources    []chatcontext.SourceRef `json:"pending_sources,omitempty"`
+	PendingImages     []media.ImageAttachment `json:"pending_images,omitempty"`
+	Analytics         SessionAnalytics        `json:"analytics"`
+	Title             string                  `json:"title,omitempty"`
+	Tags              []string                `json:"tags"`
+	Favorite          bool                    `json:"favorite,omitempty"`
+	ParentSessionID   string                  `json:"parent_session_id,omitempty"`
+	BranchName        string                  `json:"branch_name,omitempty"`
+	Notes             []string                `json:"notes,omitempty"`
+	Compacted         bool                    `json:"compacted,omitempty"`
+	CoordinateReports []CoordinateReport      `json:"coordinate_reports,omitempty"`
+	Compressed        bool                    `json:"compressed"`
+	Version           string                  `json:"version"`
 }
 
 // SessionAnalytics stores session-specific analytics
@@ -217,6 +225,19 @@ func (hm *HistoryManager) DeleteSession(sessionID string) error {
 		filepath.Join(hm.StorageDir, fmt.Sprintf("session_%s.json.gz", sessionID)),
 		filepath.Join(hm.StorageDir, fmt.Sprintf("session_%s.json", sessionID)),
 	}
+	archiveExists := false
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if err == nil && !info.IsDir() {
+			archiveExists = true
+			break
+		}
+	}
+	if archiveExists {
+		if err := hm.detachChildSessions(sessionID); err != nil {
+			return fmt.Errorf("could not preserve child sessions before deletion: %w", err)
+		}
+	}
 	removed := false
 	var removeErrors []error
 	for _, path := range paths {
@@ -243,6 +264,34 @@ func (hm *HistoryManager) DeleteSession(sessionID string) error {
 	}
 	if !removed {
 		return fmt.Errorf("session %s not found: %w", sessionID, os.ErrNotExist)
+	}
+	return nil
+}
+
+// detachChildSessions turns direct branches into independent sessions before
+// their parent is removed, so a delete never leaves a broken lineage link.
+func (hm *HistoryManager) detachChildSessions(parentID string) error {
+	sessions, err := hm.ListSessionSummaries()
+	if err != nil {
+		return err
+	}
+	for _, summary := range sessions {
+		if summary.ParentSessionID != parentID {
+			continue
+		}
+		child, err := hm.LoadSession(summary.ID)
+		if err != nil {
+			return fmt.Errorf("load child session %s: %w", summary.ID, err)
+		}
+		child.ParentSessionID = ""
+		child.BranchName = ""
+		legacyPath := filepath.Join(hm.StorageDir, fmt.Sprintf("session_%s.json", child.ID))
+		if err := hm.saveCompressed(child, legacyPath); err != nil {
+			return fmt.Errorf("save detached child session %s: %w", child.ID, err)
+		}
+		if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove legacy child session %s: %w", child.ID, err)
+		}
 	}
 	return nil
 }
@@ -393,19 +442,22 @@ func (hm *HistoryManager) GetSessionSummary(sessionID string) (*SessionSummary, 
 	}
 
 	summary := &SessionSummary{
-		ID:            session.ID,
-		Title:         session.Title,
-		Tags:          append([]string{}, session.Tags...),
-		Favorite:      session.Favorite,
-		StartTime:     session.StartTime,
-		EndTime:       session.EndTime,
-		Duration:      session.Analytics.SessionDuration,
-		MessageCount:  session.Analytics.MessageCount,
-		Model:         session.Model,
-		ResumeCommand: "",
-		FirstMessage:  "",
-		LastMessage:   "",
-		KeyTopics:     []string{},
+		ID:              session.ID,
+		Title:           session.Title,
+		Tags:            append([]string{}, session.Tags...),
+		Favorite:        session.Favorite,
+		ParentSessionID: session.ParentSessionID,
+		BranchName:      session.BranchName,
+		Compacted:       session.Compacted,
+		StartTime:       session.StartTime,
+		EndTime:         session.EndTime,
+		Duration:        session.Analytics.SessionDuration,
+		MessageCount:    session.Analytics.MessageCount,
+		Model:           session.Model,
+		ResumeCommand:   "",
+		FirstMessage:    "",
+		LastMessage:     "",
+		KeyTopics:       []string{},
 	}
 	if resumeSessionIDPattern.MatchString(session.ID) {
 		summary.ResumeCommand = "/load " + session.ID
@@ -460,6 +512,7 @@ func (hm *HistoryManager) ListSessionSummaries() ([]SessionSummary, error) {
 			Duration: session.Analytics.SessionDuration, MessageCount: session.Analytics.MessageCount,
 			Model: session.Model, KeyTopics: []string{}, Title: session.Title,
 			Tags: append([]string{}, session.Tags...), Favorite: session.Favorite,
+			ParentSessionID: session.ParentSessionID, BranchName: session.BranchName, Compacted: session.Compacted,
 		}
 		for _, message := range session.Messages {
 			if message.Role == "user" {
@@ -554,29 +607,23 @@ func (hm *HistoryManager) saveCompressed(session *ConversationSession, filePath 
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 
 	gzWriter, err := gzip.NewWriterLevel(tmp, hm.CompressionLevel)
 	if err != nil {
-		tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	encoder := json.NewEncoder(gzWriter)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(session); err != nil {
-		gzWriter.Close()
-		tmp.Close()
-		return err
+		return errors.Join(err, gzWriter.Close(), tmp.Close())
 	}
 	if err := gzWriter.Close(); err != nil {
-		tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -585,6 +632,7 @@ func (hm *HistoryManager) saveCompressed(session *ConversationSession, filePath 
 }
 
 func (hm *HistoryManager) loadCompressed(filePath string) (*ConversationSession, error) {
+	// #nosec G304 -- callers validate the session ID before joining it under StorageDir.
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -612,6 +660,7 @@ func (hm *HistoryManager) loadCompressed(filePath string) (*ConversationSession,
 }
 
 func (hm *HistoryManager) loadUncompressed(filePath string) (*ConversationSession, error) {
+	// #nosec G304 -- callers validate the session ID before joining it under StorageDir.
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -646,6 +695,18 @@ func (hm *HistoryManager) cleanupOldSessions() error {
 
 	now := time.Now()
 	removed := 0
+	processed := make(map[string]struct{})
+	var cleanupErrors []error
+	cleanupOne := func(sessionID, ageDescription string) {
+		processed[sessionID] = struct{}{}
+		if err := hm.cleanupSessionFiles(sessionID); err != nil {
+			wrapped := fmt.Errorf("retain %s session %s after cleanup failed: %w", ageDescription, sessionID, err)
+			ui.Warningln("Retained %s session %s because cleanup failed: %v", ageDescription, sessionID, err)
+			cleanupErrors = append(cleanupErrors, wrapped)
+			return
+		}
+		removed++
+	}
 
 	// Remove sessions older than retention period
 	for _, session := range sessions {
@@ -653,12 +714,7 @@ func (hm *HistoryManager) cleanupOldSessions() error {
 			continue
 		}
 		if now.Sub(session.StartTime) > time.Duration(retentionDays)*24*time.Hour {
-			filename := fmt.Sprintf("session_%s.json", session.ID)
-			gzFilename := fmt.Sprintf("session_%s.json.gz", session.ID)
-
-			os.Remove(filepath.Join(hm.StorageDir, filename))
-			os.Remove(filepath.Join(hm.StorageDir, gzFilename))
-			removed++
+			cleanupOne(session.ID, "expired")
 		}
 	}
 
@@ -669,19 +725,106 @@ func (hm *HistoryManager) cleanupOldSessions() error {
 			if !storageSessionIDPattern.MatchString(session.ID) {
 				continue
 			}
-			filename := fmt.Sprintf("session_%s.json", session.ID)
-			gzFilename := fmt.Sprintf("session_%s.json.gz", session.ID)
-
-			os.Remove(filepath.Join(hm.StorageDir, filename))
-			os.Remove(filepath.Join(hm.StorageDir, gzFilename))
-			removed++
+			if _, done := processed[session.ID]; done {
+				continue
+			}
+			cleanupOne(session.ID, "excess")
 		}
 	}
 
 	if removed > 0 {
 		ui.AIln("Cleaned up %d old sessions", removed)
 	}
+	return errors.Join(cleanupErrors...)
+}
+
+func (hm *HistoryManager) cleanupSessionFiles(sessionID string) error {
+	paths := []string{
+		filepath.Join(hm.StorageDir, fmt.Sprintf("session_%s.json", sessionID)),
+		filepath.Join(hm.StorageDir, fmt.Sprintf("session_%s.json.gz", sessionID)),
+	}
+	if err := validateSessionArchivePaths(paths); err != nil {
+		return err
+	}
+	children, err := hm.childSessions(sessionID)
+	if err != nil {
+		return fmt.Errorf("snapshot child branches: %w", err)
+	}
+	if err := hm.detachChildSessions(sessionID); err != nil {
+		return errors.Join(fmt.Errorf("detach child branches: %w", err), hm.restoreChildSessions(children))
+	}
+	if err := removeSessionArchivePaths(paths); err != nil {
+		restoreErr := hm.restoreChildSessions(children)
+		return errors.Join(fmt.Errorf("remove session archives: %w", err), restoreErr)
+	}
 	return nil
+}
+
+func validateSessionArchivePaths(paths []string) error {
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", filepath.Base(path), err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("inspect %s: expected a regular archive file", filepath.Base(path))
+		}
+	}
+	return nil
+}
+
+func removeSessionArchivePaths(paths []string) error {
+	removed := false
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("remove %s: %w", filepath.Base(path), err)
+		}
+		removed = true
+	}
+	if !removed {
+		return fmt.Errorf("session archives not found")
+	}
+	return nil
+}
+
+func (hm *HistoryManager) childSessions(parentID string) ([]*ConversationSession, error) {
+	summaries, err := hm.ListSessionSummaries()
+	if err != nil {
+		return nil, err
+	}
+	children := make([]*ConversationSession, 0)
+	for _, summary := range summaries {
+		if summary.ParentSessionID != parentID {
+			continue
+		}
+		child, err := hm.LoadSession(summary.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load child session %s: %w", summary.ID, err)
+		}
+		children = append(children, child)
+	}
+	return children, nil
+}
+
+func (hm *HistoryManager) restoreChildSessions(children []*ConversationSession) error {
+	var restoreErrors []error
+	for _, child := range children {
+		legacyPath := filepath.Join(hm.StorageDir, fmt.Sprintf("session_%s.json", child.ID))
+		if err := hm.saveCompressed(child, legacyPath); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("restore child session %s: %w", child.ID, err))
+			continue
+		}
+		if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			restoreErrors = append(restoreErrors, fmt.Errorf("remove restored child legacy archive %s: %w", child.ID, err))
+		}
+	}
+	return errors.Join(restoreErrors...)
 }
 
 func (hm *HistoryManager) extractKeyTopics(messages []intelligence.Message) []string {
@@ -743,19 +886,22 @@ func truncateMessage(message string, maxLength int) string {
 // Supporting types
 
 type SessionSummary struct {
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
-	Tags          []string      `json:"tags"`
-	Favorite      bool          `json:"favorite"`
-	StartTime     time.Time     `json:"start_time"`
-	EndTime       time.Time     `json:"end_time"`
-	Duration      time.Duration `json:"duration"`
-	MessageCount  int           `json:"message_count"`
-	Model         string        `json:"model"`
-	ResumeCommand string        `json:"resume_command"`
-	FirstMessage  string        `json:"first_message"`
-	LastMessage   string        `json:"last_message"`
-	KeyTopics     []string      `json:"key_topics"`
+	ID              string        `json:"id"`
+	Title           string        `json:"title"`
+	Tags            []string      `json:"tags"`
+	Favorite        bool          `json:"favorite"`
+	ParentSessionID string        `json:"parent_session_id,omitempty"`
+	BranchName      string        `json:"branch_name,omitempty"`
+	Compacted       bool          `json:"compacted,omitempty"`
+	StartTime       time.Time     `json:"start_time"`
+	EndTime         time.Time     `json:"end_time"`
+	Duration        time.Duration `json:"duration"`
+	MessageCount    int           `json:"message_count"`
+	Model           string        `json:"model"`
+	ResumeCommand   string        `json:"resume_command"`
+	FirstMessage    string        `json:"first_message"`
+	LastMessage     string        `json:"last_message"`
+	KeyTopics       []string      `json:"key_topics"`
 }
 
 type StorageStats struct {

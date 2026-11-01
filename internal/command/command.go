@@ -82,16 +82,28 @@ func GetCommandRegistry() *CommandRegistry {
 				Usage:       "/sessions [query]",
 				Category:    "core",
 			},
+			"/branch": {
+				Name: "/branch", Description: "Create a reversible branch of the active conversation",
+				Usage: "/branch [name]", Category: "core",
+			},
+			"/retry": {
+				Name: "/retry", Description: "Regenerate the last chat answer, optionally with a new instruction",
+				Usage: "/retry [instruction]", Category: "core",
+			},
+			"/notes": {
+				Name: "/notes", Description: "Manage local notes attached to this session",
+				Usage: "/notes [show|add <text>|clear]", Category: "core",
+			},
 			"/context": {
 				Name:        "/context",
-				Description: "Show retained context sources and approximate sizes",
-				Usage:       "/context",
+				Description: "Inspect context size, pin items, or compact the conversation",
+				Usage:       "/context [pin|unpin|pins|compact]",
 				Category:    "context",
 			},
 			"/sources": {
 				Name:        "/sources",
-				Description: "Show sources supplied with the latest exchange",
-				Usage:       "/sources",
+				Description: "List, compare, audit, and save source sets",
+				Usage:       "/sources [compare|audit|save|load|list|delete]",
 				Category:    "context",
 			},
 			"/search": {
@@ -182,8 +194,8 @@ func GetCommandRegistry() *CommandRegistry {
 			},
 			"/load": {
 				Name:        "/load",
-				Description: "Load a previous chat session",
-				Usage:       "/load [session_id]",
+				Description: "Load a previous chat session, optionally with its full transcript",
+				Usage:       "/load [session_id [--full]]",
 				Category:    "core",
 			},
 			"/prompt": {
@@ -197,7 +209,8 @@ func GetCommandRegistry() *CommandRegistry {
 	}
 	for name, examples := range map[string][]string{
 		"/help": {"/help"}, "/exit": {"/exit"}, "/speak": {"/speak"}, "/image": {"/image", "/image a bird flying"}, "/issue": {"/issue"}, "/clear": {"/clear"}, "/history": {"/history"}, "/sessions": {"/sessions", "/sessions planning"},
-		"/context": {"/context"}, "/sources": {"/sources"},
+		"/context": {"/context", "/context pin 2", "/context compact"}, "/sources": {"/sources", "/sources save references", "/sources compare source-1 source-2"},
+		"/retry": {"/retry", "/retry explain with an example"}, "/branch": {"/branch", "/branch alternate-design"}, "/notes": {"/notes show", "/notes add investigate parser"},
 		"/search":  {"/search Go concurrency", "/search Go concurrency -- Summarize the results"},
 		"/file":    {"/file ./README.md", "/file ./main.go -- Explain this code"},
 		"/library": {"/library", "/library add ./docs"},
@@ -206,7 +219,7 @@ func GetCommandRegistry() *CommandRegistry {
 		"/model": {"/model", "/model gpt-6-luna"}, "/version": {"/version"},
 		"/api": {"/api", "/api 8080"}, "/stats": {"/stats"},
 		"/dashboard": {"/dashboard on", "/dashboard open", "/dashboard off", "/dashboard status"},
-		"/update":    {"/update", "/update --force"}, "/load": {"/load", "/load session_123"},
+		"/update":    {"/update", "/update --force"}, "/load": {"/load", "/load session_123", "/load session_123 --full"},
 		"/prompt": {"/prompt", "/prompt list", "/prompt add concise -- Answer briefly"},
 	} {
 		info := registry.Commands[name]

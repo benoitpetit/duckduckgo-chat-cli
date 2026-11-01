@@ -346,11 +346,12 @@ func getTerminalWidthSafe() int {
 			width = terminalWidth
 		}
 	}
+	return normalizeTerminalWidth(width)
+}
+
+func normalizeTerminalWidth(width int) int {
 	if width < 8 {
-		width = 8
-	}
-	if width > 200 {
-		width = 200
+		return 8
 	}
 	return width
 }

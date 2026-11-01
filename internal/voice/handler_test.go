@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"duckduckgo-chat-cli/internal/chat"
+	"duckduckgo-chat-cli/internal/config"
 )
 
 const (
@@ -59,6 +60,7 @@ type testSignalingClient struct {
 	sessionErrors   []error
 	sessionCalls    int
 	sessionOffers   []string
+	sessionVoices   []string
 	sessionProofs   []string
 	sessionJourneys []string
 	sessionResponse string
@@ -77,11 +79,12 @@ func (s *testSignalingClient) GetICEServers(_ context.Context, proof *chat.Dynam
 	return s.iceConfig, nil
 }
 
-func (s *testSignalingClient) CreateSession(_ context.Context, proof *chat.DynamicHeaders, offer string) (string, error) {
+func (s *testSignalingClient) CreateSession(_ context.Context, proof *chat.DynamicHeaders, offer, voice string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessionCalls++
 	s.sessionOffers = append(s.sessionOffers, offer)
+	s.sessionVoices = append(s.sessionVoices, voice)
 	if proof != nil {
 		s.sessionProofs = append(s.sessionProofs, proof.VqdHash1)
 		s.sessionJourneys = append(s.sessionJourneys, proof.JourneyID)
@@ -105,6 +108,12 @@ func (s *testSignalingClient) sessionProofValues() []string {
 	return append([]string(nil), s.sessionProofs...)
 }
 
+func (s *testSignalingClient) sessionVoiceValues() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.sessionVoices...)
+}
+
 func (s *testSignalingClient) journeyValues() (ice, session []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -120,9 +129,19 @@ func testProof(vqd string) *chat.DynamicHeaders {
 	}
 }
 
-func newTestHandler(t *testing.T, proof ProofProvider, signaling SignalingClient) http.Handler {
+func newTestHandler(t *testing.T, proof ProofProvider, signaling SignalingClient, speak ...config.SpeakConfig) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(Dependencies{Proof: proof, Signaling: signaling}, testVoiceToken, testVoiceOrigin)
+	settings := config.SpeakConfig{
+		Voice:          config.DefaultSpeakVoice(),
+		ShowTranscript: true,
+		Volume:         100,
+		ReadinessSound: true,
+		AutoStart:      true,
+	}
+	if len(speak) > 0 {
+		settings = speak[0]
+	}
+	handler, err := NewHandler(Dependencies{Proof: proof, Signaling: signaling, Speak: settings}, testVoiceToken, testVoiceOrigin)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
@@ -223,6 +242,86 @@ func TestHandlerReportsEverySessionTermination(t *testing.T) {
 	}
 	if notifications != 2 {
 		t.Fatalf("CLI notifications = %d, want one per ended voice session", notifications)
+	}
+}
+
+func TestHandlerServesSpeakSettings(t *testing.T) {
+	settings := config.SpeakConfig{
+		Voice:          "voice-3",
+		StartMuted:     true,
+		ShowTranscript: false,
+		Volume:         35,
+		ReadinessSound: false,
+		AutoStart:      false,
+	}
+	handler := newTestHandler(t, &testProofProvider{}, &testSignalingClient{}, settings)
+	response := doVoiceRequest(handler, http.MethodGet, "/api/config", testVoiceToken, testVoiceOrigin, "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("config status = %d, want 200", response.Code)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("config Cache-Control = %q, want no-store", got)
+	}
+	var got struct {
+		Voice            string `json:"voice"`
+		VoiceName        string `json:"voice_name"`
+		VoiceDescription string `json:"voice_description"`
+		StartMuted       bool   `json:"start_muted"`
+		ShowTranscript   bool   `json:"show_transcript"`
+		Volume           int    `json:"volume"`
+		ReadinessSound   bool   `json:"readiness_sound"`
+		AutoStart        bool   `json:"auto_start"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode config response: %v", err)
+	}
+	if got.Voice != "voice-3" || got.VoiceName != "Voice 3" || got.VoiceDescription != "Confident and optimistic" {
+		t.Fatalf("voice settings = %+v, want voice-3 metadata", got)
+	}
+	if !got.StartMuted || got.ShowTranscript || got.Volume != 35 || got.ReadinessSound || got.AutoStart {
+		t.Fatalf("playback settings = %+v, want the configured values", got)
+	}
+}
+
+func TestHandlerUsesSpeakDefaultsWhenSettingsUnset(t *testing.T) {
+	handler, err := NewHandler(Dependencies{Proof: &testProofProvider{}, Signaling: &testSignalingClient{}}, testVoiceToken, testVoiceOrigin)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	response := doVoiceRequest(handler, http.MethodGet, "/api/config", testVoiceToken, testVoiceOrigin, "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("config status = %d, want 200", response.Code)
+	}
+	var got struct {
+		Voice          string `json:"voice"`
+		StartMuted     bool   `json:"start_muted"`
+		ShowTranscript bool   `json:"show_transcript"`
+		Volume         int    `json:"volume"`
+		ReadinessSound bool   `json:"readiness_sound"`
+		AutoStart      bool   `json:"auto_start"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode config response: %v", err)
+	}
+	if got.Voice != "voice-1" || got.StartMuted || !got.ShowTranscript || got.Volume != 100 || !got.ReadinessSound || !got.AutoStart {
+		t.Fatalf("default settings = %+v, want current behavior defaults", got)
+	}
+}
+
+func TestHandlerForwardsConfiguredVoiceToSession(t *testing.T) {
+	signaling := &testSignalingClient{sessionResponse: "v=0\r\no=- answer\r\n"}
+	settings := config.SpeakConfig{Voice: "voice-4", ShowTranscript: true, Volume: 100, ReadinessSound: true, AutoStart: true}
+	handler := newTestHandler(t, &testProofProvider{}, signaling, settings)
+	if response := bootstrapTestICE(handler); response.Code != http.StatusOK {
+		t.Fatalf("ICE bootstrap status = %d, want 200", response.Code)
+	}
+	response := doVoiceRequest(handler, http.MethodPost, "/api/session", testVoiceToken, testVoiceOrigin, "application/sdp", "v=0\r\no=- offer\r\n")
+	if response.Code != http.StatusOK {
+		t.Fatalf("session status = %d, want 200", response.Code)
+	}
+	voices := signaling.sessionVoiceValues()
+	if len(voices) != 1 || voices[0] != "voice-4" {
+		t.Fatalf("session voices = %v, want [voice-4]", voices)
 	}
 }
 

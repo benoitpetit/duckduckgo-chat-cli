@@ -17,6 +17,9 @@ func PrintHistory(c *Chat) {
 	}
 
 	lines := make([]ui.PanelLine, 0, len(c.Messages)*2)
+	if c.Compacted {
+		lines = append(lines, ui.PanelLine{{Text: "Compact summary session; full transcript parent: " + c.ParentSessionID, Style: ui.PanelInfo}})
+	}
 	for _, msg := range c.Messages {
 		label := "Message"
 		labelStyle := ui.PanelAssistant
@@ -37,6 +40,9 @@ func PrintHistory(c *Chat) {
 		case msg.Role == "user":
 			label = "You"
 			labelStyle = ui.PanelUser
+		}
+		if msg.Pinned {
+			label += " · pinned"
 		}
 		lines = append(lines, ui.PanelLine{{Text: label, Style: labelStyle}})
 		for _, contentLine := range strings.Split(content, "\n") {
@@ -65,6 +71,10 @@ func (c *Chat) GetMarkdownContent() string {
 	md.WriteString(fmt.Sprintf("date: %s\n", time.Now().Format("2006-01-02 15:04:05")))
 	md.WriteString(fmt.Sprintf("model: %s\n", c.Model))
 	md.WriteString(fmt.Sprintf("context_size: %d\n", len(c.Messages)))
+	if c.Compacted {
+		md.WriteString("compacted: true\n")
+		md.WriteString(fmt.Sprintf("parent_session: %s\n", c.ParentSessionID))
+	}
 	md.WriteString("---\n\n")
 	md.WriteString("# DuckDuckGo AI Chat Export\n\n")
 
@@ -93,6 +103,11 @@ func (c *Chat) GetMarkdownContent() string {
 			md.WriteString("\n" + imageAttachmentMarker(image) + "\n")
 		}
 		md.WriteString("\n---\n\n")
+	}
+	if len(c.Notes) > 0 {
+		md.WriteString("## Local Session Notes (not sent to the model)\n\n")
+		md.WriteString(strings.Join(c.Notes, "\n\n"))
+		md.WriteString("\n")
 	}
 
 	return md.String()

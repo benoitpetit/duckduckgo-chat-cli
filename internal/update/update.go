@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"duckduckgo-chat-cli/internal/ui"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
@@ -183,14 +186,12 @@ func fetchLatestRelease() (*ReleaseInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, closeWithError("GitHub API response", resp.Body, fmt.Errorf("GitHub API returned status %d", resp.StatusCode))
 	}
 
 	var release ReleaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := closeWithError("GitHub API response", resp.Body, json.NewDecoder(resp.Body).Decode(&release)); err != nil {
 		return nil, err
 	}
 
@@ -249,6 +250,15 @@ func compareVersions(left, right string) (int, error) {
 // DownloadAndVerify downloads the new binary and verifies its SHA256
 // The returned path is in a temporary directory that will be cleaned up by the caller
 func DownloadAndVerify(updateInfo *UpdateInfo) (string, error) {
+	if updateInfo == nil {
+		return "", fmt.Errorf("update information is unavailable")
+	}
+	if err := validateUpdateBinaryName(updateInfo.BinaryName); err != nil {
+		return "", err
+	}
+	if updateInfo.SHA256URL == "" {
+		return "", fmt.Errorf("release does not provide a SHA256 checksum")
+	}
 	color.Yellow("Downloading update...")
 
 	// Create temporary directory
@@ -261,39 +271,46 @@ func DownloadAndVerify(updateInfo *UpdateInfo) (string, error) {
 	// Download binary
 	binaryPath := filepath.Join(tempDir, updateInfo.BinaryName)
 	if err := downloadFile(updateInfo.DownloadURL, binaryPath); err != nil {
-		os.RemoveAll(tempDir) // Clean up on error
-		return "", fmt.Errorf("failed to download binary: %w", err)
+		return "", cleanupFailedUpdate(tempDir, fmt.Errorf("failed to download binary: %w", err))
 	}
 
 	// Updates are only trusted when the corresponding release checksum is
 	// available and valid.
-	if updateInfo.SHA256URL == "" {
-		os.RemoveAll(tempDir)
-		return "", fmt.Errorf("release does not provide a SHA256 checksum")
-	}
 	color.Yellow("Verifying SHA256...")
 
 	sha256Path := filepath.Join(tempDir, updateInfo.BinaryName+".sha256")
 	if err := downloadFile(updateInfo.SHA256URL, sha256Path); err != nil {
-		os.RemoveAll(tempDir)
-		return "", fmt.Errorf("failed to download SHA256 checksum: %w", err)
+		return "", cleanupFailedUpdate(tempDir, fmt.Errorf("failed to download SHA256 checksum: %w", err))
 	}
 	if err := verifySHA256(binaryPath, sha256Path); err != nil {
-		os.RemoveAll(tempDir)
-		return "", fmt.Errorf("SHA256 verification failed: %w", err)
+		return "", cleanupFailedUpdate(tempDir, fmt.Errorf("SHA256 verification failed: %w", err))
 	}
 	color.Green("✅ SHA256 verification successful")
 
 	// Make binary executable (Unix-like systems)
 	if runtime.GOOS != "windows" {
+		// #nosec G302 -- the verified release binary must be executable for installation.
 		if err := os.Chmod(binaryPath, 0755); err != nil {
-			os.RemoveAll(tempDir) // Clean up on error
-			return "", fmt.Errorf("failed to make binary executable: %w", err)
+			return "", cleanupFailedUpdate(tempDir, fmt.Errorf("failed to make binary executable: %w", err))
 		}
 	}
 
 	color.Green("✅ Download completed successfully")
 	return binaryPath, nil
+}
+
+func validateUpdateBinaryName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\:`) || !filepath.IsLocal(name) || filepath.Base(name) != name {
+		return fmt.Errorf("invalid update binary name %q", name)
+	}
+	return nil
+}
+
+func cleanupFailedUpdate(tempDir string, operationErr error) error {
+	if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
+		return errors.Join(operationErr, fmt.Errorf("remove temporary update directory: %w", cleanupErr))
+	}
+	return operationErr
 }
 
 // downloadFile downloads a file from URL to local path
@@ -303,25 +320,37 @@ func downloadFile(url, filepath string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+		return closeWithError("download response", resp.Body, fmt.Errorf("download failed with status %d", resp.StatusCode))
 	}
 
+	// #nosec G304 -- callers pass files inside the private temp directory using a validated release asset name.
 	file, err := os.Create(filepath)
 	if err != nil {
-		return err
+		return closeWithError("download response", resp.Body, err)
 	}
-	defer file.Close()
+	return copyAndClose(file, resp.Body)
+}
 
-	_, err = io.Copy(file, resp.Body)
-	return err
+func copyAndClose(destination io.WriteCloser, source io.ReadCloser) error {
+	_, copyErr := io.Copy(destination, source)
+	destinationCloseErr := closeWithError("destination file", destination, nil)
+	sourceCloseErr := closeWithError("source stream", source, nil)
+	return errors.Join(copyErr, destinationCloseErr, sourceCloseErr)
+}
+
+func closeWithError(resource string, closer io.Closer, operationErr error) error {
+	if closeErr := closer.Close(); closeErr != nil {
+		return errors.Join(operationErr, fmt.Errorf("close %s: %w", resource, closeErr))
+	}
+	return operationErr
 }
 
 // verifySHA256 verifies the SHA256 hash of a file
 func verifySHA256(filePath, sha256Path string) error {
 	// Read expected hash
+	// #nosec G304 -- both paths come from the private temp directory created for this validated update.
 	expectedHashBytes, err := os.ReadFile(sha256Path)
 	if err != nil {
 		return err
@@ -336,14 +365,16 @@ func verifySHA256(filePath, sha256Path string) error {
 	expectedHash := strings.ToLower(parts[0])
 
 	// Calculate actual hash
+	// #nosec G304 -- both paths come from the private temp directory created for this validated update.
 	file, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
+	if err := closeWithError("update binary", file, func() error {
+		_, copyErr := io.Copy(hasher, file)
+		return copyErr
+	}()); err != nil {
 		return err
 	}
 
@@ -357,12 +388,12 @@ func verifySHA256(filePath, sha256Path string) error {
 }
 
 // PerformUpdate replaces the current binary with the new one
-func PerformUpdate(newBinaryPath string) error {
+func PerformUpdate(newBinaryPath string) (resultErr error) {
 	color.Yellow("Installing update...")
 
 	// Verify the new binary exists
-	if _, err := os.Stat(newBinaryPath); os.IsNotExist(err) {
-		return fmt.Errorf("new binary not found at path: %s", newBinaryPath)
+	if _, err := os.Stat(newBinaryPath); err != nil {
+		return fmt.Errorf("new binary is unavailable at %s: %w", newBinaryPath, err)
 	}
 
 	// Get current executable path
@@ -373,12 +404,19 @@ func PerformUpdate(newBinaryPath string) error {
 
 	// Stage and validate the new binary before touching the active executable.
 	stagedPath := currentExec + ".new"
-	_ = os.Remove(stagedPath)
+	if err := os.Remove(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove previous staged update: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove staged update: %w", err))
+		}
+	}()
 	if err := copyFile(newBinaryPath, stagedPath); err != nil {
 		return fmt.Errorf("failed to stage update: %w", err)
 	}
-	defer os.Remove(stagedPath)
 	if runtime.GOOS != "windows" {
+		// #nosec G302 -- the verified replacement binary must remain executable.
 		if err := os.Chmod(stagedPath, 0755); err != nil {
 			return fmt.Errorf("failed to make staged binary executable: %w", err)
 		}
@@ -396,29 +434,29 @@ func PerformUpdate(newBinaryPath string) error {
 	}
 
 	// Recovery function in case of failure
-	recovery := func() {
+	recovery := func() error {
 		if err := os.Rename(backupPath, currentExec); err != nil {
 			color.Red("❌ CRITICAL: Failed to restore backup. Manual recovery required!")
 			color.Red("   Backup location: %s", backupPath)
 			color.Red("   Original location: %s", currentExec)
+			return fmt.Errorf("restore executable backup: %w", err)
 		}
+		return nil
 	}
 
 	if err := os.Rename(stagedPath, currentExec); err != nil {
-		recovery()
-		return fmt.Errorf("failed to install update: %w", err)
+		return errors.Join(fmt.Errorf("failed to install update: %w", err), recovery())
 	}
 
 	// Test the new binary by getting its version
 	color.Yellow("Validating new binary...")
 	if err := validateNewBinary(currentExec); err != nil {
-		recovery()
-		return fmt.Errorf("new binary validation failed: %w", err)
+		return errors.Join(fmt.Errorf("new binary validation failed: %w", err), recovery())
 	}
 
 	// Remove backup if successful
 	if err := os.Remove(backupPath); err != nil {
-		color.Yellow("⚠️  Warning: Could not remove backup file: %s", backupPath)
+		color.Yellow("⚠️  Warning: Could not remove backup file %s: %v", backupPath, err)
 	}
 
 	color.Green("✅ Update installed successfully!")
@@ -427,20 +465,18 @@ func PerformUpdate(newBinaryPath string) error {
 
 // copyFile copies a file from source to destination
 func copyFile(src, dst string) error {
+	// #nosec G304 -- src is the checksum-verified update temp file returned by DownloadAndVerify.
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
 
-	destFile, err := os.Create(dst)
+	// #nosec G304 -- dst is the current executable's fixed .new staging path.
+	destFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return err
+		return closeWithError("source file", sourceFile, err)
 	}
-	defer destFile.Close()
-
-	_, err = io.Copy(destFile, sourceFile)
-	return err
+	return copyAndClose(destFile, sourceFile)
 }
 
 // validateNewBinary validates that the new binary is working correctly
@@ -514,7 +550,9 @@ func HandleUpdateCommand(currentVersion string, force bool) error {
 	// Clean up temporary directory after use
 	defer func() {
 		if tempDir := filepath.Dir(newBinaryPath); tempDir != "" {
-			os.RemoveAll(tempDir)
+			if err := os.RemoveAll(tempDir); err != nil {
+				color.Yellow("⚠️  Could not remove temporary update files: %v", err)
+			}
 		}
 	}()
 
@@ -543,11 +581,16 @@ func getCurrentExecutableDir() string {
 
 // ShouldCheckForUpdates checks if it's time to check for updates
 func ShouldCheckForUpdates() bool {
-	cacheFile := filepath.Join(os.TempDir(), UpdateCache)
-
-	info, err := os.Stat(cacheFile)
+	cacheFile, err := updateCachePath()
+	if err != nil {
+		return true
+	}
+	info, err := os.Lstat(cacheFile)
 	if err != nil {
 		// File doesn't exist, should check
+		return true
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
 		return true
 	}
 
@@ -556,15 +599,73 @@ func ShouldCheckForUpdates() bool {
 }
 
 // UpdateLastCheckTime updates the last check time
-func UpdateLastCheckTime() {
-	cacheFile := filepath.Join(os.TempDir(), UpdateCache)
-	file, err := os.Create(cacheFile)
+func updateCachePath() (string, error) {
+	cacheDir, err := os.UserCacheDir()
 	if err != nil {
-		return
+		return "", fmt.Errorf("find user cache directory: %w", err)
 	}
-	defer file.Close()
+	return filepath.Join(cacheDir, "duckduckgo-chat-cli", UpdateCache), nil
+}
 
-	_, _ = file.WriteString(time.Now().Format(time.RFC3339))
+func writeUpdateCheckCache(cachePath string, now time.Time) (resultErr error) {
+	directory := filepath.Dir(cachePath)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create update cache directory: %w", err)
+	}
+	directoryInfo, err := os.Lstat(directory)
+	if err != nil {
+		return fmt.Errorf("inspect update cache directory: %w", err)
+	}
+	if directoryInfo.Mode()&os.ModeSymlink != 0 || !directoryInfo.IsDir() {
+		return fmt.Errorf("update cache path is not a directory")
+	}
+	// #nosec G302 -- owner-only cache directories require execute permission for traversal.
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return fmt.Errorf("secure update cache directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".update-check-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create update cache temp file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	closed := false
+	replaced := false
+	defer func() {
+		if !closed {
+			if closeErr := temporary.Close(); closeErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("close update cache temp file: %w", closeErr))
+			}
+		}
+		if !replaced {
+			if removeErr := os.Remove(temporaryPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				resultErr = errors.Join(resultErr, fmt.Errorf("remove update cache temp file: %w", removeErr))
+			}
+		}
+	}()
+	if _, err := temporary.WriteString(now.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("write update cache: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("sync update cache: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("close update cache: %w", err)
+	}
+	closed = true
+	if err := os.Rename(temporaryPath, cachePath); err != nil {
+		return fmt.Errorf("replace update cache: %w", err)
+	}
+	replaced = true
+	return nil
+}
+
+func UpdateLastCheckTime() error {
+	cachePath, err := updateCachePath()
+	if err != nil {
+		return err
+	}
+	return writeUpdateCheckCache(cachePath, time.Now())
 }
 
 // CheckForUpdatesAtStartup checks for updates without writing to the terminal.
@@ -582,6 +683,9 @@ func CheckForUpdatesAtStartup(currentVersion string) (*UpdateInfo, error) {
 		return nil, err
 	}
 
-	UpdateLastCheckTime()
+	if err := UpdateLastCheckTime(); err != nil {
+		// The cache is advisory; a failed write only causes another check next launch.
+		ui.Debugln("Could not save update-check time: %v", err)
+	}
 	return updateInfo, nil
 }

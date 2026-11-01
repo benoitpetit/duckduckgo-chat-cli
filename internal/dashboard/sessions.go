@@ -160,6 +160,8 @@ func sessionWithoutImageData(session *persistence.ConversationSession) *persiste
 	copy := *session
 	copy.Messages = messagesWithoutImageData(session.Messages)
 	copy.OptimizedMessages = messagesWithoutImageData(session.OptimizedMessages)
+	copy.PendingImages = nil
+	copy.Notes = nil
 	return &copy
 }
 

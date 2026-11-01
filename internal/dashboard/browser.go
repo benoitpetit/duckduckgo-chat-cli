@@ -14,6 +14,7 @@ import (
 )
 
 const dashboardAppStartURL = "data:text/html,%3C!doctype%20html%3E%3Ctitle%3EDuckChat%20Dashboard%3C%2Ftitle%3E"
+const dashboardCloseBinding = "duckchatCloseDashboard"
 
 // ChromiumWindow is a dedicated, tabless app-mode window for the local dashboard.
 type ChromiumWindow struct {
@@ -55,9 +56,16 @@ func OpenChromiumApp(ctx context.Context, address string) (*ChromiumWindow, erro
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(ctx, options...)
 	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx)
 	window := &ChromiumWindow{cancelBrowser: cancelBrowser, cancelAllocator: cancelAllocator}
+	closeWindow := chromedp.ExposeFunc[[]any, chromedp.Void](dashboardCloseBinding, func(context.Context, []any) (chromedp.Void, error) {
+		go window.Close()
+		return chromedp.Void{}, nil
+	})
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
 	stopOnStartupCancel := context.AfterFunc(startupCtx, cancelBrowser)
 	err = chromedp.Do(browserCtx)
+	if err == nil {
+		err = chromedp.Do(browserCtx, closeWindow)
+	}
 	if err == nil {
 		err = chromedp.Do(browserCtx, chromedp.Navigate(address))
 	}

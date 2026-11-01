@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/fatih/color"
 
 	"duckduckgo-chat-cli/internal/ptytest"
@@ -106,7 +106,7 @@ func TestPrintWelcomeMessageDrawsResponsiveHelpPanel(t *testing.T) {
 		t.Errorf("Chat & Session should be inside the panel, got %q", lines[commandsRow])
 	}
 	for i, line := range lines {
-		if width := utf8.RuneCountInString(line); width > 110 {
+		if width := ansi.StringWidth(line); width > 110 {
 			t.Errorf("line %d is %d cells wide, terminal is 110: %q", i, width, line)
 		}
 	}
@@ -217,7 +217,7 @@ func TestRecordedHelpPanelReflowsAfterTerminalResize(t *testing.T) {
 	plain := strings.ReplaceAll(sgrSequence.ReplaceAllString(got, ""), "\r\n", "\n")
 	plain = strings.ReplaceAll(strings.ReplaceAll(plain, "\x1b[2J", ""), "\x1b[H", "")
 	for i, line := range strings.Split(plain, "\n") {
-		if width := utf8.RuneCountInString(line); width > 34 {
+		if width := ansi.StringWidth(line); width > 34 {
 			t.Errorf("resized line %d is %d cells wide, want at most 34: %q", i, width, line)
 		}
 	}
@@ -323,7 +323,7 @@ func TestPrintWelcomeMessageStacksOnANarrowTerminal(t *testing.T) {
 
 	// The narrow panel must wrap content without exceeding the terminal width.
 	for i, line := range strings.Split(plain, "\n") {
-		if width := utf8.RuneCountInString(line); width > 30 {
+		if width := ansi.StringWidth(line); width > 30 {
 			t.Errorf("line %d is %d cells wide, want at most 30: %q", i, width, line)
 		}
 	}
@@ -350,7 +350,7 @@ func TestRenderCommandsTableStacksOnlyTheRowsThatDoNotFit(t *testing.T) {
 		plain = append(plain, sgrSequence.ReplaceAllString(line, ""))
 	}
 	for i, line := range plain {
-		if got := utf8.RuneCountInString(line); got > width {
+		if got := ansi.StringWidth(line); got > width {
 			t.Errorf("line %d is %d cells wide, want at most %d: %q", i, got, width, line)
 		}
 	}
@@ -373,7 +373,8 @@ func TestRenderCommandsTableStacksOnlyTheRowsThatDoNotFit(t *testing.T) {
 		t.Errorf("/url should keep its description on the same row, got %q", plain[urlRow])
 	}
 
-	// /file fits too, and must land on the same description column as /url.
+	// /file also keeps its description beside its own command. Each row gets
+	// the remaining width after its own usage string, so columns can differ.
 	fileRow := rowOf("/file <path>")
 	if fileRow < 0 {
 		t.Fatal("expected the /file row to be printed")
@@ -381,8 +382,8 @@ func TestRenderCommandsTableStacksOnlyTheRowsThatDoNotFit(t *testing.T) {
 	if !strings.Contains(plain[fileRow], "Chat with a file") {
 		t.Errorf("/file should keep its description on the same row, got %q", plain[fileRow])
 	}
-	if a, b := strings.Index(plain[urlRow], "Chat"), strings.Index(plain[fileRow], "Chat"); a != b {
-		t.Errorf("/file description starts at %d but /url at %d; they should share a column", b, a)
+	if strings.Index(plain[fileRow], "Chat with a file") < strings.Index(plain[fileRow], "/file <path>") {
+		t.Errorf("/file description should follow its own usage string, got %q", plain[fileRow])
 	}
 
 	// The long /prompt row is the only one that gives up its column.
@@ -435,5 +436,37 @@ func TestRenderCommandsTableStacksEverythingWhenNothingFits(t *testing.T) {
 		if !found {
 			t.Errorf("expected the description %q to be printed", want)
 		}
+	}
+}
+
+func TestRenderCommandPanelLinesUsesEachRowsAvailableDescriptionWidth(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	previous := color.NoColor
+	color.NoColor = false
+	defer func() { color.NoColor = previous }()
+
+	const width = 100
+	shortDescription := "A short row keeps its full useful description next to the command"
+	commands := []CommandHelp{
+		{Command: "/short", Description: shortDescription},
+		{Command: "/configuration <theme|width|line-weight|response-frame|reset>", Description: "A longer command still fits, but needs more room for its own usage text"},
+	}
+	lines := renderCommandPanelLines(commands, width)
+	var shortRow string
+	for _, line := range lines {
+		var rendered strings.Builder
+		for _, span := range line {
+			rendered.WriteString(span.Text)
+		}
+		plain := rendered.String()
+		if got := ansi.StringWidth(plain); got > width {
+			t.Errorf("help row is %d cells wide, want at most %d: %q", got, width, plain)
+		}
+		if strings.Contains(plain, "/short") {
+			shortRow = plain
+		}
+	}
+	if !strings.Contains(shortRow, shortDescription) {
+		t.Errorf("short command did not use its row's full available description width: %q", shortRow)
 	}
 }

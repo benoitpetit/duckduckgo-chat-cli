@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"duckduckgo-chat-cli/internal/interfaces"
 	"duckduckgo-chat-cli/internal/models"
@@ -55,17 +55,61 @@ type ToolsConfig struct {
 	ImageGeneration bool `json:"image_generation"`
 }
 
-// AppearanceConfig contains the terminal theme and response presentation settings.
+// AppearanceConfig contains terminal theme and frame presentation settings.
 type AppearanceConfig struct {
-	Theme          string `json:"theme"`
-	FrameResponses bool   `json:"frame_responses"`
+	Theme           string             `json:"theme"`
+	FrameResponses  bool               `json:"frame_responses"`
+	FrameWidthMode  ui.FrameWidthMode  `json:"frame_width_mode"`
+	FrameMaxWidth   int                `json:"frame_max_width"`
+	FrameLineWeight ui.FrameLineWeight `json:"frame_line_weight"`
 }
 
-// SpeakConfig controls the Chromium window used for live Duck.ai voice sessions.
+// SpeakVoice describes a selectable Duck.ai voice.
+type SpeakVoice struct {
+	ID          string
+	Name        string
+	Description string
+}
+
+var speakVoices = []SpeakVoice{
+	{ID: "voice-1", Name: "Voice 1", Description: "Open and upbeat"},
+	{ID: "voice-2", Name: "Voice 2", Description: "Animated and earnest"},
+	{ID: "voice-3", Name: "Voice 3", Description: "Confident and optimistic"},
+	{ID: "voice-4", Name: "Voice 4", Description: "Cheerful and candid"},
+}
+
+// SpeakVoices returns the selectable Duck.ai voices in display order.
+func SpeakVoices() []SpeakVoice {
+	return append([]SpeakVoice(nil), speakVoices...)
+}
+
+// DefaultSpeakVoice returns the voice Duck.ai uses when none is selected.
+func DefaultSpeakVoice() string {
+	return speakVoices[0].ID
+}
+
+// SpeakVoiceByID returns the voice with the given identifier.
+func SpeakVoiceByID(id string) (SpeakVoice, bool) {
+	for _, voice := range speakVoices {
+		if voice.ID == id {
+			return voice, true
+		}
+	}
+	return SpeakVoice{}, false
+}
+
+// SpeakConfig controls the Chromium window and playback preferences used for
+// live Duck.ai voice sessions.
 type SpeakConfig struct {
-	WindowWidth   int `json:"window_width"`
-	WindowHeight  int `json:"window_height"`
-	SchemaVersion int `json:"schema_version,omitempty"`
+	Voice          string `json:"voice"`
+	WindowWidth    int    `json:"window_width"`
+	WindowHeight   int    `json:"window_height"`
+	StartMuted     bool   `json:"start_muted"`
+	ShowTranscript bool   `json:"show_transcript"`
+	Volume         int    `json:"volume"`
+	ReadinessSound bool   `json:"readiness_sound"`
+	AutoStart      bool   `json:"auto_start"`
+	SchemaVersion  int    `json:"schema_version,omitempty"`
 }
 
 // TrayConfig stores global shortcuts used by the resident tray service.
@@ -75,7 +119,7 @@ type TrayConfig struct {
 }
 
 func defaultTrayConfig() TrayConfig {
-	return TrayConfig{TextShortcut: "Ctrl+Alt+T", VoiceShortcut: "Ctrl+Alt+V"}
+	return TrayConfig{TextShortcut: "Ctrl+Alt+D", VoiceShortcut: "Ctrl+Alt+V"}
 }
 
 func normalizeTrayConfig(cfg *TrayConfig) {
@@ -92,7 +136,22 @@ func normalizeTrayConfig(cfg *TrayConfig) {
 }
 
 func defaultSpeakConfig() SpeakConfig {
-	return SpeakConfig{WindowWidth: 480, WindowHeight: 500, SchemaVersion: 3}
+	return SpeakConfig{
+		Voice:          DefaultSpeakVoice(),
+		WindowWidth:    480,
+		WindowHeight:   500,
+		StartMuted:     false,
+		ShowTranscript: true,
+		Volume:         100,
+		ReadinessSound: true,
+		AutoStart:      true,
+		SchemaVersion:  3,
+	}
+}
+
+// DefaultSpeakConfig returns the default voice, window, and playback settings.
+func DefaultSpeakConfig() SpeakConfig {
+	return defaultSpeakConfig()
 }
 
 func normalizeSpeakConfig(cfg *SpeakConfig) {
@@ -114,11 +173,17 @@ func normalizeSpeakConfig(cfg *SpeakConfig) {
 		}
 		cfg.SchemaVersion = defaults.SchemaVersion
 	}
+	if _, ok := SpeakVoiceByID(cfg.Voice); !ok {
+		cfg.Voice = defaults.Voice
+	}
 	if cfg.WindowWidth < 320 || cfg.WindowWidth > 1400 {
 		cfg.WindowWidth = defaults.WindowWidth
 	}
 	if cfg.WindowHeight < 360 || cfg.WindowHeight > 1400 {
 		cfg.WindowHeight = defaults.WindowHeight
+	}
+	if cfg.Volume < 0 || cfg.Volume > 100 {
+		cfg.Volume = defaults.Volume
 	}
 }
 
@@ -224,6 +289,7 @@ func Initialize() *Config {
 	cfg := loadConfig()
 	normalizeAppearanceConfig(&cfg.Appearance)
 	ui.SetTheme(cfg.Appearance.Theme)
+	ui.SetFrameOptions(frameOptionsFromAppearance(cfg.Appearance))
 	normalizeSpeakConfig(&cfg.Speak)
 	normalizeTrayConfig(&cfg.Tray)
 	normalizeRateLimitConfig(&cfg.RateLimit)
@@ -281,9 +347,13 @@ func normalizeAppearanceConfig(cfg *AppearanceConfig) {
 	theme, ok := ui.ResolveTheme(cfg.Theme)
 	if !ok {
 		cfg.Theme = string(ui.ThemeOfficial)
-		return
+	} else {
+		cfg.Theme = string(theme.ID)
 	}
-	cfg.Theme = string(theme.ID)
+	options := ui.NormalizeFrameOptions(frameOptionsFromAppearance(*cfg))
+	cfg.FrameWidthMode = options.WidthMode
+	cfg.FrameMaxWidth = options.MaxWidth
+	cfg.FrameLineWeight = options.LineWeight
 }
 
 func defaultConfig() *Config {
@@ -292,7 +362,7 @@ func defaultConfig() *Config {
 		DefaultModel:     string(models.Default()),
 		ExportDir:        defaultExportPath(),
 		LastUpdateTime:   time.Now(),
-		Appearance:       AppearanceConfig{Theme: string(ui.ThemeOfficial), FrameResponses: true},
+		Appearance:       defaultAppearanceConfig(),
 		ConfirmLongInput: true, // default to enabled for safety
 		Search:           SearchConfig{MaxResults: 10, IncludeSnippet: true, MaxRetries: 3, RetryDelay: 1},
 		Library:          LibraryConfig{Directories: []string{}, Enabled: true},
@@ -303,6 +373,25 @@ func defaultConfig() *Config {
 		Dashboard:        defaultDashboardConfig(),
 		Prompts:          make(map[string]string),
 	}
+}
+
+func defaultAppearanceConfig() AppearanceConfig {
+	options := ui.DefaultFrameOptions()
+	return AppearanceConfig{
+		Theme:           string(ui.ThemeOfficial),
+		FrameResponses:  true,
+		FrameWidthMode:  options.WidthMode,
+		FrameMaxWidth:   options.MaxWidth,
+		FrameLineWeight: options.LineWeight,
+	}
+}
+
+func frameOptionsFromAppearance(appearance AppearanceConfig) ui.FrameOptions {
+	return ui.NormalizeFrameOptions(ui.FrameOptions{
+		WidthMode:  appearance.FrameWidthMode,
+		MaxWidth:   appearance.FrameMaxWidth,
+		LineWeight: appearance.FrameLineWeight,
+	})
 }
 
 func resetConfigurationToDefaults(cfg *Config, chatSession interfaces.ChatSession) error {
@@ -320,6 +409,7 @@ func resetConfigurationToDefaults(cfg *Config, chatSession interfaces.ChatSessio
 
 	*cfg = *defaults
 	ui.SetTheme(cfg.Appearance.Theme)
+	ui.SetFrameOptions(frameOptionsFromAppearance(cfg.Appearance))
 	if chatSession != nil {
 		chatSession.ChangeModel(models.GetModel(cfg.DefaultModel))
 		chatSession.SetNativeTools(cfg.Tools.Enabled, cfg.Tools.WebSearch, cfg.Tools.ImageGeneration)
@@ -415,6 +505,7 @@ func loadConfig() *Config {
 func ReadOnlyDiagnosticsConfig() (Config, string, error) {
 	path := configPath()
 	cfg := defaultConfig()
+	// #nosec G304 -- configPath is fixed under the current user's config directory.
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return *cfg, path, nil
@@ -463,13 +554,13 @@ func configFileExists() bool {
 }
 
 func ensureExportDir(cfg *Config) error {
-	return os.MkdirAll(cfg.ExportDir, 0755)
+	return os.MkdirAll(cfg.ExportDir, 0o700)
 }
 
 // SaveConfig saves the configuration to file (exported version of saveConfig)
 func SaveConfig(cfg *Config) error {
 	configDir := filepath.Dir(configPath())
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
@@ -485,16 +576,13 @@ func SaveConfig(cfg *Config) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("failed to secure temporary config: %v", err)
+		return fmt.Errorf("failed to secure temporary config: %w", errors.Join(err, tmp.Close()))
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("failed to write config: %v", err)
+		return fmt.Errorf("failed to write config: %w", errors.Join(err, tmp.Close()))
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("failed to sync config: %v", err)
+		return fmt.Errorf("failed to sync config: %w", errors.Join(err, tmp.Close()))
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("failed to close config: %v", err)
@@ -538,6 +626,7 @@ func AcceptTermsOfService(cfg *Config, askOptions ...survey.AskOpt) bool {
 func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) bool {
 	resetApplied := false
 	for {
+		frameOptions := frameOptionsFromAppearance(cfg.Appearance)
 		frameStatus := "Off"
 		if cfg.Appearance.FrameResponses {
 			frameStatus = "On"
@@ -547,6 +636,8 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) bool {
 			fmt.Sprintf("Default model: %s", cfg.DefaultModel),
 			fmt.Sprintf("Theme: %s", themeLabel),
 			fmt.Sprintf("Response frame: %s", frameStatus),
+			fmt.Sprintf("Frame width: %s", frameWidthSummaryLabel(frameOptions)),
+			fmt.Sprintf("Frame lines: %s", frameLineWeightLabel(frameOptions.LineWeight)),
 			fmt.Sprintf("Text shortcut: %s", cfg.Tray.TextShortcut),
 			fmt.Sprintf("Voice shortcut: %s", cfg.Tray.VoiceShortcut),
 			"",
@@ -560,6 +651,8 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) bool {
 			Options: []string{
 				"Appearance · Theme",
 				"Appearance · Response frame",
+				"Appearance · Frame width",
+				"Appearance · Frame line weight",
 				"Chat · Default model",
 				"Chat · Shortcuts",
 				"Chat · Global prompt",
@@ -588,6 +681,10 @@ func HandleConfiguration(cfg *Config, chatSession interfaces.ChatSession) bool {
 			handleThemeSettings(cfg)
 		case "Appearance · Response frame":
 			handleResponseFrameSettings(cfg)
+		case "Appearance · Frame width":
+			handleFrameWidthSettings(cfg)
+		case "Appearance · Frame line weight":
+			handleFrameLineWeightSettings(cfg)
 		case "Chat · Shortcuts":
 			HandleShortcutConfiguration(cfg)
 		case "Chat · Default model":
@@ -639,6 +736,11 @@ func askFramedConfigChoice(prompt *survey.Select, choice *string, summary []stri
 		menuTitle += " · " + label
 	}
 	selectTemplate, offsetTemplate, width := configurationSelectTemplates(menuTitle)
+	if width < 24 {
+		return survey.AskOne(prompt, choice)
+	}
+	restorePrompt := ui.FitFramedSelectPrompt(prompt, width)
+	defer restorePrompt(choice)
 	frameSummary := append([]string(nil), summary...)
 	if previousHelp != "" {
 		if len(frameSummary) > 0 {
@@ -656,8 +758,10 @@ func askFramedConfigChoice(prompt *survey.Select, choice *string, summary []stri
 	}()
 
 	if err := survey.AskOne(prompt, choice); err != nil {
+		restorePrompt(choice)
 		return err
 	}
+	restorePrompt(choice)
 	clearConfigurationAnswer(prompt, choice, width)
 	return nil
 }
@@ -669,13 +773,11 @@ func clearConfigurationAnswer(prompt *survey.Select, choice *string, width int) 
 		return
 	}
 
-	answer := fmt.Sprintf("%s: %s", prompt.Message, *choice)
-	answerRows := max(1, (ansi.StringWidth(answer)+width-5)/(width-4))
 	helpRows := 0
 	if prompt.Help != "" {
 		helpRows = len(strings.Split(strings.TrimSuffix(prompt.Help, "\n"), "\n"))
 	}
-	rows := helpRows + answerRows + 2 // top and bottom borders
+	rows := helpRows + 3 // one answer row, plus the top and bottom borders
 
 	cursor := &terminal.Cursor{Out: os.Stdout}
 	if err := cursor.Up(1); err != nil {
@@ -705,39 +807,44 @@ func configurationSelectTemplates(title string) (string, string, int) {
 			cursorWidth = columns
 		}
 	}
-	width := terminalWidth
-	if width > 112 {
-		width = 112
-	}
+	return configurationSelectTemplatesAtWidth(title, terminalWidth, cursorWidth)
+}
+
+func configurationSelectTemplatesAtWidth(title string, terminalWidth, cursorWidth int) (string, string, int) {
+	width := ui.ResolveFrameWidth(terminalWidth)
 	if width < 24 {
-		width = 24
+		return "", "", width
 	}
-	labelWidth := max(10, width-6)
+	contentWidth := width - 4
+	filterRow := ui.FitFrameCellText("↑/↓ move · Enter select · type to filter · ? for help", contentWidth)
+	helpRow := ui.FitFrameCellText("Use ↑/↓ to move, Enter to edit, or type to filter.", contentWidth)
 	if ansi.StringWidth(title) > width-6 {
 		title = ansi.Truncate(title, max(1, width-6), "…")
 	}
-	topTitle := "─ " + title + " "
-	top := ui.MutedColor.Sprint("╭─ ") + ui.AccentColor.Sprint(title) + ui.MutedColor.Sprint(" "+strings.Repeat("─", max(0, width-utf8.RuneCountInString(topTitle)-2))+"╮")
-	bottom := ui.MutedColor.Sprint("╰" + strings.Repeat("─", width-2) + "╯")
-	vertical := ui.MutedColor.Sprint("│")
+	glyphs := ui.ResolveFrameGlyphs(os.Getenv("TERM") == "dumb")
+	topTitle := glyphs.Horizontal + " " + title + " "
+	top := ui.MutedColor.Sprint(glyphs.TopLeft+glyphs.Horizontal+" ") + ui.AccentColor.Sprint(title) + ui.MutedColor.Sprint(" "+strings.Repeat(glyphs.Horizontal, max(0, width-ansi.StringWidth(topTitle)-2))+glyphs.TopRight)
+	bottom := ui.MutedColor.Sprint(glyphs.BottomLeft + strings.Repeat(glyphs.Horizontal, width-2) + glyphs.BottomRight)
+	verticalGlyph := glyphs.Vertical
+	vertical := ui.MutedColor.Sprint(verticalGlyph)
 	focus := ui.AccentColor.Sprint("›")
 
 	selectTemplate := `
 {{- define "option"}}
 {{- printf "%s " "` + vertical + `"}}
 {{- if eq .SelectedIndex .CurrentIndex}}{{printf "%s " "` + focus + `"}}{{else}}  {{end}}
-{{- printf "%-*s" ` + strconv.Itoa(labelWidth) + ` .CurrentOpt.Value}}
+{{- printf "%s" ($.GetDescription .CurrentOpt)}}
 {{- printf " %s\n" "` + vertical + `"}}
 {{- end}}
 {{- printf "%s\n" "` + top + `"}}
 {{- printf "%s" .Help}}
 {{- if .ShowAnswer}}
-{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` (printf "%s: %s" .Message .Answer) "` + vertical + `"}}
+{{- printf "%s %s %s\n" "` + vertical + `" (call .Description (printf "__duckchat_answer_row__%s" .Answer) 0) "` + vertical + `"}}
 {{- printf "%s\n" "` + bottom + `"}}
 {{- else}}
-{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` (printf "%s%s" .Message .FilterMessage) "` + vertical + `"}}
-{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` "↑/↓ move · Enter select · type to filter · ? for help" "` + vertical + `"}}
-{{- if .ShowHelp}}{{- printf "%s %-*s %s\n" "` + vertical + `" ` + strconv.Itoa(width-4) + ` "Use ↑/↓ to move, Enter to edit, or type to filter." "` + vertical + `"}}{{end}}
+{{- printf "%s %s %s\n" "` + vertical + `" (call .Description "__duckchat_filter_row__" 0) "` + vertical + `"}}
+{{- printf "%s %s %s\n" "` + vertical + `" "` + filterRow + `" "` + vertical + `"}}
+{{- if .ShowHelp}}{{- printf "%s %s %s\n" "` + vertical + `" "` + helpRow + `" "` + vertical + `"}}{{end}}
 {{- range $ix, $option := .PageEntries}}{{template "option" $.IterateOption $ix $option}}{{end}}
 {{- printf "%s\n" "` + bottom + `"}}
 {{- end}}`
@@ -747,17 +854,18 @@ func configurationSelectTemplates(title string) (string, string, int) {
 	// width in step with the framed row above. The selected offset row includes
 	// one synthetic wrap to account for the footer line.
 	offsetPadding := strings.Repeat(" ", cursorWidth+1)
-	offsetTemplate := `{{- define "option"}}{{if eq .SelectedIndex .CurrentIndex}}{{printf "%s" "` + offsetPadding + `"}}{{else}}│  {{printf "%-*s" ` + strconv.Itoa(labelWidth) + ` .CurrentOpt.Value}} │{{end}}{{end}}`
+	offsetTemplate := `{{- define "option"}}{{if eq .SelectedIndex .CurrentIndex}}{{printf "%s" "` + offsetPadding + `"}}{{else}}` + verticalGlyph + `   {{printf "%s" ($.GetDescription .CurrentOpt)}} ` + verticalGlyph + `{{end}}{{end}}`
 	return selectTemplate, offsetTemplate, width
 }
 
 func configurationFrameLines(lines []string, width int) string {
 	var framed strings.Builder
+	vertical := ui.MutedColor.Sprint(ui.ResolveFrameGlyphs(os.Getenv("TERM") == "dumb").Vertical)
 	for _, part := range configurationWrappedLines(lines, width) {
 		contentWidth := max(1, width-4)
 		content := styleConfigurationSummary(part)
 		padding := max(0, contentWidth-ansi.StringWidth(content))
-		fmt.Fprintf(&framed, "%s %s%s %s\n", ui.MutedColor.Sprint("│"), content, strings.Repeat(" ", padding), ui.MutedColor.Sprint("│"))
+		fmt.Fprintf(&framed, "%s %s%s %s\n", vertical, content, strings.Repeat(" ", padding), vertical)
 	}
 	return framed.String()
 }
@@ -805,6 +913,156 @@ func handleResponseFrameSettings(cfg *Config) {
 		status = "enabled"
 	}
 	ui.AIln("Response frame %s.", status)
+}
+
+type frameWidthChoice struct {
+	label   string
+	options ui.FrameOptions
+}
+
+type frameLineWeightChoice struct {
+	label  string
+	weight ui.FrameLineWeight
+}
+
+func frameWidthOptions(current ui.FrameOptions) []frameWidthChoice {
+	current = ui.NormalizeFrameOptions(current)
+	full := current
+	full.WidthMode = ui.FrameWidthFull
+	choices := []frameWidthChoice{{label: "Full terminal", options: full}}
+	for _, width := range []int{80, 96, 112, 128, 144, 160} {
+		maximum := current
+		maximum.WidthMode = ui.FrameWidthMaximum
+		maximum.MaxWidth = width
+		choices = append(choices, frameWidthChoice{label: fmt.Sprintf("Maximum: %d", width), options: maximum})
+	}
+	return choices
+}
+
+func frameLineWeightOptions() []frameLineWeightChoice {
+	return []frameLineWeightChoice{
+		{label: "Single", weight: ui.FrameLineSingle},
+		{label: "Heavy", weight: ui.FrameLineHeavy},
+	}
+}
+
+func frameWidthSummaryLabel(options ui.FrameOptions) string {
+	options = ui.NormalizeFrameOptions(options)
+	if options.WidthMode == ui.FrameWidthFull {
+		return "Full terminal"
+	}
+	return fmt.Sprintf("Maximum: %d columns", options.MaxWidth)
+}
+
+func frameLineWeightLabel(weight ui.FrameLineWeight) string {
+	if weight == ui.FrameLineHeavy {
+		return "Heavy"
+	}
+	return "Single"
+}
+
+func saveFrameOptions(cfg *Config, options ui.FrameOptions) error {
+	if cfg == nil {
+		return fmt.Errorf("configuration is unavailable")
+	}
+	previous := cfg.Appearance
+	options = ui.NormalizeFrameOptions(options)
+	cfg.Appearance.FrameWidthMode = options.WidthMode
+	cfg.Appearance.FrameMaxWidth = options.MaxWidth
+	cfg.Appearance.FrameLineWeight = options.LineWeight
+	if err := saveConfig(cfg); err != nil {
+		cfg.Appearance = previous
+		ui.SetFrameOptions(frameOptionsFromAppearance(previous))
+		return err
+	}
+	ui.SetFrameOptions(options)
+	return nil
+}
+
+func handleFrameWidthSettings(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	current := frameOptionsFromAppearance(cfg.Appearance)
+	choices := frameWidthOptions(current)
+	labels := make([]string, len(choices))
+	defaultChoice := frameWidthSummaryLabel(current)
+	for index, choice := range choices {
+		labels[index] = choice.label
+		if choice.options.WidthMode == ui.FrameWidthFull && current.WidthMode == ui.FrameWidthFull {
+			defaultChoice = choice.label
+		} else if choice.options.WidthMode == ui.FrameWidthMaximum && current.WidthMode == ui.FrameWidthMaximum && choice.options.MaxWidth == current.MaxWidth {
+			defaultChoice = choice.label
+		}
+	}
+	choice := ""
+	prompt := &survey.Select{
+		Message: "Choose frame width:",
+		Help:    "Full terminal uses all available columns. Maximum width caps the frame and adapts to narrower terminals.",
+		Options: labels,
+		Default: defaultChoice,
+	}
+	if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
+		ui.Warningln("Frame width setting canceled.")
+		return
+	}
+	for _, option := range choices {
+		if option.label != choice {
+			continue
+		}
+		if option.options == current {
+			ui.AIln("Frame width is already set to %s.", frameWidthSummaryLabel(current))
+			return
+		}
+		if err := saveFrameOptions(cfg, option.options); err != nil {
+			ui.Errorln("Could not save frame width setting: %v", err)
+			return
+		}
+		ui.AIln("Frame width changed to %s.", frameWidthSummaryLabel(option.options))
+		return
+	}
+	ui.Errorln("Invalid frame width selection. No changes made.")
+}
+
+func handleFrameLineWeightSettings(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	current := frameOptionsFromAppearance(cfg.Appearance)
+	choices := frameLineWeightOptions()
+	labels := make([]string, len(choices))
+	defaultChoice := frameLineWeightLabel(current.LineWeight)
+	for index, option := range choices {
+		labels[index] = option.label
+	}
+	choice := ""
+	prompt := &survey.Select{
+		Message: "Choose frame line weight:",
+		Help:    "Single uses light borders; Heavy uses thicker borders. Dumb terminals continue to use ASCII borders.",
+		Options: labels,
+		Default: defaultChoice,
+	}
+	if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
+		ui.Warningln("Frame line weight setting canceled.")
+		return
+	}
+	for _, option := range choices {
+		if option.label != choice {
+			continue
+		}
+		if option.weight == current.LineWeight {
+			ui.AIln("Frame line weight is already set to %s.", option.label)
+			return
+		}
+		current.LineWeight = option.weight
+		if err := saveFrameOptions(cfg, current); err != nil {
+			ui.Errorln("Could not save frame line weight setting: %v", err)
+			return
+		}
+		ui.AIln("Frame line weight changed to %s.", option.label)
+		return
+	}
+	ui.Errorln("Invalid frame line weight selection. No changes made.")
 }
 
 // HandleShortcutConfiguration edits and saves the text and voice chat shortcuts.
@@ -946,8 +1204,14 @@ func handleSpeakSettings(cfg *Config) {
 		prompt := &survey.Select{
 			Message: "Audio Agent Speak Configuration",
 			Options: []string{
+				fmt.Sprintf("Voice (%s)", speakVoiceLabel(cfg.Speak.Voice)),
 				fmt.Sprintf("Window width (%d px)", cfg.Speak.WindowWidth),
 				fmt.Sprintf("Window height (%d px)", cfg.Speak.WindowHeight),
+				fmt.Sprintf("Start muted (%s)", speakYesNo(cfg.Speak.StartMuted)),
+				fmt.Sprintf("Show subtitles (%s)", speakYesNo(cfg.Speak.ShowTranscript)),
+				fmt.Sprintf("Output volume (%d%%)", cfg.Speak.Volume),
+				fmt.Sprintf("Connection sound (%s)", speakYesNo(cfg.Speak.ReadinessSound)),
+				fmt.Sprintf("Auto-start calls (%s)", speakYesNo(cfg.Speak.AutoStart)),
 				"Back",
 			},
 			Default: "Back",
@@ -958,14 +1222,87 @@ func handleSpeakSettings(cfg *Config) {
 		}
 
 		switch {
+		case strings.HasPrefix(choice, "Voice"):
+			handleSpeakVoiceSetting(cfg)
 		case strings.HasPrefix(choice, "Window width"):
 			editDashboardInteger(cfg, "Audio window width in pixels", cfg.Speak.WindowWidth, 320, 1400, func(value int) { cfg.Speak.WindowWidth = value })
 		case strings.HasPrefix(choice, "Window height"):
 			editDashboardInteger(cfg, "Audio window height in pixels", cfg.Speak.WindowHeight, 360, 1400, func(value int) { cfg.Speak.WindowHeight = value })
+		case strings.HasPrefix(choice, "Start muted"):
+			editSpeakBool(cfg, "Start voice calls with the microphone muted?", "Start muted", cfg.Speak.StartMuted, func(value bool) { cfg.Speak.StartMuted = value })
+		case strings.HasPrefix(choice, "Show subtitles"):
+			editSpeakBool(cfg, "Show user and assistant subtitles?", "Show subtitles", cfg.Speak.ShowTranscript, func(value bool) { cfg.Speak.ShowTranscript = value })
+		case strings.HasPrefix(choice, "Output volume"):
+			editDashboardInteger(cfg, "Audio output volume (percent)", cfg.Speak.Volume, 0, 100, func(value int) { cfg.Speak.Volume = value })
+		case strings.HasPrefix(choice, "Connection sound"):
+			editSpeakBool(cfg, "Play a short sound when the voice connection is ready?", "Connection sound", cfg.Speak.ReadinessSound, func(value bool) { cfg.Speak.ReadinessSound = value })
+		case strings.HasPrefix(choice, "Auto-start calls"):
+			editSpeakBool(cfg, "Start the voice session automatically when the window opens?", "Auto-start calls", cfg.Speak.AutoStart, func(value bool) { cfg.Speak.AutoStart = value })
 		case choice == "Back":
 			return
 		}
 	}
+}
+
+func handleSpeakVoiceSetting(cfg *Config) {
+	voices := SpeakVoices()
+	options := make([]string, 0, len(voices))
+	defaultChoice := ""
+	for _, voice := range voices {
+		label := speakVoiceMenuLabel(voice)
+		options = append(options, label)
+		if voice.ID == cfg.Speak.Voice {
+			defaultChoice = label
+		}
+	}
+	choice := ""
+	prompt := &survey.Select{
+		Message: "Choose a Duck.ai voice:",
+		Options: options,
+		Default: defaultChoice,
+	}
+	if err := askFramedConfigChoice(prompt, &choice, nil); err != nil {
+		ui.Warningln("Voice selection canceled.")
+		return
+	}
+	for _, voice := range voices {
+		if speakVoiceMenuLabel(voice) == choice {
+			cfg.Speak.Voice = voice.ID
+			saveAndReport(cfg, fmt.Sprintf("Duck.ai voice set to: %s", speakVoiceMenuLabel(voice)))
+			return
+		}
+	}
+	ui.Errorln("Invalid voice selection. No changes made.")
+}
+
+func speakVoiceLabel(id string) string {
+	voice, ok := SpeakVoiceByID(id)
+	if !ok {
+		voice, _ = SpeakVoiceByID(DefaultSpeakVoice())
+	}
+	return speakVoiceMenuLabel(voice)
+}
+
+func speakVoiceMenuLabel(voice SpeakVoice) string {
+	return fmt.Sprintf("%s - %s", voice.Name, voice.Description)
+}
+
+func speakYesNo(value bool) string {
+	if value {
+		return "Yes"
+	}
+	return "No"
+}
+
+func editSpeakBool(cfg *Config, message, label string, current bool, set func(bool)) {
+	value := current
+	prompt := &survey.Confirm{Message: message, Default: current}
+	if err := survey.AskOne(prompt, &value); err != nil {
+		ui.Warningln("Operation canceled. No changes made.")
+		return
+	}
+	set(value)
+	saveAndReport(cfg, fmt.Sprintf("%s set to: %s", label, speakYesNo(value)))
 }
 
 func handleModelChange(cfg *Config, chatSession interfaces.ChatSession) {

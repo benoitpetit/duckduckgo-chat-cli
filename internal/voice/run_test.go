@@ -87,6 +87,33 @@ func TestVoiceAssetsAreEmbedded(t *testing.T) {
 	}
 }
 
+func TestVoiceAssetsApplySpeakSettings(t *testing.T) {
+	script, err := webAssets.ReadFile("webui/app.js")
+	if err != nil {
+		t.Fatalf("read voice script asset: %v", err)
+	}
+	for _, expected := range []string{
+		`request("/api/config"`,
+		"settings.start_muted",
+		"settings.show_transcript",
+		"settings.volume",
+		"settings.readiness_sound",
+		"settings.auto_start",
+	} {
+		if !strings.Contains(string(script), expected) {
+			t.Errorf("voice script is missing Speak setting behavior %q", expected)
+		}
+	}
+
+	page, err := webAssets.ReadFile("webui/index.html")
+	if err != nil {
+		t.Fatalf("read voice page asset: %v", err)
+	}
+	if !strings.Contains(string(page), `id="voice-label"`) {
+		t.Error("voice page is missing the configured voice label")
+	}
+}
+
 func TestVoiceAssetsExposeSessionTerminationActions(t *testing.T) {
 	page, err := webAssets.ReadFile("webui/index.html")
 	if err != nil {

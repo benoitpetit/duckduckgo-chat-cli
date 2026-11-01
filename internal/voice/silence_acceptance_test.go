@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/chat"
+	"duckduckgo-chat-cli/internal/config"
 
 	"github.com/chromedp/chromedp"
 )
@@ -109,7 +110,7 @@ func TestLiveVoiceSilenceDoesNotTriggerResponse(t *testing.T) {
 	if offerErr != "" {
 		t.Fatalf("create silent microphone offer: %s", offerErr)
 	}
-	answer, err := client.CreateSession(ctx, proof, offer)
+	answer, err := client.CreateSession(ctx, proof, offer, config.DefaultSpeakVoice())
 	if err != nil {
 		t.Fatalf("create live Duck.ai voice session: %v", err)
 	}

@@ -6,6 +6,7 @@ if (window.location.hash) history.replaceState(null, "", window.location.pathnam
 const ui = {
   connectionPill: document.querySelector("#connection-pill"),
   connection: document.querySelector("#connection-state"),
+  voiceLabel: document.querySelector("#voice-label"),
   controls: document.querySelector("#controls"),
   duck: document.querySelector("#duck-stage"),
   terminationPanel: document.querySelector("#termination-panel"),
@@ -30,6 +31,18 @@ const ui = {
   assistantTranscript: document.querySelector("#assistant-transcript"),
 };
 
+const defaultSettings = {
+  voice: "voice-1",
+  voice_name: "Voice 1",
+  voice_description: "Open and upbeat",
+  start_muted: false,
+  show_transcript: true,
+  volume: 100,
+  readiness_sound: true,
+  auto_start: true,
+};
+
+let settings = { ...defaultSettings };
 let peer = null;
 let channel = null;
 let microphone = null;
@@ -139,10 +152,13 @@ function markVoiceConnectionReady() {
 }
 
 function playReadinessChime(reverse = false) {
+  if (!settings.readiness_sound) return;
+  const volume = outputVolume();
+  if (volume === 0) return;
   const notes = reverse
     ? [{ frequency: 880, duration: 0.16 }, { frequency: 660, duration: 0.12 }]
     : [{ frequency: 660, duration: 0.12 }, { frequency: 880, duration: 0.16 }];
-  playToneSequence(notes, 0.045);
+  playToneSequence(notes, 0.045 * volume);
 }
 
 function playToneSequence(notes, volume) {
@@ -225,6 +241,37 @@ function endActiveSession() {
 function showError(message) {
   ui.error.textContent = message;
   ui.error.hidden = !message;
+}
+
+function outputVolume() {
+  const value = Number(settings.volume);
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(100, value)) / 100;
+}
+
+function setSubtitleVisibility() {
+  ui.subtitleSlot.hidden = !settings.show_transcript || ended;
+}
+
+function applySettings() {
+  ui.audio.volume = outputVolume();
+  setSubtitleVisibility();
+  const name = typeof settings.voice_name === "string" ? settings.voice_name.trim() : "";
+  const description = typeof settings.voice_description === "string" ? settings.voice_description.trim() : "";
+  const label = [name, description].filter(Boolean).join(" · ");
+  ui.voiceLabel.textContent = label;
+  ui.voiceLabel.hidden = !label;
+}
+
+async function loadSpeakSettings() {
+  if (!token) return;
+  try {
+    const response = await request("/api/config");
+    settings = { ...defaultSettings, ...(await response.json()) };
+  } catch (_) {
+    settings = { ...defaultSettings };
+  }
+  applySettings();
 }
 
 function setSubtitle(speaker, text) {
@@ -337,7 +384,8 @@ function toggleMute() {
   if (!microphone || ended) return false;
   muted = !muted;
   applyMicrophoneState();
-  playToneSequence([{ frequency: 520, duration: 0.1 }], 0.035);
+  const volume = outputVolume();
+  if (volume > 0) playToneSequence([{ frequency: 520, duration: 0.1 }], 0.035 * volume);
   return true;
 }
 
@@ -346,7 +394,7 @@ async function playRemoteAudio() {
   ui.audio.autoplay = true;
   ui.audio.playsInline = true;
   ui.audio.muted = false;
-  ui.audio.volume = 1;
+  ui.audio.volume = outputVolume();
   try {
     await ui.audio.play();
     ui.audioEnable.hidden = true;
@@ -585,7 +633,7 @@ async function startSession() {
       return;
     }
     microphone = microphoneStream;
-    muted = false;
+    muted = Boolean(settings.start_muted);
     applyMicrophoneState();
     setControlsMode("active");
 
@@ -710,7 +758,7 @@ function retrySession() {
   ended = false;
   ui.terminationPanel.hidden = true;
   ui.controls.hidden = false;
-  ui.subtitleSlot.hidden = false;
+  setSubtitleVisibility();
   setControlsMode("idle");
   void startSession();
 }
@@ -744,14 +792,24 @@ window.addEventListener("pagehide", () => {
   }
 });
 
-setControlsMode("idle");
-setMuteButton();
-if (!token) {
-  showError("The local voice session is unavailable. Relaunch /speak from the terminal.");
-  setConnection("error", "Session unavailable");
-  setDuck("error");
+async function initializeVoice() {
+  setControlsMode("idle");
+  setMuteButton();
+  if (!token) {
+    showError("The local voice session is unavailable. Relaunch /speak from the terminal.");
+    setConnection("error", "Session unavailable");
+    setDuck("error");
+    ui.start.disabled = true;
+    ui.start.hidden = true;
+    return;
+  }
   ui.start.disabled = true;
-  ui.start.hidden = true;
-} else {
-  void startSession();
+  await loadSpeakSettings();
+  setControlsMode("idle");
+  setDuck("idle");
+  if (settings.auto_start) {
+    void startSession();
+  }
 }
+
+void initializeVoice();

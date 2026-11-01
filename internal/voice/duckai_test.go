@@ -2,11 +2,13 @@ package voice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -106,12 +108,90 @@ func TestCreateSessionSendsSDPOfferAndReturnsSDPAnswer(t *testing.T) {
 		JourneyID: "journey-value",
 		UserAgent: "DuckAI test browser",
 	}
-	got, err := client.CreateSession(context.Background(), proof, offer)
+	got, err := client.CreateSession(context.Background(), proof, offer, "")
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	if got != answer {
 		t.Fatalf("CreateSession() answer = %q, want %q", got, answer)
+	}
+}
+
+func TestCreateSessionSendsSelectedVoiceAsJSON(t *testing.T) {
+	const offer = "v=0\r\no=- offer\r\n"
+	const answer = "v=0\r\no=- answer\r\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read session body: %v", err)
+		}
+		var payload struct {
+			SDP     string `json:"sdp"`
+			Session struct {
+				Voice string `json:"voice"`
+			} `json:"session"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("decode session body: %v", err)
+		}
+		if payload.SDP != offer {
+			t.Errorf("session SDP = %q, want %q", payload.SDP, offer)
+		}
+		if payload.Session.Voice != "voice-3" {
+			t.Errorf("session voice = %q, want voice-3", payload.Session.Voice)
+		}
+		w.Header().Set("Content-Type", "application/sdp")
+		_, _ = io.WriteString(w, answer)
+	}))
+	defer server.Close()
+
+	client := &DuckAIClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	proof := &chat.DynamicHeaders{FeSignals: "signals", FeVersion: "version", VqdHash1: "proof"}
+	got, err := client.CreateSession(context.Background(), proof, offer, "voice-3")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if got != answer {
+		t.Fatalf("CreateSession() answer = %q, want %q", got, answer)
+	}
+}
+
+func TestCreateSessionFallsBackToRawSDPWhenVoiceRejected(t *testing.T) {
+	const offer = "v=0\r\no=- offer\r\n"
+	const answer = "v=0\r\no=- answer\r\n"
+	var mu sync.Mutex
+	var contentTypes []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		contentTypes = append(contentTypes, r.Header.Get("Content-Type"))
+		attempt := len(contentTypes)
+		mu.Unlock()
+		if attempt == 1 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"type":"ERR_INVALID_VOICE"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/sdp")
+		_, _ = io.WriteString(w, answer)
+	}))
+	defer server.Close()
+
+	client := &DuckAIClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	proof := &chat.DynamicHeaders{FeSignals: "signals", FeVersion: "version", VqdHash1: "proof"}
+	got, err := client.CreateSession(context.Background(), proof, offer, "voice-9")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if got != answer {
+		t.Fatalf("CreateSession() answer = %q, want %q", got, answer)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(contentTypes) != 2 || contentTypes[0] != "application/json" || contentTypes[1] != "application/sdp" {
+		t.Fatalf("session content types = %v, want [application/json application/sdp]", contentTypes)
 	}
 }
 
@@ -125,7 +205,7 @@ func TestDuckAIClientDoesNotIncludeRemoteErrorBodyInError(t *testing.T) {
 
 	client := &DuckAIClient{HTTPClient: server.Client(), BaseURL: server.URL}
 	proof := &chat.DynamicHeaders{FeSignals: "signals", FeVersion: "version", VqdHash1: "proof"}
-	_, err := client.CreateSession(context.Background(), proof, "v=0\r\n")
+	_, err := client.CreateSession(context.Background(), proof, "v=0\r\n", "")
 	if err == nil {
 		t.Fatal("CreateSession() error = nil, want HTTP failure")
 	}
@@ -143,7 +223,7 @@ func TestDuckAIClientPreservesRetryAfterForRateLimit(t *testing.T) {
 
 	client := &DuckAIClient{HTTPClient: server.Client(), BaseURL: server.URL}
 	proof := &chat.DynamicHeaders{FeSignals: "signals", FeVersion: "version", VqdHash1: "proof"}
-	_, err := client.CreateSession(context.Background(), proof, "v=0\r\n")
+	_, err := client.CreateSession(context.Background(), proof, "v=0\r\n", "")
 	var remote *SignalingHTTPError
 	if !errors.As(err, &remote) {
 		t.Fatalf("CreateSession() error = %v, want SignalingHTTPError", err)
@@ -169,7 +249,7 @@ func TestCreateSessionDoesNotForwardProofHeadersAcrossRedirect(t *testing.T) {
 
 	client := &DuckAIClient{HTTPClient: origin.Client(), BaseURL: origin.URL}
 	proof := &chat.DynamicHeaders{FeSignals: "signals", FeVersion: "version", VqdHash1: "sensitive-proof"}
-	_, err := client.CreateSession(context.Background(), proof, "v=0\r\n")
+	_, err := client.CreateSession(context.Background(), proof, "v=0\r\n", "")
 	if err == nil {
 		t.Fatal("CreateSession() error = nil, want redirect response failure")
 	}

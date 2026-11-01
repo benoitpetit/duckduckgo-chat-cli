@@ -25,11 +25,12 @@ type browserSessionDone interface {
 	Done() <-chan struct{}
 }
 
-// BrowserWindowController exposes visibility controls without closing the
-// browser or ending its local voice server and media session.
+// BrowserWindowController exposes window controls without closing the browser
+// or ending its local voice server and media session.
 type BrowserWindowController interface {
 	MinimizeWindow() error
 	RestoreWindow() error
+	ResizeWindow(width, height int) error
 }
 
 type activeRunState struct {
@@ -37,6 +38,9 @@ type activeRunState struct {
 	visibilityMu    sync.Mutex
 	window          BrowserWindowController
 	windowMinimized bool
+	windowWidth     int
+	windowHeight    int
+	resizePending   bool
 }
 
 var activeRunMu sync.Mutex
@@ -156,12 +160,20 @@ func Run(ctx context.Context, deps Dependencies, opener BrowserOpener) (runErr e
 	}
 	if controller, ok := browser.(BrowserWindowController); ok {
 		activeRunMu.Lock()
-		if activeRun == state {
+		active := activeRun == state
+		activeRunMu.Unlock()
+		if active {
 			state.visibilityMu.Lock()
 			state.window = controller
+			if state.resizePending {
+				if err := controller.ResizeWindow(state.windowWidth, state.windowHeight); err != nil {
+					state.visibilityMu.Unlock()
+					return fmt.Errorf("resize voice window: %w", err)
+				}
+				state.resizePending = false
+			}
 			state.visibilityMu.Unlock()
 		}
-		activeRunMu.Unlock()
 	}
 
 	var browserDone <-chan struct{}
@@ -221,6 +233,32 @@ func RestoreActive() error {
 		return fmt.Errorf("restore voice window: %w", err)
 	}
 	state.windowMinimized = false
+	return nil
+}
+
+// ResizeActiveWindow applies the configured size to the open voice window.
+// If the browser is still starting, the size is applied as soon as it is ready.
+func ResizeActiveWindow(width, height int) error {
+	if width < 320 || width > 1400 || height < 360 || height > 1400 {
+		return fmt.Errorf("voice window size is out of range")
+	}
+	activeRunMu.Lock()
+	state := activeRun
+	activeRunMu.Unlock()
+	if state == nil {
+		return nil
+	}
+	state.visibilityMu.Lock()
+	defer state.visibilityMu.Unlock()
+	if state.window == nil {
+		state.windowWidth = width
+		state.windowHeight = height
+		state.resizePending = true
+		return nil
+	}
+	if err := state.window.ResizeWindow(width, height); err != nil {
+		return fmt.Errorf("resize voice window: %w", err)
+	}
 	return nil
 }
 

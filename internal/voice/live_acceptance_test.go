@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/chat"
+	"duckduckgo-chat-cli/internal/config"
 
 	"github.com/chromedp/chromedp"
 )
@@ -41,7 +42,7 @@ func TestLiveVoiceSignalingAcceptsCurrentProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create synthetic voice offer: %v", err)
 	}
-	answer, err := client.CreateSession(ctx, proof, offer)
+	answer, err := client.CreateSession(ctx, proof, offer, config.DefaultSpeakVoice())
 	if err != nil {
 		t.Fatalf("Duck.ai rejected the current proof or SDP offer: %v", err)
 	}

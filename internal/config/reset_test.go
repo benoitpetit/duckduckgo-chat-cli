@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"duckduckgo-chat-cli/internal/models"
+	"duckduckgo-chat-cli/internal/ui"
 )
 
 type resetTestChatSession struct {
@@ -62,12 +63,12 @@ func TestResetConfigurationToDefaultsResetsEveryFieldAndPersists(t *testing.T) {
 
 	cfg := &Config{
 		TOSAccepted: true, DefaultModel: "gpt-5.6-luna", ExportDir: "/custom/export", LastUpdateTime: time.Unix(1, 0),
-		Appearance: AppearanceConfig{Theme: "nord", FrameResponses: false},
+		Appearance: AppearanceConfig{Theme: "nord", FrameResponses: false, FrameWidthMode: ui.FrameWidthFull, FrameMaxWidth: 144, FrameLineWeight: ui.FrameLineHeavy},
 		Search:     SearchConfig{MaxResults: 50, IncludeSnippet: false, MaxRetries: 10, RetryDelay: 30},
 		Library:    LibraryConfig{Directories: []string{"/custom/library"}, Enabled: false},
 		API:        APIConfig{Enabled: true, Host: "0.0.0.0", Port: 9999, Autostart: true, LogRequests: false, ShowGinLogs: false, APIKey: "secret", AllowedOrigins: []string{"https://example.test"}},
 		Tools:      ToolsConfig{Enabled: true, WebSearch: true, ImageGeneration: true},
-		Speak:      SpeakConfig{WindowWidth: 900, WindowHeight: 900, SchemaVersion: 1},
+		Speak:      SpeakConfig{Voice: "voice-4", WindowWidth: 900, WindowHeight: 900, StartMuted: true, ShowTranscript: false, Volume: 10, ReadinessSound: false, AutoStart: false, SchemaVersion: 1},
 		Tray:       TrayConfig{TextShortcut: "Ctrl+Shift+X", VoiceShortcut: "Ctrl+Shift+Y"},
 		RateLimit:  RateLimitConfig{OpenBrowser: true, CooldownMinutes: 60},
 		Dashboard:  DashboardConfig{Autostart: true, Port: 9000, RefreshIntervalSeconds: 10, RetentionDays: 3650, ShowConversations: true, ShowConversationContent: true, AllowConversationAnalysis: true, AnalysisTokenBudget: 32000, PasswordSalt: "salt", PasswordHash: "hash"},
@@ -85,18 +86,21 @@ func TestResetConfigurationToDefaultsResetsEveryFieldAndPersists(t *testing.T) {
 	got.LastUpdateTime = time.Time{}
 	want := Config{
 		DefaultModel: string(models.Default()), ExportDir: defaultExportPath(),
-		Appearance:       AppearanceConfig{Theme: "official", FrameResponses: true},
+		Appearance:       AppearanceConfig{Theme: "official", FrameResponses: true, FrameWidthMode: ui.FrameWidthMaximum, FrameMaxWidth: 112, FrameLineWeight: ui.FrameLineSingle},
 		Search:           SearchConfig{MaxResults: 10, IncludeSnippet: true, MaxRetries: 3, RetryDelay: 1},
 		Library:          LibraryConfig{Directories: []string{}, Enabled: true},
 		API:              APIConfig{Host: "127.0.0.1", Port: 8080, LogRequests: true, ShowGinLogs: true},
-		Speak:            SpeakConfig{WindowWidth: 480, WindowHeight: 500, SchemaVersion: 3},
-		Tray:             TrayConfig{TextShortcut: "Ctrl+Alt+T", VoiceShortcut: "Ctrl+Alt+V"},
+		Speak:            SpeakConfig{Voice: "voice-1", WindowWidth: 480, WindowHeight: 500, ShowTranscript: true, Volume: 100, ReadinessSound: true, AutoStart: true, SchemaVersion: 3},
+		Tray:             TrayConfig{TextShortcut: "Ctrl+Alt+D", VoiceShortcut: "Ctrl+Alt+V"},
 		RateLimit:        RateLimitConfig{CooldownMinutes: 10},
 		Dashboard:        DashboardConfig{Port: 8765, RefreshIntervalSeconds: 3, RetentionDays: 90, AnalysisTokenBudget: 8000},
 		ConfirmLongInput: true, Prompts: map[string]string{},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("reset config = %#v, want every default %#v", got, want)
+	}
+	if gotOptions, wantOptions := ui.CurrentFrameOptions(), (ui.FrameOptions{WidthMode: ui.FrameWidthMaximum, MaxWidth: 112, LineWeight: ui.FrameLineSingle}); gotOptions != wantOptions {
+		t.Fatalf("reset frame options = %+v, want %+v", gotOptions, wantOptions)
 	}
 	if cfg.LastUpdateTime.Before(started) || cfg.LastUpdateTime.After(finished) {
 		t.Fatalf("LastUpdateTime = %s, want reset time between %s and %s", cfg.LastUpdateTime, started, finished)

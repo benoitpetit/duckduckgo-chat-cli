@@ -60,6 +60,11 @@ func HandleSessionsCommand(c *Chat, args string) error {
 		case "Open":
 			loadAndRestoreSession(c, selected.ID)
 			return nil
+		case "Branch":
+			if err := branchSavedSession(c, selected.ID, ""); err != nil {
+				return err
+			}
+			return nil
 		case "Rename":
 			var title string
 			err = survey.AskOne(&survey.Input{Message: "Session title", Default: selected.Title}, &title,
@@ -100,6 +105,13 @@ func HandleSessionsCommand(c *Chat, args string) error {
 		if err != nil {
 			return err
 		}
+		if selected.ID == c.SessionID {
+			if updated, updateErr := c.HistoryManager.LoadSession(selected.ID); updateErr == nil {
+				c.SessionTitle = updated.Title
+				c.SessionTags = append([]string(nil), updated.Tags...)
+				c.SessionFavorite = updated.Favorite
+			}
+		}
 		sessions, err = c.HistoryManager.ListSessionSummaries()
 		if err != nil {
 			return err
@@ -139,6 +151,9 @@ func buildSessionManagerOptions(summaries []persistence.SessionSummary) ([]strin
 		favorite := ""
 		if summary.Favorite {
 			favorite = "★ "
+		}
+		if summary.Compacted {
+			favorite += "[compact] "
 		}
 		tags := ""
 		if len(summary.Tags) > 0 {
@@ -185,11 +200,18 @@ func findSessionSummary(summaries []persistence.SessionSummary, id string) *pers
 
 func selectSessionManagerAction(summary persistence.SessionSummary) (string, error) {
 	var action string
-	options := []string{"Open", "Rename", "Edit tags", "Toggle favorite", "Delete", "Back"}
+	options := []string{"Open", "Branch", "Rename", "Edit tags", "Toggle favorite", "Delete", "Back"}
 	prompt := &survey.Select{Message: "Choose an action", Options: options, PageSize: len(options)}
 	lines := []ui.PanelLine{
 		{{Text: normalizeLoadSessionText(summary.Title, 72), Style: ui.PanelAccent}},
 		{{Text: fmt.Sprintf("%s · %d messages · %s", summary.ID, summary.MessageCount, summary.StartTime.Format("2006-01-02 15:04")), Style: ui.PanelMuted}},
+	}
+	if summary.ParentSessionID != "" {
+		label := summary.ParentSessionID
+		if summary.BranchName != "" {
+			label += " · " + summary.BranchName
+		}
+		lines = append(lines, ui.PanelLine{{Text: "Branch of " + label, Style: ui.PanelMuted}})
 	}
 	err := ui.AskFramedSelect(prompt, &action, "Session actions", lines,
 		survey.WithStdio(os.Stdin, os.Stdout, os.Stderr), ui.ThemedSurveyIcons())

@@ -1,12 +1,17 @@
 package chat
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"duckduckgo-chat-cli/internal/config"
 	"duckduckgo-chat-cli/internal/intelligence"
@@ -16,6 +21,55 @@ import (
 
 	"github.com/fatih/color"
 )
+
+type failingReadCloser struct {
+	readErr   error
+	closeErr  error
+	delivered bool
+}
+
+func (body *failingReadCloser) Read(buffer []byte) (int, error) {
+	if !body.delivered {
+		body.delivered = true
+		return copy(buffer, "body"), nil
+	}
+	return 0, body.readErr
+}
+
+func (body *failingReadCloser) Close() error { return body.closeErr }
+
+func TestReadAndCloseResponseReportsBothErrors(t *testing.T) {
+	readErr := errors.New("response read failed")
+	closeErr := errors.New("response close failed")
+	body := &failingReadCloser{readErr: readErr, closeErr: closeErr}
+	data, err := readAndCloseResponse(body)
+	if string(data) != "body" {
+		t.Fatalf("response data = %q, want body", data)
+	}
+	if !errors.Is(err, readErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("readAndCloseResponse() error = %v, want both read and close errors", err)
+	}
+}
+
+func TestRateLimitResponseReadFailureKeepsRateLimitError(t *testing.T) {
+	readErr := errors.New("response read failed")
+	closeErr := errors.New("response close failed")
+	response := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     make(http.Header),
+		Body:       &failingReadCloser{readErr: readErr, closeErr: closeErr},
+	}
+	request := &http.Request{Header: make(http.Header)}
+
+	_, err := (&Chat{}).handleFetchResponse(context.Background(), response, request, "", nil, 1, nil, time.Now())
+	var rateLimitErr *RateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("handleFetchResponse() error = %v, want RateLimitError", err)
+	}
+	if !errors.Is(err, readErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("handleFetchResponse() error = %v, want both response errors", err)
+	}
+}
 
 func TestMessageMarshalJSONKeepsTextContentString(t *testing.T) {
 	data, err := json.Marshal(Message{Role: "user", Content: "describe this"})
@@ -267,10 +321,24 @@ func TestDebugPayloadRedactsImageBytes(t *testing.T) {
 }
 
 func TestClearDiscardsPendingImageContext(t *testing.T) {
-	chat := &Chat{pendingImages: []media.ImageAttachment{{Name: "logo.png", MIMEType: "image/png", Data: []byte{1, 2, 3}}}}
-	chat.Clear(&config.Config{})
+	manager := persistence.NewHistoryManager(t.TempDir())
+	chat := &Chat{
+		HistoryManager: manager,
+		SessionID:      "session_clear_pending_image",
+		pendingImages:  []media.ImageAttachment{{Name: "logo.png", MIMEType: "image/png", Data: []byte{1, 2, 3}}},
+	}
+	if err := chat.Clear(&config.Config{}); err != nil {
+		t.Fatalf("Clear() error = %v", err)
+	}
 	if len(chat.pendingImages) != 0 {
 		t.Fatalf("Clear() retained %d pending images", len(chat.pendingImages))
+	}
+	saved, err := manager.LoadSession("session_clear_pending_image")
+	if err != nil {
+		t.Fatalf("pending context was not archived before Clear(): %v", err)
+	}
+	if len(saved.PendingImages) != 1 || saved.PendingImages[0].Name != "logo.png" {
+		t.Fatalf("archived pending images = %+v, want logo.png", saved.PendingImages)
 	}
 }
 
@@ -450,7 +518,7 @@ func TestParseAndRememberImageValidationToken(t *testing.T) {
 }
 
 func TestSaveGeneratedImage(t *testing.T) {
-	chat := &Chat{GeneratedImageDir: t.TempDir()}
+	chat := &Chat{GeneratedImageDir: filepath.Join(t.TempDir(), "new", "images")}
 	path, err := chat.saveGeneratedImage(StreamEvent{ImageBase64: "AQID", ImageFormat: "png"})
 	if err != nil {
 		t.Fatalf("saveGeneratedImage() error = %v", err)
@@ -461,6 +529,20 @@ func TestSaveGeneratedImage(t *testing.T) {
 	}
 	if string(data) != string([]byte{1, 2, 3}) {
 		t.Fatalf("saved image bytes = %v, want [1 2 3]", data)
+	}
+	directoryInfo, err := os.Stat(chat.GeneratedImageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := directoryInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("generated-image directory mode = %#o, want 0700", got)
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("generated-image file mode = %#o, want 0600", got)
 	}
 }
 

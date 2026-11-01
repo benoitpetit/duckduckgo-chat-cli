@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,7 +42,7 @@ func (CurrentProofProvider) Capture(ctx context.Context) (*chat.DynamicHeaders, 
 
 type SignalingClient interface {
 	GetICEServers(context.Context, *chat.DynamicHeaders) (ICEConfiguration, error)
-	CreateSession(context.Context, *chat.DynamicHeaders, string) (string, error)
+	CreateSession(context.Context, *chat.DynamicHeaders, string, string) (string, error)
 }
 
 type DuckAIClient struct {
@@ -70,7 +71,7 @@ func (c *DuckAIClient) GetICEServers(ctx context.Context, proof *chat.DynamicHea
 	if err := validateProof(proof, false); err != nil {
 		return ICEConfiguration{}, err
 	}
-	response, err := c.do(ctx, http.MethodGet, "/duckchat/v1/ice-servers", proof, false, "")
+	response, err := c.do(ctx, http.MethodGet, "/duckchat/v1/ice-servers", proof, false, "", "")
 	if err != nil {
 		return ICEConfiguration{}, err
 	}
@@ -92,11 +93,38 @@ func (c *DuckAIClient) GetICEServers(ctx context.Context, proof *chat.DynamicHea
 	return configuration, nil
 }
 
-func (c *DuckAIClient) CreateSession(ctx context.Context, proof *chat.DynamicHeaders, offer string) (string, error) {
+func (c *DuckAIClient) CreateSession(ctx context.Context, proof *chat.DynamicHeaders, offer, voice string) (string, error) {
 	if err := validateProof(proof, true); err != nil {
 		return "", err
 	}
-	response, err := c.do(ctx, http.MethodPost, "/duckchat/v1/session", proof, true, offer)
+	answer, err := c.createSession(ctx, proof, offer, voice)
+	if err != nil && voice != "" && isVoiceSelectionRejected(err) {
+		// Duck.ai accepts an unknown voice only after falling back to its
+		// default. Keep the session usable if the published voice list drifts.
+		return c.createSession(ctx, proof, offer, "")
+	}
+	return answer, err
+}
+
+func (c *DuckAIClient) createSession(ctx context.Context, proof *chat.DynamicHeaders, offer, voice string) (string, error) {
+	body := offer
+	contentType := "application/sdp"
+	if voice != "" {
+		payload := struct {
+			SDP     string `json:"sdp"`
+			Session struct {
+				Voice string `json:"voice"`
+			} `json:"session"`
+		}{SDP: offer}
+		payload.Session.Voice = voice
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return "", fmt.Errorf("encode Duck.ai session request: %w", err)
+		}
+		body = string(encoded)
+		contentType = "application/json"
+	}
+	response, err := c.do(ctx, http.MethodPost, "/duckchat/v1/session", proof, true, body, contentType)
 	if err != nil {
 		return "", err
 	}
@@ -104,11 +132,19 @@ func (c *DuckAIClient) CreateSession(ctx context.Context, proof *chat.DynamicHea
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", signalingStatusError("session", response)
 	}
-	body, err := readBounded(response.Body, maxSignalingResponse)
+	responseBody, err := readBounded(response.Body, maxSignalingResponse)
 	if err != nil {
 		return "", fmt.Errorf("read Duck.ai session response: %w", err)
 	}
-	return string(body), nil
+	return string(responseBody), nil
+}
+
+func isVoiceSelectionRejected(err error) bool {
+	var remote *SignalingHTTPError
+	if !errors.As(err, &remote) {
+		return false
+	}
+	return remote.StatusCode == http.StatusBadRequest || remote.StatusCode == http.StatusUnprocessableEntity
 }
 
 func validateProof(proof *chat.DynamicHeaders, requireVQD bool) error {
@@ -121,7 +157,7 @@ func validateProof(proof *chat.DynamicHeaders, requireVQD bool) error {
 	return nil
 }
 
-func (c *DuckAIClient) do(ctx context.Context, method, path string, proof *chat.DynamicHeaders, requireVQD bool, body string) (*http.Response, error) {
+func (c *DuckAIClient) do(ctx context.Context, method, path string, proof *chat.DynamicHeaders, requireVQD bool, body, contentType string) (*http.Response, error) {
 	base := strings.TrimRight(c.BaseURL, "/")
 	if base == "" {
 		base = defaultDuckAIBaseURL
@@ -152,7 +188,9 @@ func (c *DuckAIClient) do(ctx context.Context, method, path string, proof *chat.
 	if requireVQD {
 		request.Header.Set("Origin", parsedBase.Scheme+"://"+parsedBase.Host)
 		request.Header.Set("X-Vqd-Hash-1", proof.VqdHash1)
-		request.Header.Set("Content-Type", "application/sdp")
+	}
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
 	}
 	client := c.HTTPClient
 	if client == nil {

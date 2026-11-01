@@ -11,6 +11,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"duckduckgo-chat-cli/internal/config"
 )
 
 const maxIPCMessageBytes = 4096
@@ -20,6 +22,7 @@ type Action string
 const (
 	ActionServiceStatus   Action = "service-status"
 	ActionOpenTextChat    Action = "open-text-chat"
+	ActionOpenDashboard   Action = "open-dashboard"
 	ActionOpenOrShowVoice Action = "open-or-show-voice"
 	ActionToggleVoice     Action = "toggle-voice"
 	ActionMinimizeVoice   Action = "minimize-voice"
@@ -36,10 +39,13 @@ type ipcRequest struct {
 
 // Response is returned to tray actions and CLI callers over the local channel.
 type Response struct {
-	OK          bool   `json:"ok"`
-	Error       string `json:"error,omitempty"`
-	Message     string `json:"message,omitempty"`
-	VoiceActive bool   `json:"voice_active,omitempty"`
+	OK            bool                `json:"ok"`
+	Error         string              `json:"error,omitempty"`
+	Message       string              `json:"message,omitempty"`
+	VoiceActive   bool                `json:"voice_active,omitempty"`
+	TextShortcut  string              `json:"text_shortcut,omitempty"`
+	VoiceShortcut string              `json:"voice_shortcut,omitempty"`
+	Speak         *config.SpeakConfig `json:"speak,omitempty"`
 }
 
 // ActionHandler executes a validated local tray or IPC action.
@@ -114,7 +120,7 @@ func processRequest(ctx context.Context, request ipcRequest, token string, handl
 	if !validAction(request.Action) {
 		return Response{Error: "unknown action"}
 	}
-	if request.Action == ActionServiceStatus {
+	if request.Action == ActionServiceStatus && handler == nil {
 		return Response{OK: true}
 	}
 	if handler == nil {
@@ -157,7 +163,7 @@ func handleIPCConnection(ctx context.Context, connection net.Conn, token string,
 
 func validAction(action Action) bool {
 	switch action {
-	case ActionServiceStatus, ActionOpenTextChat, ActionOpenOrShowVoice, ActionToggleVoice,
+	case ActionServiceStatus, ActionOpenTextChat, ActionOpenDashboard, ActionOpenOrShowVoice, ActionToggleVoice,
 		ActionMinimizeVoice, ActionConfigureShort, ActionReloadConfig, ActionVoiceStatus,
 		ActionQuitService:
 		return true

@@ -28,12 +28,14 @@ const (
 )
 
 type SourceRef struct {
-	ID        string      `json:"id"`
-	Kind      SourceKind  `json:"kind"`
-	Name      string      `json:"name"`
-	URI       string      `json:"uri,omitempty"`
-	SizeBytes int         `json:"size_bytes"`
-	State     SourceState `json:"state"`
+	ID         string      `json:"id"`
+	Kind       SourceKind  `json:"kind"`
+	Name       string      `json:"name"`
+	URI        string      `json:"uri,omitempty"`
+	SizeBytes  int         `json:"size_bytes"`
+	State      SourceState `json:"state"`
+	Pinned     bool        `json:"pinned,omitempty"`
+	ExchangeID string      `json:"exchange_id,omitempty"`
 }
 
 // Context holds the accumulated context from chained commands.

@@ -5,6 +5,7 @@
 package ptytest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -20,20 +21,17 @@ func Open() (master, slave *os.File, err error) {
 
 	var unlock int32
 	if err := ioctl(master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlock))); err != nil {
-		master.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, master.Close())
 	}
 
 	var number uint32
 	if err := ioctl(master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&number))); err != nil {
-		master.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, master.Close())
 	}
 
 	slave, err = os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
-		master.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, master.Close())
 	}
 	return master, slave, nil
 }

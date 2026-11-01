@@ -90,18 +90,6 @@ grep -q '/dashboard' README.md || fail "README does not document /dashboard"
 grep -q 'logo.png' docs/BUILD.md || fail "Build documentation does not mention the Windows icon source"
 
 echo "📚 Checking generated REST API documentation..."
-mkdir -p "$TEMP_DIR/docs"
-go run github.com/swaggo/swag/cmd/swag@v1.16.6 init \
-  --generalInfo internal/api/docs.go \
-  --output "$TEMP_DIR/docs" \
-  --parseInternal >/dev/null
-cmp -s docs/docs.go "$TEMP_DIR/docs/docs.go" || \
-  fail "docs/docs.go is out of date; run ./scripts/generate-docs.sh"
-cmp -s docs/swagger.yaml "$TEMP_DIR/docs/swagger.yaml" || \
-  fail "docs/swagger.yaml is out of date; run ./scripts/generate-docs.sh"
-# swag omits the final newline from swagger.json, so normalize both files by
-# reading and printing their lines before comparing their content.
-cmp -s <(awk '1' docs/swagger.json) <(awk '1' "$TEMP_DIR/docs/swagger.json") || \
-  fail "docs/swagger.json is out of date; run ./scripts/generate-docs.sh"
+"$ROOT_DIR/scripts/check-generated-docs.sh"
 
 echo "✅ Pre-release checks passed."

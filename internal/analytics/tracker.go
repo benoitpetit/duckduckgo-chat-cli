@@ -486,11 +486,11 @@ func (ca *ChatAnalytics) SaveToFile(exportDir string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(exportDir, 0755); err != nil {
+	if err := os.MkdirAll(exportDir, 0o700); err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath, data, 0644)
+	return os.WriteFile(filepath, data, 0o600)
 }
 
 // Helper functions

@@ -45,6 +45,7 @@ func ReadImage(path string) (ImageAttachment, error) {
 		return ImageAttachment{}, fmt.Errorf("%s is not a supported image format (PNG, JPEG, or WebP)", path)
 	}
 
+	// #nosec G304 -- the CLI explicitly selects the image path; type, size, and signature are checked before use.
 	file, err := os.Open(path)
 	if err != nil {
 		return ImageAttachment{}, err

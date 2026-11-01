@@ -30,6 +30,24 @@ func OptionWriter(x ConsoleWriter) Option {
 	}
 }
 
+// OptionCompactPaste shows pasted text as a short reference while preserving
+// the full content for submission.
+func OptionCompactPaste() Option {
+	return func(p *Prompt) error {
+		p.compactPaste = true
+		p.pastePayloads = make(map[rune]string)
+		p.nextPasteToken = pasteTokenStart
+		p.renderer.pasteReference = func(token rune) (string, bool) {
+			text, ok := p.pastePayloads[token]
+			if !ok {
+				return "", false
+			}
+			return pastedTextReference(text), true
+		}
+		return nil
+	}
+}
+
 // OptionTitle to set title displayed at the header bar of terminal.
 func OptionTitle(x string) Option {
 	return func(p *Prompt) error {

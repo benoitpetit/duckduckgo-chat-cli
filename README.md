@@ -122,7 +122,10 @@ These slash commands are typed at the `You:` prompt after the interactive chat s
 | `/stats`              | View current session statistics                           |
 | `/history`            | Browse saved conversations                                |
 | `/sessions [query]`   | Search, organize, restore, and remove saved sessions       |
-| `/load [session_id]`  | Restore a saved conversation                              |
+| `/branch [name]`     | Create a branch from the active conversation               |
+| `/retry [instruction]` | Regenerate and replace the last chat answer               |
+| `/notes [show|add <text>|clear]` | Manage local notes attached to this session            |
+| `/load [session_id [--full]]` | Restore a saved conversation, optionally with its full transcript |
 | `/speak`              | Start or restore a voice conversation                     |
 | `/image [idea]`       | Generate an image, with an optional guided prompt flow    |
 | `/coordinate [cancel|runs|show <run_id>]` | Coordinate models and browse saved reports |
@@ -135,8 +138,8 @@ These slash commands are typed at the `You:` prompt after the interactive chat s
 | `/file <path> [-- prompt]`              | Add a file to chat or ask about it directly       |
 | `/url <url> [-- prompt]`                | Add a web page to chat or ask about it directly   |
 | `/library [command] [args] [-- prompt]` | Manage local file libraries and use their content |
-| `/context`                              | Show retained sources, approximate sizes, and optimization state |
-| `/sources`                              | Show source references supplied with the latest exchange |
+| `/context [pin|unpin|pins|compact]`     | Inspect context, pin items, or compact the transcript    |
+| `/sources [compare|audit|save|load|list|delete]` | Compare, audit, and reuse source references             |
 | `/prompt [command]`                     | Add, edit, list, load, or remove saved prompts    |
 
 #### Export and services
@@ -152,7 +155,7 @@ These slash commands are typed at the `You:` prompt after the interactive chat s
 | `/version`                           | Show version information                           |
 | `/exit`                              | Close the interactive chat                         |
 
-Use `&&` to combine `/file`, `/url`, and `/search` before a prompt. `/library`, `/prompt`, `/image`, `/coordinate`, and `/speak` are standalone commands. `/context` and `/sources` show source references retained for chat; byte-to-token counts are rough estimates using about four bytes per token. Numbered source labels are sent to Duck.ai only when source metadata exists. Default panels and labels show short file names rather than local paths; a Markdown conversation export includes each source URI so exported references remain useful. The [user guide](docs/USAGE.md) has examples and more detail about each command.
+Use `&&` to combine `/file`, `/url`, and `/search` before a prompt. `/library`, `/prompt`, `/image`, `/coordinate`, `/speak`, `/branch`, `/retry`, and `/notes` are standalone commands. `/context` shows measured text and image sizes separately; token counts remain rough estimates. `/sources save` stores local references, not hidden copies of source content. Default panels and labels show short file names rather than local paths; a Markdown conversation export includes source URIs and local session notes. The [user guide](docs/USAGE.md) has examples and more detail about each command.
 
 `/file` and `/library` also accept text-based PDFs. Extracted text retains `[Page N]` markers; PDF input and extracted text are each limited to 10 MiB, and library imports also keep the existing 2 MiB aggregate context limit. Scanned PDFs without embedded text are not OCR'd, and password-protected PDFs are unsupported.
 
@@ -166,7 +169,7 @@ Gather context from a web page, a search, and a local file before asking a quest
 /url https://go.dev/doc/ && /search Go concurrency && /file notes.md -- Compare these sources and summarize the key points.
 ```
 
-The normal interactive launch can also stay in the system tray after the terminal closes. Use the tray menu to open a text chat, restore voice chat, configure shortcuts, or quit the background service. Default shortcuts are `Ctrl+Alt+T` for text and `Ctrl+Alt+V` for voice. Change them in `/config` or from the tray menu.
+The normal interactive launch can also stay in the system tray after the terminal closes. Use the tray menu to open a text chat, restore voice chat, configure shortcuts, or quit the background service. Default shortcuts are `Ctrl+Alt+D` for text and `Ctrl+Alt+V` for voice. Change them in `/config` or from the tray menu.
 
 ## Available models
 
@@ -185,7 +188,7 @@ Choose a model with `/model`, or pass its ID with `--model` in one-shot mode. Du
 
 ## Configuration
 
-Open `/config` to choose a default model, color theme, response frame, export folder, global prompt, search behavior, library folders, voice window size, and other options. Changes are saved as you make them. Themes include `official`, `retro`, `mono`, `dracula`, and `nord`. **Reset all settings to defaults** restores the full configuration after a default-No confirmation and typing `RESET`. It clears saved credentials and custom prompts/profiles, stops active API and dashboard services, and reapplies the default 90-day history retention; older history entries may be removed. Exported files are not deleted, and terms must be accepted again on the next launch.
+Open `/config` to choose a default model, color theme, response frame, export folder, global prompt, search behavior, library folders, voice and playback options, and other options. Changes are saved as you make them. Under Appearance, choose `Full terminal` or a maximum frame width of 80, 96, 112, 128, 144, or 160 columns, and select `Single` or `Heavy` border lines. Frames never exceed the available terminal width; the default is a 112-column maximum with single lines. These settings apply to responses, panels, `/help`, and framed menus. Dumb terminals keep ASCII borders. Themes include `official`, `retro`, `mono`, `dracula`, and `nord`. **Reset all settings to defaults** restores the full configuration after a default-No confirmation and typing `RESET`. It clears saved credentials and custom prompts/profiles, stops active API and dashboard services, and reapplies the default 90-day history retention; older history entries may be removed. Exported files are not deleted, and terms must be accepted again on the next launch.
 
 Duck.ai's native web search and image generation can be enabled under **Duck.ai Native Tools**. `/search` remains a separate command that explicitly searches the web and adds results to the conversation. The `/image` command temporarily enables image generation for that request.
 

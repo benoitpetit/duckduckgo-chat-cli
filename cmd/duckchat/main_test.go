@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"duckduckgo-chat-cli/internal/activity"
 	"duckduckgo-chat-cli/internal/chat"
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/command"
@@ -25,6 +26,26 @@ import (
 
 	"github.com/c-bata/go-prompt"
 )
+
+func TestTrackActivityWithErrorPublishesFailureWithoutErrorDetails(t *testing.T) {
+	previous := dashboardActivity
+	hub := activity.NewHub()
+	dashboardActivity = hub
+	t.Cleanup(func() { dashboardActivity = previous })
+	operationErr := errors.New("private file path failed")
+
+	err := trackActivityWithError("file", "File operation", func() error { return operationErr })
+	if !errors.Is(err, operationErr) {
+		t.Fatalf("trackActivityWithError() error = %v, want original error", err)
+	}
+	events := hub.EventsAfter(0)
+	if len(events) != 2 || events[0].Status != "started" || events[1].Status != "failed" {
+		t.Fatalf("activity events = %+v, want started then failed", events)
+	}
+	if strings.Contains(events[1].Summary, operationErr.Error()) {
+		t.Fatalf("failure activity exposed the detailed error: %q", events[1].Summary)
+	}
+}
 
 func TestPromptCompletionTextHasReadableContrastForEveryTheme(t *testing.T) {
 	for _, theme := range ui.Themes() {
@@ -480,6 +501,34 @@ func TestCommandChainPassesSourceMetadataToSubmittedPrompt(t *testing.T) {
 	})
 	if gotSources != 1 {
 		t.Fatalf("pending source count = %d, want one source for the chained file", gotSources)
+	}
+}
+
+func TestTraySettingsChangedIncludesSpeakPreferences(t *testing.T) {
+	base := config.Config{
+		Tray:  config.TrayConfig{TextShortcut: "Ctrl+Alt+D", VoiceShortcut: "Ctrl+Alt+V"},
+		Speak: config.SpeakConfig{Voice: "voice-1", Volume: 100, AutoStart: true},
+	}
+	if traySettingsChanged(base.Tray, base.Speak, base) {
+		t.Fatal("unchanged Tray and Speak settings should not require a tray reload")
+	}
+
+	voiceChanged := base
+	voiceChanged.Speak.Voice = "voice-4"
+	if !traySettingsChanged(base.Tray, base.Speak, voiceChanged) {
+		t.Fatal("a Speak voice change must reload the tray service")
+	}
+
+	speakPlaybackChanged := base
+	speakPlaybackChanged.Speak.AutoStart = false
+	if !traySettingsChanged(base.Tray, base.Speak, speakPlaybackChanged) {
+		t.Fatal("a Speak playback change must reload the tray service")
+	}
+
+	shortcutChanged := base
+	shortcutChanged.Tray.VoiceShortcut = "Ctrl+Alt+B"
+	if !traySettingsChanged(base.Tray, base.Speak, shortcutChanged) {
+		t.Fatal("a tray shortcut change must reload the tray service")
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"duckduckgo-chat-cli/internal/intelligence"
+	"duckduckgo-chat-cli/internal/models"
 	"duckduckgo-chat-cli/internal/persistence"
 )
 
@@ -45,5 +47,30 @@ func TestBuildLoadSessionOptionsSanitizesAndTruncatesPreview(t *testing.T) {
 	}
 	if !strings.Contains(options[0], "hello world") || !strings.Contains(options[0], "…") {
 		t.Fatalf("session preview was not normalized and truncated: %q", options[0])
+	}
+}
+
+func TestLoadCommandCanRestoreOriginalTranscriptWhenOptimizedCopyExists(t *testing.T) {
+	manager := persistence.NewHistoryManager(t.TempDir())
+	session := &persistence.ConversationSession{
+		ID:        "session_full_transcript",
+		Model:     string(models.Default()),
+		StartTime: time.Now(),
+		Messages: []intelligence.Message{
+			{Role: "user", Content: "original question"},
+			{Role: "assistant", Content: "original answer"},
+		},
+		OptimizedMessages: []intelligence.Message{
+			{Role: "user", Content: "optimized summary"},
+		},
+	}
+	if err := manager.SaveSession(session); err != nil {
+		t.Fatalf("SaveSession() error = %v", err)
+	}
+
+	conversation := &Chat{HistoryManager: manager}
+	HandleLoadCommand(conversation, session.ID+" --full")
+	if len(conversation.Messages) != 2 || conversation.Messages[0].Content != "original question" || conversation.Messages[1].Content != "original answer" {
+		t.Fatalf("loaded messages = %+v, want the original two-message transcript", conversation.Messages)
 	}
 }

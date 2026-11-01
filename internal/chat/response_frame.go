@@ -15,7 +15,6 @@ import (
 const (
 	responseFrameMinRailWidth = 32
 	responseFrameMinBoxWidth  = 52
-	responseFrameMaxWidth     = ui.PanelMaxWidth
 )
 
 type responseFrameMode uint8
@@ -35,6 +34,7 @@ type responseFrame struct {
 	contentWidth int
 	indent       string
 	ascii        bool
+	glyphs       ui.FrameGlyphSet
 	started      bool
 }
 
@@ -51,6 +51,7 @@ func newResponseFrame(modelName string, terminalWidth int) *responseFrame {
 		modelName: modelName,
 		ascii:     os.Getenv("TERM") == "dumb",
 	}
+	frame.glyphs = ui.ResolveFrameGlyphs(frame.ascii)
 	if terminalWidth < responseFrameMinBoxWidth {
 		frame.mode = responseFrameRail
 		frame.indent = " "
@@ -66,7 +67,7 @@ func newResponseFrame(modelName string, terminalWidth int) *responseFrame {
 	}
 
 	frame.mode = responseFrameBox
-	frame.width = min(terminalWidth, responseFrameMaxWidth)
+	frame.width = ui.ResolveFrameWidth(terminalWidth)
 	frame.contentWidth = frame.width - 4
 	return frame
 }
@@ -183,35 +184,20 @@ func (f *responseFrame) Close() {
 		return
 	}
 	if f.mode == responseFrameRail {
-		corner := "╰"
-		if f.ascii {
-			corner = "+"
-		}
-		ui.MutedColor.Printf("%s%s\n", f.indent, corner)
+		ui.MutedColor.Printf("%s%s\n", f.indent, f.glyphs.BottomLeft)
 		return
 	}
-	left, horizontal, right := "╰", "─", "╯"
-	if f.ascii {
-		left, horizontal, right = "+", "-", "+"
-	}
-	ui.MutedColor.Printf("%s%s%s%s\n", f.indent, left, strings.Repeat(horizontal, f.width-2), right)
+	ui.MutedColor.Printf("%s%s%s%s\n", f.indent, f.glyphs.BottomLeft, strings.Repeat(f.glyphs.Horizontal, f.width-2), f.glyphs.BottomRight)
 }
 
 func (f *responseFrame) open() {
 	f.started = true
 	if f.mode == responseFrameRail {
-		left := "│"
-		if f.ascii {
-			left = "|"
-		}
-		ui.MutedColor.Printf("%s%s ", f.indent, left)
+		ui.MutedColor.Printf("%s%s ", f.indent, f.glyphs.Vertical)
 		ui.AccentColor.Printf("%s\n", f.modelName)
 		return
 	}
-	left, horizontal, right := "╭", "─", "╮"
-	if f.ascii {
-		left, horizontal, right = "+", "-", "+"
-	}
+	left, horizontal, right := f.glyphs.TopLeft, f.glyphs.Horizontal, f.glyphs.TopRight
 	label := f.modelName
 	ellipsis := "…"
 	if f.ascii {
@@ -233,24 +219,16 @@ func (f *responseFrame) open() {
 
 func (f *responseFrame) writeLine(line string) {
 	if f.mode == responseFrameRail {
-		left := "│"
-		if f.ascii {
-			left = "|"
-		}
-		ui.MutedColor.Printf("%s%s ", f.indent, left)
+		ui.MutedColor.Printf("%s%s ", f.indent, f.glyphs.Vertical)
 		fmt.Println(line)
 		return
-	}
-	left, right := "│", "│"
-	if f.ascii {
-		left, right = "|", "|"
 	}
 	padding := f.contentWidth - ansi.StringWidth(line)
 	if padding < 0 {
 		padding = 0
 	}
-	ui.MutedColor.Printf("%s%s ", f.indent, left)
+	ui.MutedColor.Printf("%s%s ", f.indent, f.glyphs.Vertical)
 	fmt.Print(line)
 	fmt.Print(strings.Repeat(" ", padding))
-	ui.MutedColor.Printf(" %s\n", right)
+	ui.MutedColor.Printf(" %s\n", f.glyphs.Vertical)
 }

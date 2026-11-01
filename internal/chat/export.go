@@ -2,12 +2,25 @@ package chat
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"duckduckgo-chat-cli/internal/chatcontext"
 	"duckduckgo-chat-cli/internal/models"
 )
+
+func writeExportFile(exportDir, filename, content string) (string, error) {
+	if err := os.MkdirAll(exportDir, 0o700); err != nil {
+		return "", fmt.Errorf("create export directory: %w", err)
+	}
+	path := filepath.Join(exportDir, filename)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "", fmt.Errorf("write export file: %w", err)
+	}
+	return path, nil
+}
 
 type ExportMetadata struct {
 	Date        time.Time
@@ -46,6 +59,9 @@ func (c *Chat) Export(exportType string, query string) (string, string) {
 func (c *Chat) formatConversation(metadata ExportMetadata) string {
 	var sb strings.Builder
 	writeMetadataHeader(&sb, metadata)
+	if c.Compacted {
+		writeSection(&sb, "Compacted Session", "", "This session uses a generated summary. Full transcript parent: "+c.ParentSessionID)
+	}
 
 	for _, msg := range c.Messages {
 		timestamp := formatMessageTimestamp(msg.Timestamp)
@@ -70,6 +86,9 @@ func (c *Chat) formatConversation(metadata ExportMetadata) string {
 			writeSection(&sb, "Image Attachment", timestamp, imageAttachmentMarker(image))
 		}
 		writeSourceReferences(&sb, msg.Sources)
+	}
+	if len(c.Notes) > 0 {
+		writeSection(&sb, "Local Session Notes (not sent to the model)", time.Now().Format("2006-01-02 15:04"), strings.Join(c.Notes, "\n\n"))
 	}
 
 	return sb.String()
@@ -192,7 +211,17 @@ func writeSourceReferences(sb *strings.Builder, sources []chatcontext.SourceRef)
 		if state == "" {
 			state = chatcontext.SourceStateActive
 		}
+		if source.Pinned {
+			state += " · pinned"
+		}
 		sb.WriteString(fmt.Sprintf("- %s · %s · %s · %s\n", markdownCodeSpan(source.ID), kind, markdownCodeSpan(displaySourceName(source)), state))
+		if source.ExchangeID != "" {
+			shortID := source.ExchangeID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			sb.WriteString("  - Exchange: " + markdownCodeSpan(shortID) + "\n")
+		}
 		if source.URI != "" {
 			sb.WriteString("  - URI: " + markdownCodeSpan(source.URI) + "\n")
 		}

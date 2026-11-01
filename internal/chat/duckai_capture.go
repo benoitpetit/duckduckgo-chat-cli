@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"duckduckgo-chat-cli/internal/browserrelay"
@@ -314,9 +315,13 @@ func newVisibleChromedpProofBrowser(startupCtx context.Context) (proofBrowser, e
 }
 
 func newChromedpProofBrowserMode(startupCtx context.Context, headless bool) (proofBrowser, error) {
-	execPath, err := findBrowserExecutable()
+	execPath, err := nextBrowserExecutable()
 	if err != nil {
-		return nil, err
+		// Fall back to the standard lookup.
+		execPath, err = findBrowserExecutable()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
@@ -327,6 +332,11 @@ func newChromedpProofBrowserMode(startupCtx context.Context, headless bool) (pro
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("disable-features", "AutomationControlled"),
+		chromedp.UserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"),
 		chromedp.WindowSize(1280, 900),
 	)
 	if headless {
@@ -788,7 +798,7 @@ func findBrowserExecutable() (string, error) {
 	case "windows":
 		names = []string{"chrome.exe", "chromium.exe", "chrome", "chromium"}
 	default:
-		names = []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"}
+		names = []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave", "brave-browser", "microsoft-edge", "microsoft-edge-stable"}
 	}
 
 	var candidates []string
@@ -837,6 +847,57 @@ func findBrowserExecutable() (string, error) {
 		return fallback, nil
 	}
 	return candidates[0], nil
+}
+
+// browserCandidates returns all available Chromium-based browser executables,
+// ordered with older (<156) builds first to avoid the anonymous usage limit.
+func browserCandidates() []string {
+	var names []string
+	switch runtime.GOOS {
+	case "darwin":
+		names = []string{"google-chrome", "chromium", "Google Chrome", "Chromium", "brave", "Microsoft Edge"}
+	case "windows":
+		names = []string{"chrome.exe", "chromium.exe", "chrome", "chromium", "brave.exe", "msedge.exe"}
+	default:
+		names = []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave", "brave-browser", "microsoft-edge", "microsoft-edge-stable"}
+	}
+	seen := map[string]bool{}
+	var candidates []string
+	for _, name := range names {
+		if path, err := exec.LookPath(name); err == nil && !seen[path] {
+			seen[path] = true
+			candidates = append(candidates, path)
+		}
+	}
+	for _, path := range browserInstallPaths(runtime.GOOS) {
+		if executable, err := exec.LookPath(path); err == nil && !seen[executable] {
+			seen[executable] = true
+			candidates = append(candidates, executable)
+		}
+	}
+	// Prefer older builds first.
+	var preferred, fallback []string
+	for _, c := range candidates {
+		if v := browserMajorVersion(c); v > 0 && v < 156 {
+			preferred = append(preferred, c)
+		} else {
+			fallback = append(fallback, c)
+		}
+	}
+	return append(preferred, fallback...)
+}
+
+var browserRotationIndex uint64
+
+// nextBrowserExecutable picks the next available browser in round-robin order,
+// so successive browser creations can use a different browser/fingerprint.
+func nextBrowserExecutable() (string, error) {
+	cands := browserCandidates()
+	if len(cands) == 0 {
+		return "", fmt.Errorf("no Chromium-based browser found")
+	}
+	idx := atomic.AddUint64(&browserRotationIndex, 1) - 1
+	return cands[int(idx)%len(cands)], nil
 }
 
 func browserMajorVersion(execPath string) int {

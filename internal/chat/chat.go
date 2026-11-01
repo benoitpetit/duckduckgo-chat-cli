@@ -401,10 +401,16 @@ func (c *Chat) resetRateLimitSession() error {
 }
 
 func (c *Chat) resetRateLimitSessionContext(ctx context.Context) error {
-	resetCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Close the shared browser entirely instead of only clearing site data.
+	// A fresh browser process gets a fresh temporary profile, which resets
+	// anonymous usage quotas that ClearSiteData alone cannot clear.
+	closeCtx, cancel := context.WithTimeout(ctx, browserCloseWait)
 	defer cancel()
-	if err := sharedDuckAIBrowser.ClearSiteData(resetCtx); err != nil {
-		return fmt.Errorf("could not clear Duck.ai browser site data: %w", err)
+	if err := sharedDuckAIBrowser.Close(); err != nil && closeCtx.Err() == nil {
+		ui.Debugln("Closing Duck.ai browser during session reset: %v", err)
 	}
 
 	jar := newDuckAICookieJar()

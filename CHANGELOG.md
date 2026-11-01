@@ -2,6 +2,13 @@
 
 This file summarizes the user-facing changes in every published release. Dates are the GitHub publication dates. See each linked release for its downloads and checksums.
 
+## [1.9.9] - 2026-11-01 ([release](https://github.com/benoitpetit/duckduckgo-chat-cli/releases/tag/v1.9.9))
+
+- Browser session reset now closes the headless browser entirely, forcing a fresh temporary profile that clears anonymous usage quotas that site-data clearing alone could not reset.
+- Added multi-browser rotation among all installed Chromium-based browsers (Chrome, Chromium, Brave, Edge) to vary the browser fingerprint/version used for proof capture.
+- Hardened the headless browser with anti-automation flags (disabled automation blink features, no first-run/default-browser checks, extensions disabled) and a realistic user agent.
+- Updated protocol notes and regression coverage.
+
 ## [1.9.8] - 2026-11-01 ([release](https://github.com/benoitpetit/duckduckgo-chat-cli/releases/tag/v1.9.8))
 
 - Fixed browser proof capture hanging for 30 seconds when the chat service shows its anonymous usage limit ("Daily limit reached"). The limit banner and wording are now detected and reported as a rate limit.

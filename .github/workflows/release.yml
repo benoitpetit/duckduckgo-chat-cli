@@ -266,6 +266,8 @@ jobs:
         tag_name: v${{ steps.version.outputs.VERSION }}
         name: DuckDuckGo Chat CLI v${{ steps.version.outputs.VERSION }}
         body: |
+          **Full changelog:** [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)
+
           ${{ steps.release_notes.outputs.WHATS_NEW }}
           
           ## Downloads

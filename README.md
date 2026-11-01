@@ -23,6 +23,7 @@
   <a href="#screenshots">Screenshots</a> •
   <a href="#installation">Install</a> •
   <a href="#usage">Usage</a> •
+  <a href="CHANGELOG.md">Changelog</a> •
   <a href="#available-models">Models</a> •
   <a href="#configuration">Configuration</a> •
   <a href="#local-usage-dashboard">Dashboard</a>

@@ -13,7 +13,7 @@ require (
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/chromedp/cdproto v0.158.6
+	github.com/chromedp/cdproto v0.159.2
 	github.com/chromedp/chromedp v0.21.0
 	github.com/fatih/color v1.19.0
 	github.com/gen2brain/webp v0.6.4

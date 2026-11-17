@@ -336,7 +336,10 @@ func newChromedpProofBrowserMode(startupCtx context.Context, headless bool) (pro
 		chromedp.Flag("no-default-browser-check", true),
 		chromedp.Flag("disable-extensions", true),
 		chromedp.Flag("disable-features", "AutomationControlled"),
-		chromedp.UserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"),
+		// Do not pin a --user-agent here. Browser.getVersion reflects that flag,
+		// and Capture/Request reuse it through SetUserAgentOverride. A stale
+		// version (for example Chrome/130) makes Duck.ai serve its anonymous
+		// daily-limit page even when the network has quota left.
 		chromedp.WindowSize(1280, 900),
 	)
 	if headless {

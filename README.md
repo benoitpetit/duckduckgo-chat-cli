@@ -125,11 +125,11 @@ These slash commands are typed at the `You:` prompt after the interactive chat s
 | `/sessions [query]`   | Search, organize, restore, and remove saved sessions       |
 | `/branch [name]`     | Create a branch from the active conversation               |
 | `/retry [instruction]` | Regenerate and replace the last chat answer               |
-| `/notes [show|add <text>|clear]` | Manage local notes attached to this session            |
+| `/notes [show\|add <text>\|clear]` | Manage local notes attached to this session            |
 | `/load [session_id [--full]]` | Restore a saved conversation, optionally with its full transcript |
 | `/speak`              | Start or restore a voice conversation                     |
 | `/image [idea]`       | Generate an image, with an optional guided prompt flow    |
-| `/coordinate [cancel|runs|show <run_id>]` | Coordinate models and browse saved reports |
+| `/coordinate [cancel\|runs\|show <run_id>]` | Coordinate models and browse saved reports |
 
 #### Add context and manage prompts
 
@@ -139,8 +139,8 @@ These slash commands are typed at the `You:` prompt after the interactive chat s
 | `/file <path> [-- prompt]`              | Add a file to chat or ask about it directly       |
 | `/url <url> [-- prompt]`                | Add a web page to chat or ask about it directly   |
 | `/library [command] [args] [-- prompt]` | Manage local file libraries and use their content |
-| `/context [pin|unpin|pins|compact]`     | Inspect context, pin items, or compact the transcript    |
-| `/sources [compare|audit|save|load|list|delete]` | Compare, audit, and reuse source references             |
+| `/context [pin\|unpin\|pins\|compact]`     | Inspect context, pin items, or compact the transcript    |
+| `/sources [compare\|audit\|save\|load\|list\|delete]` | Compare, audit, and reuse source references             |
 | `/prompt [command]`                     | Add, edit, list, load, or remove saved prompts    |
 
 #### Export and services
